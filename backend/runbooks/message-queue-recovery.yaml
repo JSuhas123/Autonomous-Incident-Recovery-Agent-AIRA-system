@@ -1,0 +1,84 @@
+id: message-queue-recovery
+name: "Message Queue Recovery"
+description: "Recover message queue outages and clear stuck messages"
+severity: high
+services:
+  - messaging
+  - rabbitmq
+  - kafka
+estimatedDuration: 300
+
+triggers:
+  - type: metric
+    condition: "queue.stuck_messages > 100"
+  - type: metric
+    condition: "queue.connection_failures > 5"
+  - type: alert
+    name: "Message queue down"
+
+preconditions:
+  - check: "Queue management tools available"
+    command: "which rabbitmqctl || which kafka-console-consumer.sh"
+
+steps:
+  - step: 1
+    name: "Check queue connectivity"
+    action: "command"
+    command: "rabbitmq-diagnostics ping -q"
+    onFailure: "continue"
+
+  - step: 2
+    name: "List stuck messages"
+    action: "command"
+    command: "rabbitmqctl list_queues name messages consumers | grep -v '^Listing'"
+
+  - step: 3
+    name: "Purge problematic queues"
+    action: "command"
+    command: "rabbitmqctl purge_queue {{queue_name}}"
+    confirmation: true
+    onFailure: "continue"
+
+  - step: 4
+    name: "Check memory usage"
+    action: "command"
+    command: "rabbitmqctl status | grep -i memory"
+
+  - step: 5
+    name: "Restart message queue service"
+    action: "command"
+    command: "systemctl restart rabbitmq-server"
+    confirmation: true
+    rollback: "systemctl start rabbitmq-server"
+
+  - step: 6
+    name: "Re-enable queue acknowledgments"
+    action: "command"
+    command: "rabbitmqctl set_policy ack-all '^.*$' '{\"auto-ack\": false}'"
+
+  - step: 7
+    name: "Requeue failed messages from DLQ"
+    action: "command"
+    command: "rabbitmqctl purge_queue {{dlq_name}} && curl -X POST http://{{service}}/api/dlq/requeue?limit=1000"
+
+  - step: 8
+    name: "Monitor queue depth"
+    action: "query"
+    query: "SELECT queue_name, message_count FROM queues WHERE timestamp > now() - interval '5 minutes'"
+    successCriteria: "queue_depth_decreasing == true"
+    timeout: 300
+
+postconditions:
+  - check: "Queue service is healthy"
+    command: "rabbitmq-diagnostics ping -q"
+  - check: "No stuck messages remain"
+    command: "rabbitmqctl list_queues name messages | grep -v '^Listing' | awk '{print $2}' | awk '{sum+=$1} END {print sum}'"
+
+notificationChannels:
+  - slack
+
+metadata:
+  owner: "Platform Team"
+  createdAt: "2026-03-26"
+  successRate: 0.95
+  executionCount: 34

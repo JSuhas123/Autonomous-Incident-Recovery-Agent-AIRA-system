@@ -1,0 +1,72 @@
+id: k8s-pod-restart
+name: "Kubernetes Pod Restart"
+description: "Restart failed or unhealthy Kubernetes pods"
+severity: high
+services:
+  - kubernetes
+  - container
+estimatedDuration: 300
+
+triggers:
+  - type: metric
+    condition: "pod.status == CrashLoopBackOff"
+  - type: metric
+    condition: "pod.restarts > 5"
+  - type: alert
+    name: "Pod unhealthy"
+
+preconditions:
+  - check: "kubectl is available"
+    command: "which kubectl"
+  - check: "Kubernetes cluster accessible"
+    command: "kubectl cluster-info"
+
+steps:
+  - step: 1
+    name: "Identify affected pods"
+    action: "query"
+    query: "identify pods in CrashLoopBackOff state"
+    rollback: false
+
+  - step: 2
+    name: "Get pod logs"
+    action: "command"
+    command: "kubectl logs {{pod}} -n {{namespace}} --tail=100"
+    condition: "always"
+    
+  - step: 3
+    name: "Delete pod to trigger restart"
+    action: "command"
+    command: "kubectl delete pod {{pod}} -n {{namespace}}"
+    confirmation: true
+    rollback: "kubectl apply -f {{deployment-yaml}}"
+
+  - step: 4
+    name: "Wait for pod to be ready"
+    action: "wait"
+    condition: "pod.status == Running"
+    timeout: 300
+    checkInterval: 5
+
+  - step: 5
+    name: "Verify pod health"
+    action: "query"
+    query: "check pod health metrics"
+    successCriteria: "pod.status.healthy == true"
+
+postconditions:
+  - check: "Pod is running"
+    command: "kubectl get pod {{pod}} -o json | jq '.status.phase'"
+  - check: "Pod has no errors in logs"
+    command: "kubectl logs {{pod}} | grep -i error"
+
+notificationChannels:
+  - slack
+  - pagerduty
+
+metadata:
+  owner: "DevOps Team"
+  createdAt: "2026-03-26"
+  lastModified: "2026-03-26"
+  successRate: 0.95
+  executionCount: 52

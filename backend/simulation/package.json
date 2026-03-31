@@ -1,0 +1,28 @@
+{
+  "name": "decision-engine-learning-validation",
+  "version": "1.0.0",
+  "description": "Long-term simulation harness to validate Decision Engine learning stability and weight convergence",
+  "main": "run-learning-validation.js",
+  "scripts": {
+    "start": "node run-learning-validation.js",
+    "test:fast": "node run-learning-validation.js --incidents=200",
+    "test:standard": "node run-learning-validation.js --incidents=1000",
+    "test:extended": "node run-learning-validation.js --incidents=5000",
+    "test:stress": "node run-learning-validation.js --incidents=10000",
+    "test:all": "npm run test:fast && npm run test:standard && npm run test:extended"
+  },
+  "keywords": [
+    "decision-engine",
+    "learning-validation",
+    "convergence-analysis",
+    "calibration",
+    "simulation"
+  ],
+  "author": "SRE Team",
+  "license": "MIT",
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

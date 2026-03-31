@@ -1,0 +1,146 @@
+# Default Policy Definition
+# YAML-based, dynamic policy engine
+# Replaces hardcoded Python policy logic
+
+version: "1.0"
+tenantId: "default"
+effectiveFrom: "2026-03-26"
+
+# Policy Rules - Evaluated in order
+rules:
+  # Rule 1: Restart service allowed only for severe incidents
+  - id: "restart_allowed"
+    description: "Restart service allowed for HIGH/CRITICAL incidents with high confidence"
+    actions: ["restart"]
+    allowedIf:
+      - severity: ["HIGH", "CRITICAL"]
+      - confidence: { min: 0.65 }
+    denialReason: "Restart requires HIGH/CRITICAL severity and 65%+ confidence"
+
+  # Rule 2: Scale replicas for load issues
+  - id: "scale_allowed"
+    description: "Scale replicas for load-related incidents"
+    actions: ["scale-replicas"]
+    allowedIf:
+      - confidence: { min: 0.6 }
+    denialReason: "Scale requires 60%+ confidence"
+
+  # Rule 3: Rolling restart (high-risk, requires approval)
+  - id: "rolling_restart_approval"
+    description: "Rolling restart requires explicit approval"
+    actions: ["rolling-restart"]
+    requiresApproval: true
+    approvers: ["admin"]
+    denialReason: "Rolling restart requires admin approval"
+
+  # Rule 4: Alert human operator (always allowed)
+  - id: "alert_always_allowed"
+    description: "Alert human operator (no restrictions)"
+    actions: ["alert-human"]
+    allowedIf: []
+    denialReason: "Alerts always allowed"
+
+# Action Configurations
+actions:
+  # Restart action policy
+  - name: "restart"
+    description: "Service restart"
+    riskLevel: "medium"
+    reversible: true
+    dryRunAvailable: true
+    maxRetries: 2
+    retryBackoff: "exponential"  # 1s, 2s, 4s...
+    cooldowns:
+      - service: "any"
+        duration: "10m"              # Wait 10 minutes before retry
+        maxPerDay: 2                 # Max 2 restarts per 24 hours
+    requiresApproval:
+      blastRadius:
+        minServices: 2               # Requires approval if affects 2+ services
+      approvers: ["admin"]
+    dryRunNotes: "Simulates restart without actual impact"
+
+  # Scale replicas action
+  - name: "scale-replicas"
+    description: "Scale replica count to handle load"
+    riskLevel: "low"
+    reversible: true
+    dryRunAvailable: true
+    maxRetries: 3
+    retryBackoff: "linear"
+    dryRunNotes: "Simulates scaling logic, verifies capacity"
+
+  # Rolling restart (zero-downtime)
+  - name: "rolling-restart"
+    description: "Rolling restart with zero-downtime"
+    riskLevel: "medium-high"
+    reversible: true
+    dryRunAvailable: true
+    maxRetries: 1
+    requiresApproval:
+      blastRadius:
+        minServices: 1               # Always requires approval
+      approvers: ["admin", "on-call-engineer"]
+
+  # Cache clear action
+  - name: "clear-cache"
+    description: "Clear cache to recover from stale data"
+    riskLevel: "low"
+    reversible: true
+    maxRetries: 3
+
+  # Alert human
+  - name: "alert-human"
+    description: "Alert human operator"
+    riskLevel: "none"
+    reversible: true
+    maxRetries: 1
+
+# Escalation Policy
+escalation:
+  enabled: true
+  levels:
+    - name: "normal"
+      description: "Standard incident response"
+      approvalRequired: false
+
+    - name: "escalated"
+      description: "High-severity incident requiring active monitoring"
+      approvalRequired: false
+      notifyChannels: ["slack", "email"]
+
+    - name: "critical"
+      description: "Critical incident requiring immediate intervention"
+      approvalRequired: true
+      approvers: ["admin"]
+      notifyChannels: ["slack", "pagerduty", "email"]
+
+# Approval Gates
+approvalGates:
+  enabled: true
+  defaultApprovers: ["admin"]
+  escalationPolicyLink: "escalation"
+
+# Circuit Breaker Integration
+circuitBreaker:
+  enabled: true
+  failureThreshold: 3           # Open after 3 failures
+  failureWindow: "1h"            # Within 1 hour
+  recoveryWindow: "5m"           # Wait 5 min before attempting recovery
+  halfOpenTrials: 1              # Allow 1 trial in HALF_OPEN state
+
+# Dynamic Rules (future enhancement)
+dynamicRules: []
+
+# Compliance & Audit
+audit:
+  enabled: true
+  captureAllDecisions: true
+  retentionDays: 90
+
+metadata:
+  createdBy: "system"
+  createdAt: "2026-03-26T00:00:00Z"
+  lastModified: "2026-03-26T00:00:00Z"
+  reviewedBy: "admin"
+  notes: "Default policy for decision engine"
