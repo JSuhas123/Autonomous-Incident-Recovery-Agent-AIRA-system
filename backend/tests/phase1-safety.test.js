@@ -104,6 +104,10 @@ describe('PHASE 1: Safety Infrastructure', () => {
       // Reset to defaults
       killSwitchManager.setActionsEnabled(true, 'test reset');
       killSwitchManager.setLearningEnabled(false, 'test reset');
+      // Deactivate emergency mode if it was activated by previous test
+      if (killSwitchManager.globalKillSwitches.EMERGENCY_MODE) {
+        killSwitchManager.deactivateEmergencyMode('test reset');
+      }
     });
 
     test('should initialize with default state', () => {

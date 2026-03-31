@@ -171,6 +171,21 @@ class ConfidenceThresholdEnforcer {
       },
     };
   }
+
+  /**
+   * Check if actions are allowed (delegates to kill switch manager if available)
+   * This allows confidence threshold to check kill switch status
+   */
+  areActionsEnabled() {
+    try {
+      const { getKillSwitchManager } = require('./killSwitches');
+      const killSwitchManager = getKillSwitchManager();
+      return killSwitchManager.areActionsEnabled();
+    } catch (error) {
+      // If kill switch manager is not available, assume actions are enabled
+      return true;
+    }
+  }
 }
 
 // Singleton instance

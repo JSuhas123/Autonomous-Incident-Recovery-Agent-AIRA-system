@@ -20,6 +20,10 @@ module.exports = {
   transformIgnorePatterns: [
     'node_modules/(?!(@csstools|isomorphic-dompurify)/)',
   ],
+  moduleNameMapper: {
+    '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^isomorphic-dompurify$': '<rootDir>/tests/__mocks__/dompurify.js',
+  },
   coverageThreshold: {
     global: {
       branches: 60,
