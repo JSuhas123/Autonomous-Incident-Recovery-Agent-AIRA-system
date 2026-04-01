@@ -415,7 +415,15 @@ class RunbookExecutionService {
    */
   async executeStep(tenantId, step, context = {}) {
     try {
-      // Simple mock execution for testing
+      const stepType = step.type || 'default';
+      
+      // Check if a handler is registered for this step type
+      if (this.executionHandlers[stepType]) {
+        console.log(`[runbook-execution] Using registered handler for step type: ${stepType}`);
+        return await this._executeStepWithRetry(step, context);
+      }
+
+      // Fallback: Handle built-in actions for backwards compatibility
       let status = 'SUCCESS';
       let result = {
         status,
@@ -441,6 +449,7 @@ class RunbookExecutionService {
 
       return result;
     } catch (error) {
+      console.error(`[runbook-execution] Step execution error: ${error.message}`);
       return {
         status: 'FAILED',
         error: error.message,

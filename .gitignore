@@ -20,7 +20,22 @@ backend/**/*.log
 backend/**/*-test-output.txt
 backend/**/*-results.txt
 backend/**/*-results.json
+backend/**/*-test.log
+backend/**/*-test-results*.txt
+backend/**/*-test-results*.json
+backend/**/*.log
 backend/tests/**/*.log
+backend/test_output.txt
+backend/test-output.txt
+backend/test_out.log
+
+# Generated test results (do not commit)
+**/approval-test-*.txt
+**/chaos-test-*.txt
+**/e2e-test-*.txt
+**/k8s-test-*.txt
+**/approval-fixed-test.txt
+**/scenario-output*.txt
 
 # IDE
 .vscode/
@@ -38,8 +53,21 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
-
-# Generated files (chaos testing, etc.)
-chaos-test-results/
-*.backup
 *.bak
+*.backup
+
+# Generated files (chaos testing, simulation, etc.)
+chaos-test-results/
+simulation-results/
+backend/chaos-test-results/
+backend/simulation/backend/
+backend/simulation/simulation-results/
+
+# Temporary session/output files
+*-session*.txt
+*-output*.txt
+*-results*.txt
+*COMPLETION-REPORT*.md
+*SESSION-SUMMARY*.md
+*VERIFICATION*.md
+*ASSESSMENT*.md

@@ -300,7 +300,7 @@ describe('PHASE 3: Chaos Testing', () => {
   describe('High Load / Incident Storm', () => {
     test('should handle incident storm without crashing',  async () => {
       const incidentCount = 100;
-      const incidents = LoadChaosInjector.injectIncidentStorm(incidentCount, null);
+      const incidents = await LoadChaosInjector.injectIncidentStorm(incidentCount, null);
 
       expect(incidents.length).toBe(incidentCount);
       expect(incidents[0]).toHaveProperty('id');
@@ -313,7 +313,7 @@ describe('PHASE 3: Chaos Testing', () => {
         makeDecision: jest.fn().mockResolvedValue({ tier: 'AUTO_EXECUTE' }),
       };
 
-      const incidents = LoadChaosInjector.injectIncidentStorm(50, null);
+      const incidents = await LoadChaosInjector.injectIncidentStorm(50, null);
 
       const results = await LoadChaosInjector.measureLoadResponse(incidents, mockDecisionEngine);
 

@@ -173,8 +173,28 @@ async function processDecisionEvent(message) {
       true // policyMatch - will be updated by policy agent
     );
 
-    // STEP 3: Assess action risk for alternatives
-    const possibleActions = ['restart', 'scale-replicas', 'cache-invalidation'];
+    // STEP 3: Detect cascade failures and assess action risk
+    // Cascade detection: high severity + database/core service = potential cascade
+    const isCascadeFailure = 
+      (analysis.severity === 'high' || analysis.severity === 'critical') && 
+      (analysis.affectedServices?.some(svc => 
+        svc.toLowerCase().includes('database') || 
+        svc.toLowerCase().includes('core') ||
+        svc.toLowerCase().includes('backend')
+      ) || false);
+    
+    if (isCascadeFailure) {
+      console.log(`[decision-agent] Cascade detection triggered: severity=${analysis.severity}, services=${analysis.affectedServices?.join(', ')}`);
+    }
+    
+    // Build possible actions based on context
+    let possibleActions = ['restart', 'scale-replicas', 'cache-invalidation'];
+    
+    // Add ESCALATE as primary action for cascade failures
+    if (isCascadeFailure) {
+      possibleActions.unshift('escalate');
+    }
+    
     const alternatives = [];
 
     for (const action of possibleActions) {
@@ -184,13 +204,17 @@ async function processDecisionEvent(message) {
         severity: analysis.severity
       });
 
+      // Lower risk score for escalate action (safe, manual intervention)
+      const riskScore = action === 'escalate' ? 0.1 : risk.baseRisk;
+      const expectedSuccess = action === 'escalate' ? 0.95 : (memory?.actions?.[action]?.successRate || 0.5);
+
       alternatives.push({
         action,
-        riskScore: risk.baseRisk,
-        expectedSuccess: memory?.actions?.[action]?.successRate || 0.5,
-        blastRadius: risk.blastRadius?.description || 'unknown',
-        reversible: risk.isReversible,
-        estimatedRecoveryTime: risk.estimatedRecoveryTime
+        riskScore: riskScore,
+        expectedSuccess: expectedSuccess,
+        blastRadius: action === 'escalate' ? 'none (manual)' : (risk.blastRadius?.description || 'unknown'),
+        reversible: action === 'escalate' ? true : risk.isReversible,
+        estimatedRecoveryTime: action === 'escalate' ? 300000 : risk.estimatedRecoveryTime
       });
     }
 
@@ -200,6 +224,11 @@ async function processDecisionEvent(message) {
       const bestScore = (best.expectedSuccess * 0.7) - (best.riskScore * 0.3);
       return score > bestScore ? current : best;
     });
+
+    // Log cascade detection and action choice
+    if (isCascadeFailure) {
+      console.log(`[decision-agent] CASCADE DETECTED: services=${analysis.affectedServices?.join(',')}, chosen_action=${chosenAction.action}, confidence=${confidence.score}`);
+    }
 
     // STEP 5: Create decision trace (full reasoning captured)
     const decisionTrace = await decisionTraceService.createTrace({
@@ -213,6 +242,7 @@ async function processDecisionEvent(message) {
         },
         severity: analysis.severity,
         confidence: confidence.score,
+        cascadeDetected: isCascadeFailure,
         incidentMemory: {
           previousOccurrences: memory?.occurrences?.length || 0,
           lastResolution: memory?.recommendedAction,
@@ -221,11 +251,21 @@ async function processDecisionEvent(message) {
         }
       },
       reasoning: {
-        hypothesis: `${analysis.issue || 'Service anomaly'} - Severity: ${analysis.severity}`,
+        hypothesis: `${analysis.issue || 'Service anomaly'} on ${analysis.affectedServices?.join(', ') || 'unknown'} - Severity: ${analysis.severity}${isCascadeFailure ? ' - CASCADE DETECTED' : ''}`,
+        cascadeDetection: isCascadeFailure ? {
+          identified: true,
+          rootCause: analysis.affectedServices?.find(svc => 
+            svc.toLowerCase().includes('database') || 
+            svc.toLowerCase().includes('core')
+          ) || 'unknown',
+          affectedServices: analysis.affectedServices,
+          recommendation: 'ESCALATE to human operators'
+        } : null,
         evidenceFor: [
           `Error rate: ${(analysis.errorRate * 100).toFixed(1)}%`,
           `Response time: ${analysis.responseTime}ms`,
-          `Occurrences: ${analysis.occurrenceCount || 1} times`
+          `Occurrences: ${analysis.occurrenceCount || 1} times`,
+          ...(isCascadeFailure ? [`Cascade failure detected in: ${analysis.affectedServices?.join(', ')}`] : [])
         ],
         confidenceFactors: confidence.factors
       },
@@ -239,6 +279,12 @@ async function processDecisionEvent(message) {
           rule: 'confidence_gate',
           condition: 'confidence > 0.65',
           result: confidence.score > 0.65
+        },
+        {
+          rule: 'cascade_failure_detection',
+          condition: 'critical severity + core service failure',
+          result: isCascadeFailure,
+          action: isCascadeFailure ? 'ESCALATE' : 'PROCEED_WITH_ACTION'
         }
       ],
       alternatives: alternatives.map(alt => ({

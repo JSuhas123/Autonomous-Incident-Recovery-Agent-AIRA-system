@@ -8,7 +8,7 @@
  * - Configuration values
  * - Any user-submitted text fields
  * 
- * Uses DOMPurify (isomorphic version for Node.js) to strip dangerous HTML/JavaScript
+ * Uses xss library for HTML sanitization and filtering
  * 
  * SECURITY APPROACH:
  * - Whitelist mode: Only allow safe HTML tags (if needed for rich text)
@@ -17,31 +17,35 @@
  * - HTML entity encoding for safe storage
  */
 
-const DOMPurify = require('isomorphic-dompurify');
+const xss = require('xss');
 
 /**
- * Configure DOMPurify with strict security rules
+ * Configure xss with strict security rules (no HTML tags by default)
  */
-const purifyConfig = {
-  ALLOWED_TAGS: [], // No HTML tags by default - plain text only
-  ALLOWED_ATTR: [],
-  KEEP_CONTENT: true, // Preserve text content when removing tags
-  FORCE_BODY: false, // Don't add body tags
+const sanitizeConfig = {
+  whiteList: {}, // No HTML tags by default - plain text only
+  stripIgnoreTag: true, // Remove unknown tags
 };
 
 /**
- * Legacy config: If you need to allow some safe HTML (bold, italic, links)
+ * Config: If you need to allow some safe HTML (bold, italic, links)
  * Used for rich-text fields like policy descriptions
  */
-const purifyConfigRichText = {
-  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a', 'br', 'p'],
-  ALLOWED_ATTR: ['href', 'title'],
-  KEEP_CONTENT: true,
-  FORCE_BODY: false,
+const sanitizeConfigRichText = {
+  whiteList: {
+    'b': [],
+    'i': [],
+    'em': [],
+    'strong': [],
+    'a': ['href', 'title'],
+    'br': [],
+    'p': [],
+  },
+  stripIgnoreTag: true,
 };
 
 /**
- * Sanitize a string value using DOMPurify
+ * Sanitize a string value using xss library
  * @param {string} value - The user-provided string to sanitize
  * @param {object} options - Optional sanitization config
  * @returns {string} - Sanitized value safe for storage/display
@@ -56,13 +60,13 @@ function sanitizeString(value, options = {}) {
   }
 
   // Use provided config or default (plain text only)
-  const config = options.allowRichText ? purifyConfigRichText : purifyConfig;
+  const config = options.allowRichText ? sanitizeConfigRichText : sanitizeConfig;
 
   try {
-    return DOMPurify.sanitize(value.trim(), config);
+    return xss(value.trim(), config);
   } catch (error) {
-    console.warn('[sanitization] DOMPurify error, returning original value:', error.message);
-    // Fail-safe: return original if DOMPurify fails (should not happen)
+    console.warn('[sanitization] xss error, returning original value:', error.message);
+    // Fail-safe: return original if sanitization fails (should not happen)
     return value;
   }
 }
@@ -205,6 +209,6 @@ module.exports = {
   sanitizeObject,
   sanitizationMiddleware,
   testXSSPayloads,
-  purifyConfig,
-  purifyConfigRichText,
+  sanitizeConfig,
+  sanitizeConfigRichText,
 };

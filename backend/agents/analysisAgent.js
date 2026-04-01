@@ -286,6 +286,11 @@ async function processAnalysisEvent(message) {
     const analysisResult = await analyzeIssue(payload.logs, payload.metrics, tenantId);
     const analysisTime = Date.now() - startTime;
 
+    // Add affectedServices from original signal/payload for cascade detection
+    if (payload.affectedServices && payload.affectedServices.length > 0) {
+      analysisResult.affectedServices = payload.affectedServices;
+    }
+
     // Record structured log for analysis
     try {
       const loggingService = getStructuredLoggingService();

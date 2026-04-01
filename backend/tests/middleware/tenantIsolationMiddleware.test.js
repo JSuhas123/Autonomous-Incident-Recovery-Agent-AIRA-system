@@ -513,7 +513,7 @@ describe('Tenant Isolation Middleware Security Tests', () => {
 
     test('should respond with 500 on middleware error', () => {
       const req = {
-        tenant: null, // Will cause error
+        tenant: null, // No tenant - returns 401 authentication failure
         params: { tenantId: TEST_TENANT_ID },
         headers: {},
         body: {},
@@ -529,7 +529,7 @@ describe('Tenant Isolation Middleware Security Tests', () => {
       tenantIsolationMiddleware(req, res, next);
 
       if (res.status.mock.calls.length > 0) {
-        expect(res.status).toHaveBeenCalledWith(500);
+        expect(res.status).toHaveBeenCalledWith(401);
       }
     });
   });

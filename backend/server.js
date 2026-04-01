@@ -9,6 +9,8 @@ const mongoose = require("mongoose");
 const featureFlags = require("./config/featureFlags");
 
 const coreApiRoutes = require("./routes/coreApiRoutes");
+const approvalRoutes = require("./routes/approvalRoutes");
+
 
 // PHASE 1 SAFETY: Import kill switch and sanitization middleware
 const { sanitizationMiddleware, testXSSPayloads } = require("./middleware/sanitizationMiddleware");
@@ -45,6 +47,8 @@ const { validateInput } = require("./middleware/inputValidationMiddleware");
 const { connectDatabase, disconnectDatabase } = dbService;
 const { getQueueService } = require("./services/infrastructure/queueService");
 const { getIdempotencyService } = require("./services/infrastructure/idempotencyService");
+const { runbookExecutionService } = require("./services/execution");
+const { getK8sClient } = require("./services/k8s");
 
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
@@ -61,7 +65,7 @@ app.use(express.json());
 // These must be applied early, before any handlers
 app.use(sanitizationMiddleware(null, { allowRichText: false })); // Sanitize ALL string fields
 app.use(killSwitchEnforcementMiddleware()); // Attach kill switch manager to requests
-app.use(confidenceCheckMiddleware()); // Attach confidence enforcer to requests
+app.use(confidenceCheckMiddleware); // Attach confidence enforcer to requests
 
 
 // Health check endpoint (no auth required)
@@ -91,9 +95,10 @@ app.get("/health", (req, res) => {
 });
 
 // Metrics endpoint (Prometheus format)
-app.get("/metrics", (req, res) => {
+app.get("/metrics", async (req, res) => {
   res.set("Content-Type", "text/plain; charset=utf-8");
-  res.send(metricsService.getMetrics());
+  const metrics = await metricsService.getMetrics();
+  res.send(metrics);
 });
 
 // Extended health endpoint with dependencies
@@ -170,6 +175,17 @@ app.use("/api/v1/tenants/:tenantId", auditDataAccessMiddleware);
  * - Never competes with observability tools
  */
 app.use("/api/v1/tenants/:tenantId", coreApiRoutes);
+
+/**
+ * APPROVAL WORKFLOW API
+ * 
+ * Implements human-in-the-loop approval for mid-confidence decisions (0.6-0.85)
+ * - GET /approvals - List pending approvals
+ * - POST /approvals/:approvalId/approve - Approve and queue for execution
+ * - POST /approvals/:approvalId/reject - Reject with reason
+ * - GET /approvals/queue/stats - Monitor approval queue
+ */
+app.use("/api/v1/tenants/:tenantId/approvals", approvalRoutes);
 
 // ============================================================================
 // PHASE 1: SAFETY CONTROL ENDPOINTS (Kill Switches & Confidence Thresholds)
@@ -793,6 +809,67 @@ async function startServer() {
     } catch (error) {
       console.warn("[server] ⚠️  Multi-instance coordination failed:", error.message);
       console.log("[server]    Continuing in single-instance mode");
+    }
+
+    // 8.9 KUBERNETES INTEGRATION: Register K8s handler with runbook execution
+    try {
+      const k8sClient = getK8sClient();
+      
+      // Verify K8s connectivity
+      try {
+        const connectivity = await k8sClient.verifyConnectivity();
+        console.log("[server] ✓ Kubernetes cluster connected:", {
+          version: connectivity.version,
+        });
+      } catch (k8sError) {
+        console.warn("[server] ⚠️  Kubernetes connectivity check failed:", k8sError.message);
+        console.log("[server]    K8s operations will fail if attempted");
+      }
+
+      // Register Kubernetes handler with runbook execution service
+      runbookExecutionService.registerHandler('kubernetes', async (step, context) => {
+        console.log('[server] Executing Kubernetes step:', {
+          stepName: step.name,
+          action: step.action,
+          resource: step.params?.resource,
+        });
+
+        const actionType = step.action; // e.g., 'restart_pod', 'restart_deployment', 'scale_deployment'
+        const params = step.params || {};
+        const correlationId = context.correlationId || step.correlationId || 'unknown';
+
+        try {
+          const result = await k8sClient.executeAction(actionType, params, { correlationId });
+          
+          return {
+            status: 'SUCCESS',
+            stepName: step.name,
+            action: step.action,
+            result,
+            timestamp: new Date(),
+          };
+        } catch (error) {
+          console.error('[server] K8s action failed:', {
+            stepName: step.name,
+            action: step.action,
+            error: error.message,
+            correlationId,
+          });
+          
+          return {
+            status: 'FAILED',
+            error: error.message,
+            stepName: step.name,
+            action: step.action,
+            timestamp: new Date(),
+          };
+        }
+      });
+
+      console.log("[server] ✓ Kubernetes handler registered with runbook execution");
+    } catch (error) {
+      console.warn("[server] ⚠️  Kubernetes integration failed:", error.message);
+      console.log("[server]    Kubernetes operations will not be available");
     }
 
     // 9. Start HTTP server (REST API only)

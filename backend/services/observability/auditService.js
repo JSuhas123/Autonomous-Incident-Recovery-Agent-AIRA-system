@@ -33,6 +33,8 @@ class AuditService {
         payload,
         signature,
         previousEventHash,
+        principal: context.principal || 'system', // Default to system if not provided
+        principalId: context.principalId || (context.userId || 'system'),
         userId: context.userId,
         ipAddress: context.ipAddress,
         correlationId: context.correlationId || crypto.randomUUID(),
@@ -61,7 +63,9 @@ class AuditService {
    * @private
    */
   static _computeSignature(tenantId, payload, timestamp) {
-    const message = JSON.stringify(payload) + tenantId + timestamp;
+    // Normalize timestamp to milliseconds (number) regardless of input type
+    const timestampMs = timestamp instanceof Date ? timestamp.getTime() : timestamp;
+    const message = JSON.stringify(payload) + tenantId + timestampMs;
     const secret = process.env.AUDIT_SECRET || "audit-secret";
     return crypto.createHmac("sha256", secret).update(message).digest("hex");
   }

@@ -118,13 +118,33 @@ class MetricsService {
    * Record decision execution
    */
   recordDecision(tenantId, severity, status, latencyMs) {
-    this.decisionLatency.observe({ tenantId, severity, status }, latencyMs);
+    // Ensure we have valid values
+    if (typeof latencyMs !== 'number' || isNaN(latencyMs)) {
+      latencyMs = 0;
+    }
+    const validSeverity = String(severity || 'UNKNOWN').toUpperCase();
+    const validStatus = String(status || 'unknown').toLowerCase();
+    
+    this.decisionLatency.observe(
+      { tenantId: String(tenantId), severity: validSeverity, status: validStatus },
+      latencyMs
+    );
+  }
+
+  /**
+   * Alias for recordDecision (legacy method name)
+   */
+  recordDecisionLatency(tenantId, severity, status, latencyMs) {
+    return this.recordDecision(tenantId, severity, status, latencyMs);
   }
 
   /**
    * Record action execution
    */
-  recordAction(tenantId, actionType, status, latencyMs) {
+  recordAction(tenantId, actionType, status, latencyMs = 0) {
+    if (typeof latencyMs !== 'number' || isNaN(latencyMs)) {
+      latencyMs = 0;
+    }
     this.actionExecutions.inc({ tenantId, actionType, status });
     this.actionLatency.observe({ tenantId, actionType, status }, latencyMs);
   }
@@ -146,7 +166,10 @@ class MetricsService {
   /**
    * Record policy evaluation
    */
-  recordPolicyEvaluation(tenantId, verdict, latencyMs) {
+  recordPolicyEvaluation(tenantId, verdict, latencyMs = 0) {
+    if (typeof latencyMs !== 'number' || isNaN(latencyMs)) {
+      latencyMs = 0;
+    }
     this.policyEvaluations.inc({ tenantId, verdict });
     this.policyLatency.observe({ tenantId }, latencyMs);
   }
@@ -190,9 +213,30 @@ class MetricsService {
   }
 
   /**
+   * Record action execution
+   */
+  recordActionExecution(tenantId, actionType, status, latencyMs = 0) {
+    if (typeof latencyMs !== 'number' || isNaN(latencyMs)) {
+      latencyMs = 0;
+    }
+    this.actionExecutions.inc({ tenantId, actionType, status });
+    this.actionLatency.observe({ tenantId, actionType, status }, latencyMs);
+  }
+
+  /**
+   * Record circuit breaker state (alias for updateCircuitBreakerState)
+   */
+  recordCircuitBreakerState(tenantId, service, state) {
+    this.updateCircuitBreakerState(tenantId, service, state);
+  }
+
+  /**
    * Record lock acquisition time
    */
-  recordLockAcquisition(lockKey, latencyMs) {
+  recordLockAcquisition(lockKey, latencyMs = 0) {
+    if (typeof latencyMs !== 'number' || isNaN(latencyMs)) {
+      latencyMs = 0;
+    }
     this.lockAcquisitions.observe({ lockKey }, latencyMs);
   }
 
@@ -204,10 +248,11 @@ class MetricsService {
   }
 
   /**
-   * Get all metrics in Prometheus format
+   * Get all metrics in Prometheus format (async - returns Promise)
    */
-  getMetrics() {
-    return prom.register.metrics();
+  async getMetrics() {
+    const metrics = await prom.register.metrics();
+    return metrics;
   }
 
   /**

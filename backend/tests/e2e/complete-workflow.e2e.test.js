@@ -85,6 +85,15 @@ describe('End-to-End: Complete Incident Resolution Workflow', () => {
     await connectDatabase();
     queueService = getQueueService();
     
+    // Clean up any existing test data BEFORE starting tests
+    try {
+      await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
+      await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+      console.log('[E2E Test] Cleaned up existing test data before tests');
+    } catch (e) {
+      console.warn('[E2E Test] Pre-test cleanup failed:', e.message);
+    }
+    
     // Create a mock idempotency service for testing
     idempotencyService = {
       recordedKeys: new Set(),
@@ -109,28 +118,47 @@ describe('End-to-End: Complete Incident Resolution Workflow', () => {
   });
 
   afterAll(async () => {
+    // Clean up test data after all tests complete
+    try {
+      await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
+      await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+      console.log('[E2E Test] Cleaned up test data after tests');
+    } catch (e) {
+      console.warn('[E2E Test] Post-test cleanup failed:', e.message);
+    }
     await disconnectDatabase();
   });
 
-  // Add cleanup before each test to prevent duplicate key errors
+  // Add aggressive cleanup before each test to prevent duplicate key errors
   beforeEach(async () => {
     try {
-      // Clean up existing test data before each test
-      await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
+      // Drop collections entirely if test fails and leaves data
+      // This ensures clean state for each test
+      await TenantConfig.deleteMany({ tenantId: TEST_TENANT });
       await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+      
+      // Release any indexes that might be stuck
+      try {
+        await TenantConfig.collection.dropIndex('tenantId_1');
+      } catch (e) {
+        // Index might not exist, that's OK
+      }
     } catch (e) {
-      // Ignore cleanup errors
+      console.warn('[E2E Test] beforeEach cleanup failed:', e.message);
     }
   });
 
-  // Add cleanup after each test
+  // Aggressive cleanup after each test
   afterEach(async () => {
     try {
-      // Clean up test data after each test
-      await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
-      await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+      // Delete all test data for this tenant
+      const deletedConfigs = await TenantConfig.deleteMany({ tenantId: TEST_TENANT });
+      const deletedPolicies = await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+      if (deletedConfigs.deletedCount > 0 || deletedPolicies.deletedCount > 0) {
+        console.log(`[E2E Test] Cleaned up ${deletedConfigs.deletedCount} configs and ${deletedPolicies.deletedCount} policies`);
+      }
     } catch (e) {
-      // Ignore cleanup errors
+      console.warn('[E2E Test] afterEach cleanup failed:', e.message);
     }
   });
 

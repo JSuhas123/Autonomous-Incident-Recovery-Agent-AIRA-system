@@ -26,7 +26,24 @@ class ConvergenceAnalyzer {
       return {
         hasConverged: true,
         reason: 'No weight updates recorded - system stable at baseline',
+        convergenceScore: '1.0000',
         metrics: this._getBaselineMetrics(decisionHistory),
+        oscillationAnalysis: {
+          oscillationByFactor: {},
+          unstableFactors: [],
+          overallStability: 'STABLE',
+        },
+        dominantFactors: {
+          topFactor: 'N/A',
+          emergentPattern: 'No weight updates - default weights remain in effect',
+          ranking: [],
+        },
+        trends: {
+          direction: 'STABLE',
+          velocityTrend: 'Converged',
+          predictedBehavior: 'Maintain baseline weights',
+        },
+        recommendations: ['System is stable with default weights'],
       };
     }
 

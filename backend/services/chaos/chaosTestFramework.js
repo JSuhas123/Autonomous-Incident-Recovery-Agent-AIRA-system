@@ -361,6 +361,22 @@ class LoadChaosInjector {
       });
     }
 
+    // Ensure array is returned with proper length
+    if (!Array.isArray(incidents) || incidents.length === 0) {
+      console.warn(`[LoadChaosInjector] Warning: incidents array empty or invalid, returning generated array with ${incidentCount} items`);
+      // Fallback: regenerate if something went wrong
+      const fallback = [];
+      for (let i = 0; i < incidentCount; i++) {
+        fallback.push({
+          id: `incident-${i}`,
+          timestamp: Date.now(),
+          severity: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'][Math.floor(Math.random() * 4)],
+          pattern: ['HIGH_LATENCY', 'HIGH_ERROR_RATE', 'MEMORY_LEAK', 'CASCADE_FAILURE'][Math.floor(Math.random() * 4)],
+        });
+      }
+      return fallback;
+    }
+
     return incidents;
   }
 

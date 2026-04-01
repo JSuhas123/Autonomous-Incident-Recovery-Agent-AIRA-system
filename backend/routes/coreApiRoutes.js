@@ -25,11 +25,35 @@ const { randomUUID } = require("node:crypto");
 /**
  * Build tiered decision based on signal characteristics
  */
-function buildTieredDecision(errorRate, responseTime, affectedServices) {
+function buildTieredDecision(errorRate, responseTime, affectedServices, severity) {
+  // CASCADE DETECTION FIRST - before checking error rate
+  // Cascade failure: high/critical severity + database/core service failure
+  const hasCoreService = affectedServices.some(svc => 
+    svc.toLowerCase().includes('database') || 
+    svc.toLowerCase().includes('core') ||
+    svc.toLowerCase().includes('backend')
+  );
+  const isCriticalSeverity = severity === 'CRITICAL' || severity === 'HIGH';
+  
+  // DEBUG: Log the parameters
+  if (affectedServices.some(s => s.toLowerCase().includes('database')) || severity === 'CRITICAL') {
+    console.log(`[buildTieredDecision] DEBUG - errorRate=${errorRate}, responseTime=${responseTime}, affectedServices=${JSON.stringify(affectedServices)}, severity=${severity}, hasCoreService=${hasCoreService}, isCriticalSeverity=${isCriticalSeverity}`);
+  }
+  
+  if (isCriticalSeverity && hasCoreService) {
+    console.log(`[buildTieredDecision] MATCH! Returning ESCALATE for cascade`);
+    return {
+      patternType: 'CASCADE_FAILURE',
+      recommendedAction: 'ESCALATE',
+      confidence: 0.92,
+      tier: 'escalate'
+    };
+  }
+  
   if (errorRate > 0.7) {
     return {
       patternType: 'SERVICE_CRASH',
-      recommendedAction: 'RESTART_SERVICE',
+      recommendedAction: 'RESTART',
       confidence: 0.95,
       tier: 'execute'
     };
@@ -37,7 +61,7 @@ function buildTieredDecision(errorRate, responseTime, affectedServices) {
   if (responseTime > 2000 && affectedServices.length > 2) {
     return {
       patternType: 'CASCADE_FAILURE',
-      recommendedAction: 'ISOLATE_SERVICE',
+      recommendedAction: 'ISOLATE',
       confidence: 0.78,
       tier: 'safe_fallback'
     };
@@ -45,7 +69,7 @@ function buildTieredDecision(errorRate, responseTime, affectedServices) {
   if (responseTime > 1500) {
     return {
       patternType: 'DATABASE_LATENCY',
-      recommendedAction: 'SCALE_DATABASE',
+      recommendedAction: 'SCALE',
       confidence: 0.82,
       tier: 'safe_fallback'
     };
@@ -170,13 +194,18 @@ router.post("/signals", async (req, res) => {
     const responseTime = signal.responseTime || 0;
     const affectedServices = signal.affectedServices || [];
     
+    // DEBUG: Log signal details if it looks like cascade scenario
+    if (affectedServices.some(s => s.toLowerCase().includes('database')) || severity === 'CRITICAL') {
+      console.log(`[coreApi] Signal for ${affectedServices.join(',')} - errorRate=${errorRate}, responseTime=${responseTime}, severity=${severity}, affectedServices=${JSON.stringify(affectedServices)}`);
+    }
+    
     // Build tiered decision based on signal characteristics
     const {
       patternType,
       recommendedAction,
       confidence: actionConfidence,
       tier
-    } = buildTieredDecision(errorRate, responseTime, affectedServices);
+    } = buildTieredDecision(errorRate, responseTime, affectedServices, severity);
 
     const decisionTrace = new DecisionTrace({
       decisionId,
@@ -207,13 +236,24 @@ router.post("/signals", async (req, res) => {
         circuitBreakerStatus: { enabled: true },
       },
       reasoning: {
-        hypothesis: `Pattern: ${patternType}. Signal analysis: errorRate=${errorRate.toFixed(2)}, responseTime=${responseTime}ms, services=${affectedServices.length}, tier=${tier}`,
+        hypothesis: `Pattern: ${patternType}. Affected services: ${affectedServices.join(', ')}. Signal analysis: errorRate=${errorRate.toFixed(2)}, responseTime=${responseTime}ms, severity=${severity}, tier=${tier}`,
         evidenceFor: [
           errorRate > 0.5 ? 'High error rate detected' : 'Normal error rate',
           responseTime > 500 ? 'Elevated response time' : 'Normal latency',
           affectedServices.length > 1 ? 'Multiple services affected' : 'Single service',
-        ],
+          severity === 'CRITICAL' || severity === 'HIGH' ? `Critical severity: ${severity}` : '',
+        ].filter(x => x),
         evidenceAgainst: [],
+        cascadeDetection: affectedServices.some(svc => 
+          svc.toLowerCase().includes('database') || 
+          svc.toLowerCase().includes('core') ||
+          svc.toLowerCase().includes('backend')
+        ) ? {
+          identified: true,
+          affectedServices: affectedServices,
+          severity: severity,
+          recommendation: tier === 'escalate' ? 'ESCALATE' : 'MONITOR'
+        } : null,
         confidenceFactors: [
           { name: 'error_rate_signal', value: Math.min(errorRate, 1), weight: 0.4, contribution: errorRate * 0.4 },
           { name: 'latency_signal', value: Math.min(responseTime / 2000, 1), weight: 0.4, contribution: (responseTime / 2000) * 0.4 },

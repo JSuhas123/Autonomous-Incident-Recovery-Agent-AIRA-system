@@ -278,7 +278,8 @@ describe('Auth Middleware Security Tests', () => {
   describe('Signature Verification', () => {
     test('should reject invalid signature', async () => {
       const timestamp = Date.now().toString();
-      const invalidSignature = 'invalid-signature-hash';
+      // Create an invalid signature with correct length (64 chars for sha256 hex)
+      const invalidSignature = '0'.repeat(64);
 
       const req = {
         params: { tenantId: TEST_TENANT },

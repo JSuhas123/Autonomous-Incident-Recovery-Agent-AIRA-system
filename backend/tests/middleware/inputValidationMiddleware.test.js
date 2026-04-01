@@ -448,7 +448,9 @@ describe('Input Validation Middleware Security Tests', () => {
       // Joi with convert enabled will coerce strings to numbers
       const { error, value } = schema.validate(input, { convert: true });
       expect(error).toBeUndefined();
-      expect(typeof value.rateLimits.decision).toBe('string' || 'number');
+      // Rate limit values can be either string or number type
+      const valueType = typeof value.rateLimits.decision;
+      expect(['string', 'number']).toContain(valueType);
     });
 
     test('should reject non-boolean values for boolean fields', () => {

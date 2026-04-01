@@ -127,25 +127,26 @@ class ChaosTestFramework {
     // Convert test signal format (signalType, value) to API format (errorRate, responseTime, affectedServices)
     let errorRate = 0;
     let responseTime = 0;
-    const affectedServices = [testSignal.service || 'api-gateway'];
+    // Use provided affectedServices or create from service
+    const affectedServices = testSignal.affectedServices || [testSignal.service || 'api-gateway'];
 
     if (testSignal.signalType === 'errorRate') {
-      errorRate = testSignal.value; // e.g., 0.8
-      responseTime = 500; // Default moderate latency
+      errorRate = testSignal.errorRate !== undefined ? testSignal.errorRate : testSignal.value; // e.g., 0.8
+      responseTime = testSignal.responseTime !== undefined ? testSignal.responseTime : 500; // Default moderate latency
     } else if (testSignal.signalType === 'latency') {
-      responseTime = testSignal.value; // e.g., 2000ms
-      errorRate = 0.1; // Default low error rate
+      responseTime = testSignal.responseTime !== undefined ? testSignal.responseTime : testSignal.value; // e.g., 2000ms
+      errorRate = testSignal.errorRate !== undefined ? testSignal.errorRate : 0.1; // Default low error rate
     } else if (testSignal.signalType === 'throughput') {
       // Low throughput indicates service degradation
       responseTime = testSignal.value > 5000 ? 300 : (testSignal.value < 1000 ? 2000 : 800);
       errorRate = testSignal.value < 1000 ? 0.3 : 0.05;
     } else {
-      // Unknown signal type - use moderate defaults
-      errorRate = 0.3;
-      responseTime = 1000;
+      // Unknown signal type - use provided values or defaults
+      errorRate = testSignal.errorRate !== undefined ? testSignal.errorRate : 0.3;
+      responseTime = testSignal.responseTime !== undefined ? testSignal.responseTime : 1000;
     }
 
-    return {
+    const result = {
       errorRate,
       responseTime,
       affectedServices,
@@ -154,6 +155,13 @@ class ChaosTestFramework {
       service: testSignal.service || 'api-gateway',
       timestamp: testSignal.timestamp || new Date(),
     };
+    
+    // DEBUG: Log if this is a database signal
+    if (affectedServices.some(s => s.toLowerCase().includes('database'))) {
+      console.log(`[transformSignal] Database signal transformed: ${JSON.stringify({affectedServices: result.affectedServices, severity: result.severity, errorRate: result.errorRate, responseTime: result.responseTime})}`);
+    }
+    
+    return result;
   }
 
   /**

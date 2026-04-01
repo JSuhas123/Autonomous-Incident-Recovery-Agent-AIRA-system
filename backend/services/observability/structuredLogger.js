@@ -113,4 +113,7 @@ class StructuredLogger {
   }
 }
 
-module.exports = new StructuredLogger();
+// Export both the singleton instance and the class
+const singleton = new StructuredLogger();
+module.exports = singleton;
+module.exports.StructuredLogger = StructuredLogger;

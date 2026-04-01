@@ -62,6 +62,7 @@ const auditEventSchema = new mongoose.Schema(
       required: true,
     },
     previousEventHash: String,
+    eventHash: String,  // Hash of this event for chain-of-custody
     metadata: mongoose.Schema.Types.Mixed,
     status: {
       type: String,

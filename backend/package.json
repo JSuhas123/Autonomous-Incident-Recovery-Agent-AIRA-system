@@ -16,19 +16,29 @@
     "test:phase2": "jest tests/integration/phase2-integration.test.js --detectOpenHandles --forceExit",
     "test:phase3": "jest tests/integration/phase3-integration.test.js --detectOpenHandles --forceExit",
     "test:load": "jest production-load.test.js --testTimeout=600000 --detectOpenHandles --forceExit",
-    "test:load:quick": "jest production-load.test.js -t 'sustained load' --testTimeout=120000 --detectOpenHandles --forceExit"
+    "test:load:quick": "jest production-load.test.js -t 'sustained load' --testTimeout=120000 --detectOpenHandles --forceExit",
+    "test:observability": "jest tests/integration/observability-validation.test.js --detectOpenHandles --forceExit",
+    "test:observability:logging": "jest tests/integration/observability-validation.test.js -t 'Structured Logging' --detectOpenHandles --forceExit",
+    "test:observability:metrics": "jest tests/integration/observability-validation.test.js -t 'Prometheus Metrics' --detectOpenHandles --forceExit",
+    "test:observability:audit": "jest tests/integration/observability-validation.test.js -t 'Audit Trail' --detectOpenHandles --forceExit",
+    "test:observability:e2e": "jest tests/integration/observability-validation.test.js -t 'End-to-End Tracing' --detectOpenHandles --forceExit",
+    "test:observability:alerts": "jest tests/integration/observability-validation.test.js -t 'Alert Validation' --detectOpenHandles --forceExit",
+    "check:observability": "node scripts/check-observability-health.js --verbose",
+    "validate:observability": "node scripts/validate-observability-pipeline.js --suite=all",
+    "generate:samples": "node scripts/generate-observability-samples.js --count=20 --tenant=demo-tenant"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@kubernetes/client-node": "^0.20.0",
     "amqplib": "^0.10.4",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "isomorphic-dompurify": "^2.30.0",
+    "xss": "^1.0.14",
     "joi": "^17.11.0",
     "js-yaml": "^4.1.0",
     "mongodb-memory-server": "^10.1.4",

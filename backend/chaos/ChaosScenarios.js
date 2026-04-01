@@ -339,14 +339,24 @@ class ChaosScenarios {
         
         // Multiple signals per service failure
         for (let i = 0; i < 15; i++) {
-          signals.push({
-            signalType: Math.random() > 0.6 ? 'errorRate' : 'latency',
+          const isErrorSignal = Math.random() > 0.6;
+          const signal = {
+            signalType: isErrorSignal ? 'errorRate' : 'latency',
             service: step.service,
-            value: Math.random() > 0.5 ? (0.9 + Math.random() * 0.1) : (5000 + Math.random() * 1000),
+            affectedServices: [step.service],
+            errorRate: isErrorSignal ? (0.9 + Math.random() * 0.1) : 0.05,
+            responseTime: !isErrorSignal ? (5000 + Math.random() * 1000) : 100,
             severity: step.severity,
             timestamp: new Date(timestamp + i * 100),
             dependencies: step === cascadeServices[0] ? [] : [cascadeServices[cascadeServices.indexOf(step) - 1].service],
-          });
+          };
+          
+          // DEBUG: Log database signals
+          if (step.service === 'database' && i === 0) {
+            console.log(`[ChaosScenarios] First database signal: ${JSON.stringify({signalType: signal.signalType, service: signal.service, affectedServices: signal.affectedServices, severity: signal.severity})}`);
+          }
+          
+          signals.push(signal);
         }
 
         result.cascadeSequence.push(step.service);
@@ -381,10 +391,28 @@ class ChaosScenarios {
       // Sort decisions by service to see cascade pattern
       const decisionsByService = new Map();
       for (const decision of decisionArray) {
-        const reason = decision.decision?.reasoning?.hypothesis || 
-                      decision.explanation?.actionChosen?.reason || 
-                      decision.reasoning?.hypothesis || '';
-        const service = reason.match(/\b(database|api-service|api-gateway|frontend)\b/)?.[0];
+        // Try multiple ways to extract the service name
+        let service = null;
+        
+        // First try: extract from hypothesis
+        const hypothesis = decision.decision?.reasoning?.hypothesis || 
+                          decision.explanation?.actionChosen?.reason || 
+                          decision.reasoning?.hypothesis || '';
+        const serviceMatch = hypothesis.match(/\b(database|api-service|api-gateway|frontend)\b/);
+        if (serviceMatch) {
+          service = serviceMatch[0];
+        }
+        
+        // Second try: check affectedServices in inputs
+        if (!service && decision.decision?.inputs?.signals?.affectedServices?.length > 0) {
+          service = decision.decision.inputs.signals.affectedServices[0];
+        }
+        
+        // Third try: extract from cascadeDetection field
+        if (!service && decision.decision?.reasoning?.cascadeDetection?.affectedServices?.length > 0) {
+          service = decision.decision.reasoning.cascadeDetection.affectedServices[0];
+        }
+        
         if (service) {
           if (!decisionsByService.has(service)) {
             decisionsByService.set(service, []);
@@ -400,13 +428,19 @@ class ChaosScenarios {
                         decision.explanation?.actionChosen?.action ||
                         decision.recommendedAction || '';
           
-          if (service === 'database' && action.includes('ESCALATE')) {
+          // Check for escalation in action or impactTier
+          const isEscalationAction = action.toLowerCase().includes('escalate') || 
+                                    decision.impactTier === 'ESCALATE';
+          const isRestartAction = action.toLowerCase().includes('restart');
+          
+          // Root cause detected if database triggers escalation
+          if (service === 'database' && isEscalationAction) {
             result.metrics.rootCauseDetected = true;
           }
 
-          if (action.includes('ESCALATE')) {
+          if (isEscalationAction) {
             result.metrics.appropriateEscalations++;
-          } else if (action.includes('RESTART')) {
+          } else if (isRestartAction) {
             result.metrics.unnecessaryRestarts++;
           }
         }
@@ -418,14 +452,17 @@ class ChaosScenarios {
 
       result.validations = validator.getSummary();
       
-      // Success criteria: decisions processed with proportional escalations > restarts
+      // Success criteria: Root cause detected AND decisions received AND escalate > restart
       const decisionRate = result.metrics.decisionsReceived / result.metrics.signalsInjected;
-      const escalationRatio = result.metrics.appropriateEscalations > 0 ? 
-        (result.metrics.appropriateEscalations / (result.metrics.appropriateEscalations + result.metrics.unnecessaryRestarts)) : 0;
+      const totalResponses = result.metrics.appropriateEscalations + result.metrics.unnecessaryRestarts;
+      const escalationRatio = totalResponses > 0 ? 
+        (result.metrics.appropriateEscalations / totalResponses) : 0;
       
-      // Pass if: got decisions AND appropriate response (escalate > restart)
-      result.success = result.metrics.decisionsReceived > 0 && 
-                       escalationRatio >= 0.5;
+      // Pass if: root cause detected AND got decisions AND escalations >= restarts
+      result.success = result.metrics.rootCauseDetected && 
+                       result.metrics.decisionsReceived > 0 && 
+                       result.metrics.appropriateEscalations > 0 &&
+                       result.metrics.appropriateEscalations >= (result.metrics.unnecessaryRestarts || 1);
 
       result.details.push({
         phase: 'Summary',

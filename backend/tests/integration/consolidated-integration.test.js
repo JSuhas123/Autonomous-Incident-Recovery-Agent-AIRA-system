@@ -15,6 +15,7 @@ const PolicyDefinition = require('../../models/PolicyDefinition');
 const { policyEngine: PolicyEngine } = require('../../services/core');
 const { auditService: AuditService } = require('../../services/observability');
 const { idempotencyService: IdempotencyService } = require('../../services/infrastructure');
+const { cleanupTestData, cleanupAllCollections } = require('../utils/mongoCleanup');
 
 const dlqService = require('../../services/infrastructure/dlqService');
 const messageOrderingService = require('../../services/infrastructure/messageOrderingService');
@@ -32,22 +33,24 @@ describe('Consolidated Integration Tests - All Phases', () => {
 
   beforeAll(async () => {
     await connectDatabase();
+    // Clean up any leftover data from previous runs
+    await cleanupAllCollections();
   });
 
   afterAll(async () => {
+    // Complete cleanup after tests to prevent constraint violations on next run
+    await cleanupAllCollections();
     await disconnectDatabase();
   });
 
   beforeEach(async () => {
-    // Clean up test data before each describe block
-    await TenantConfig.deleteMany({ tenantId: TEST_TENANT });
-    await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+    // Clean up test data before each test to prevent unique constraint violations
+    await cleanupTestData(TEST_TENANT);
   });
 
   afterEach(async () => {
-    // Clean up after each describe block
-    await TenantConfig.deleteMany({ tenantId: TEST_TENANT });
-    await PolicyDefinition.deleteMany({ tenantId: TEST_TENANT });
+    // Clean up after each test
+    await cleanupTestData(TEST_TENANT);
   });
 
   describe('PHASE 1: Complete Incident Pipeline', () => {
