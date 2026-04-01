@@ -1,103 +1,844 @@
-# AIRA System - Training & Onboarding Materials
+# AIRA System - Training & Onboarding (All 10 Phases)
 
-**Version**: 1.0  
-**Last Updated**: April 1, 2026  
-**Audience**: New team members, on-call engineers, stakeholders
-
----
-
-## 📚 AIRA Training Path (3-5 Hours)
-
-### Phase 1: Understanding AIRA (30 minutes)
-**Goal**: Understand what AIRA does and why it matters
-
-**Video/Presentation Topics**:
-1. What is autonomous incident recovery? (5 min)
-   - Traditional flow: incident → pager → human → action → docs
-   - AIRA flow: incident signal → automatic decision → safe action → audit
-   - Why this matters: faster MTTR, consistency, learning
-
-2. Real-world example: API rate limiting incident (5 min)
-   - Signal: error_rate spike to 15%
-   - Detection: Analysis agent notices pattern
-   - Decision: Policy says "increase rate limit" for this service
-   - Action: Safe action executed in seconds
-   - Outcome: Error rate drops to <1%
-
-3. Safety first philosophy (5 min)
-   - AIRA can't do anything without policy approval
-   - Every decision is auditable and reversible
-   - Multiple safety gates prevent unintended actions
-   - Confidence scoring prevents low-certainty decisions
-
-4. System components overview (10 min)
-   - Three-agent pipeline
-   - Policy engine
-   - Safety gates
-   - Audit trail
+**Version**: 5.0.0 (All 10 Phases)  
+**Last Updated**: Current  
+**Audience**: New team members, on-call engineers, developers, stakeholders
 
 ---
 
-### Phase 2: Deep Dive - The Decision Pipeline (60 minutes)
+## 📚 Complete Training Path (8-10 Hours)
 
-#### Part A: Analysis Agent (15 min)
-**What it does**: Detects incidents and understands patterns
+This training covers all 10 phases of AIRA implementation. You can complete phases 1-3 in ~3-4 hours, then continue with phases 4-10 for specialized knowledge.
 
-**Key concepts**:
-- **Signal** = Any metric or log indicating a problem
-- **Pattern** = A repeated sequence of signals (e.g., "database replication lag")
-- **Severity** = How bad is this (LOW/MEDIUM/HIGH/CRITICAL)
-- **Root cause hypothesis** = What do we think is wrong
+---
 
-**Example walkthrough**:
+## **Phase 1: Understanding AIRA (30 minutes)**
+
+**Goal**: Grasp what AIRA does, why it matters, and core concepts
+
+### The Three-Agent Pipeline
+
 ```
-Signal: db_replication_lag > 30s
+Signal Input (metric/log spike)
+    ↓
+[ANALYSIS Agent] → Understand: "What's happening?"
+    ↓
+[DECISION Agent] → Decide: "What should we do?"
+    ↓
+[ACTION Agent] → Execute: "Do it safely"
+    ↓
+Audit Trail + Feedback → Learn & Improve
+```
+
+### Key Concepts
+
+- **Signal**: Any metric or log indicating a problem (error rate spike, latency increase, database lag)
+- **Pattern**: Repeated sequence of signals (e.g., "cache miss storm" pattern seen before)
+- **Severity**: Impact level - LOW, MEDIUM, HIGH, CRITICAL
+- **Policy**: Rules that say "IF this pattern → THEN do that action"
+- **Decision Trace**: Complete reasoning for why this action was chosen (auditable)
+- **Safety Gate**: Check that prevents dangerous actions (dry-run, approval, confidence threshold)
+
+### Real-World Example
+
+```
+Incident: API error rate spikes to 15%
   ↓
-Analysis Agent runs pattern matching
-  ↓
-Pattern found: "database-replication-delay" (seen 47 times before)
-  ↓
-Severity: CRITICAL (system is read-only)
-  ↓
-Root cause hypothesis: "Database replication has stalled"
-  ↓
+Analysis Agent detects: "Familiar pattern - load spike before rate limiting"
 Confidence: 92% (matches known pattern, clear signals)
+  ↓
+Decision Agent checks policy: "IF error_rate > 10% THEN increase_rate_limit"
+Confidence: 86% (pattern match + historical success rate)
+  ↓
+Action Agent applies safety gates:
+  ✓ Confidence > 65% threshold? YES
+  ✓ Policy allows this action? YES
+  ✓ Similar action executed recently? NO (avoid duplicates)
+  ↓
+Action executes: Rate limit increased by 50%
+  ↓
+Outcome recorded: Error rate drops to <1%, users unaffected
+  ↓
+System learns: Increases confidence for this pattern-action combo
 ```
 
-**Hands-on exercise** (15 min):
-- Open `/backend/agents/analysisAgent.js`
-- Trace through `analyzeIssue()` function
-- Identify: signal detection, pattern matching, severity calculation
-- Modify: Add a new signal type (e.g., "cache_hit_rate < 50%")
-- Test: Run `npm test -- analysisAgent.test.js`
+### Hands-On Exercise
 
-#### Part B: Decision Agent (20 min)
-**What it does**: Decides what action to take based on policy
+1. Start the system:
+   ```bash
+   cd backend
+   docker-compose up -d
+   npm start
+   ```
 
-**Key concepts**:
-- **Policy** = Rules that dictate "if condition → take action"
-- **Rule engine** = Matcher that evaluates conditions against signals
-- **Confidence** = How sure are we this is the right action?
-- **Decision trace** = Full reasoning for why this action was chosen
+2. Send a test signal:
+   ```bash
+   curl -X POST http://localhost:5000/signals \
+     -H "Content-Type: application/json" \
+     -d '{"type":"error_rate_spike","value":15,"service":"api"}'
+   ```
 
-**Example walkthrough**:
+3. Check the decision:
+   ```bash
+   curl http://localhost:5000/decisions
+   ```
+
+4. Inspect the audit trail - see every step of the reasoning
+
+---
+
+## **Phase 2: Policy Management System (45 minutes)**
+
+**Goal**: Understand how policies drive decision-making
+
+### Policy Files (YAML-Based)
+
+Policies define the rules that guide automatic actions. Located in `/backend/policies/`
+
+**Example Policy**:
+```yaml
+domain: database
+rules:
+  - name: "Restart Database Replication"
+    condition: "db_replication_lag > 30s"
+    action: "restart_replication"
+    cooldown: 300        # Don't repeat for 5 minutes
+    risk_level: "medium"
+    version: "1.0"       # Versioning for audit trail
+
+  - name: "Increase Cache TTL Under Load"
+    condition: "cache_miss_rate > 0.5"
+    action: "increase_cache_ttl"
+    cooldown: 60
+    risk_level: "low"
+    version: "1.1"
 ```
-Hypothesis: "Database replication has stalled"
+
+### Policy Versioning (Phase 2 Feature)
+
+Every decision stores **exactly which policy version** was used:
+- Users can see historical policies
+- Older decisions are still auditable
+- Policy changes don't invalidate past reasoning
+- Rollback to previous policy if needed
+
+**Example**:
+```
+Decision executed on 2026-04-15 10:30:00 UTC
+  Policy domain: "database"  
+  Policy version: "1.2"      ← Exact version used
+  Rules evaluated: 5
+  Rule matched: "Restart Database Replication" (v1.2)
+  Confidence: 86%
+```
+
+### Hands-On: Write Your First Policy
+
+1. Review existing policy:
+   ```bash
+   cat backend/policies/default-policy.yaml
+   ```
+
+2. Create a new policy for a custom scenario:
+   ```yaml
+   domain: cache
+   rules:
+     - name: "Clear Cache Under Memory Pressure"
+       condition: "memory_usage > 0.85"
+       action: "clear_cache"
+       cooldown: 120
+       risk_level: "low"
+       version: "1.0"
+   ```
+
+3. Test it via API:
+   ```bash
+   curl -X POST http://localhost:5000/policies \
+     -H "Content-Type: application/json" \
+     -d @your-policy.json
+   ```
+
+4. Verify in decision trace - see your policy matched
+
+---
+
+## **Phase 3: Effectiveness Metrics & Learning (40 minutes)**
+
+**Goal**: Understand how AIRA learns and improves from outcomes
+
+### Feedback Loops
+
+Every action creates a decision that can be marked successful or failed:
+
+```
+Decision: "Increase rate limit to 5000 req/s"
   ↓
-Load policy for database domain
+Action executes
   ↓
-Policy Rule #1: IF replication_lag > 30s THEN restart_replication
-  Condition: TRUE ✓
+[ Wait 5 minutes ]
   ↓
-Check confidencee factors:
-  - Pattern match: 92%
-  - Historical success rate: 88%
-  - Risk of action: LOW
+Measure outcome: 
+  - Error rate: 15% → 1% ✅ (SUCCESSFUL)
+  - User experience: improved ✅
+  - No side effects ✅
   ↓
-Final confidence: 86% > threshold (65%)
+Record feedback: success_rate += 1
   ↓
-Decision: APPROVE action "restart_replication" with confidence 86%
-  ↓
+Confidence auto-increases for this pattern (via Phase 4)
+```
+
+### Effectiveness Metrics
+
+Track success rates for:
+- Each decision type (rate limiting, cache optimization, etc.)
+- Each policy rule
+- Time periods (trends)
+
+**Example Report**:
+```
+Decision Type: "increase_rate_limit"
+Success Rate: 94.2% (97 successes, 6 failures)
+Average Impact: 8 minutes MTTR improvement
+Cost Impact: $2,400 saved per incident
+```
+
+### Hands-On: Record Feedback
+
+1. Get a decision ID:
+   ```bash
+   curl http://localhost:5000/decisions | jq '.data[0].id'
+   ```
+
+2. Mark it as successful:
+   ```bash
+   curl -X POST http://localhost:5000/feedback \
+     -H "Content-Type: application/json" \
+     -d '{
+       "decision_id": "<id>",
+       "outcome": "success",
+       "impact": "error_rate reduced from 15% to 1%"
+     }'
+   ```
+
+3. Check effectiveness:
+   ```bash
+   curl http://localhost:5000/effectiveness-analysis
+   ```
+
+---
+
+## **Phase 4: Adaptive Confidence System (50 minutes)**
+
+**Goal**: Learn how decisions improve over time through ML-based confidence calibration
+
+### The Confidence Problem
+
+Early decisions use generic thresholds:
+```
+Condition met → IF confidence > 65% → Execute action
+```
+
+But what if:
+- Some patterns are always safe? (Should increase threshold)
+- Some patterns often fail? (Should decrease threshold)
+- Confidence factors don't predict success equally? (Should weight differently)
+
+### Solution: Adaptive Confidence
+
+AIRA uses **linear regression** to:
+1. Identify which factors best predict success
+2. Auto-adjust weights for those factors
+3. Continuously improve as new feedback arrives
+
+**Example**:
+```
+Factors influencing success:
+  - Pattern match: weight 0.4 (strong predictor)
+  - Historical success: weight 0.35 (strong)
+  - Service health: weight 0.15 (weak)
+  - Time of day: weight 0.1 (very weak)
+  
+As system learns → weights auto-adjust
+  Pattern match: 0.45 (more important)
+  Historical success: 0.40
+  Service health: 0.10
+  Time of day: 0.05
+```
+
+### Confidence Thresholds
+
+Phase 4 introduces multiple decision recommendations:
+- **EXECUTE**: Confidence > 80% → Auto-execute immediately
+- **MONITOR**: Confidence 60-80% → Execute but monitor closely
+- **CAUTION**: Confidence 40-60% → Manual approval required
+- **BLOCK**: Confidence < 40% → Don't execute (wait for better conditions)
+
+### Kill-Switch Mechanism
+
+If system detects low-confidence patterns:
+```bash
+# Auto-enables SAFE_MODE when:
+confidence_anomaly_detected: true
+average_confidence < 50%
+
+# In SAFE_MODE:
+# - All actions require manual approval
+# - Confidence calculations extra strict
+# - System waits for better understanding
+```
+
+### Hands-On: Monitor Confidence Calibration
+
+1. Check current confidence model:
+   ```bash
+   curl http://localhost:5000/confidence-model
+   ```
+
+2. Generate feedback to trigger learning:
+   ```bash
+   npm run script:generate-feedback-for-learning
+   ```
+
+3. Watch weights adjust:
+   ```bash
+   curl http://localhost:5000/confidence-model | jq '.factor_weights'
+   ```
+
+4. Check calibration accuracy:
+   ```bash
+   curl http://localhost:5000/confidence-metrics
+   ```
+
+---
+
+## **Phase 5: Multi-Source Integrations (45 minutes)**
+
+**Goal**: Learn how AIRA connects to external systems and receives signals
+
+### Slack Integration
+
+Decisions can notify on Slack:
+
+```bash
+curl -X POST http://localhost:5000/integrations/slack/notify \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Database replication restarted",
+    "decision_id": "<id>",
+    "severity": "high",
+    "action_details": {
+      "service": "postgres_replica_02",
+      "action": "restart",
+      "expected_recovery": "2-3 minutes"
+    }
+  }'
+```
+
+Slack shows:
+- Decision summary
+- Action taken
+- Confidence level
+- Next steps
+
+### Webhook Integration
+
+Receive signals from external systems (Datadog, custom apps):
+
+```bash
+# External system sends signal
+curl -X POST http://localhost:5000/webhooks/datadog \
+  -H "Content-Type: application/json" \
+  -d '{
+    "alert": "error_rate_high",
+    "service": "api",
+    "value": 15,
+    "timestamp": "2026-04-15T10:30:00Z"
+  }'
+```
+
+AIRA processes → Analyzes → Decides → Acts
+
+### External Service Integrations
+
+**Datadog**: Import metrics and query performance data
+**Prometheus**: Export metrics for external monitoring
+**PagerDuty**: Create incidents for manual escalation
+**ServiceNow**: Auto-create tickets for compliance
+
+### Hands-On: Set Up Slack Integration
+
+1. Get a Slack bot token
+2. Set environment variable:
+   ```bash
+   export SLACK_TOKEN=xoxb-your-token
+   export SLACK_WEBHOOK_URL=https://hooks.slack.com/...
+   ```
+
+3. Test notification:
+   ```bash
+   curl -X POST http://localhost:5000/test-slack-notification
+   ```
+
+4. Make a decision and watch Slack get notified automatically
+
+---
+
+## **Phase 6: Docker & Kubernetes Deployment (40 minutes)**
+
+**Goal**: Understand containerization and production deployment
+
+### Docker Basics
+
+Build AIRA container:
+```bash
+docker build -t aira:v1.0 .
+
+docker run -d \
+  --name aira-prod \
+  -p 5000:5000 \
+  --env-file .env.prod \
+  aira:v1.0
+```
+
+### Kubernetes Deployment
+
+Production-grade deployment with:
+- Multi-replica scaling (3 pods default)
+- Health checks (liveness + readiness probes)
+- Resource limits (CPU, memory)
+- Horizontal Pod Autoscaler (HPA)
+
+```bash
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/hpa.yaml
+
+# Scale up/down
+kubectl scale deployment aira --replicas=5
+```
+
+### Distributed Coordination
+
+When running multiple AIRA instances:
+- Redis ensures idempotent actions (no duplicates)
+- Distributed locks prevent race conditions
+- SAFE_MODE activates if Redis goes down
+
+**Example**:
+```
+Instance 1: "Acquire lock for restart_service_X"
+Instance 2: "Wait for lock..."
+Instance 1: "Execute action, release lock"
+Instance 2: "Acquire lock, see action already done, skip"
+  Result: Action executed exactly once ✓
+```
+
+### Hands-On: Deploy to Kubernetes
+
+```bash
+# Install AIRA
+kubectl apply -f k8s/
+
+# Check status
+kubectl get pods -l app=aira
+
+# View logs
+kubectl logs -f deployment/aira
+
+# Scale up
+kubectl scale deployment aira --replicas=5
+
+# Check autoscaling
+kubectl get hpa
+```
+
+---
+
+## **Phase 7: Failure Scenario Testing (50 minutes)**
+
+**Goal**: Understand chaos testing and system resilience
+
+### Why Chaos Testing?
+
+Before going to production, test what happens when things break:
+- Database crashes
+- Network goes down
+- External API becomes slow
+- Memory runs out
+- Queue backs up
+
+AIRA includes 15+ failure scenarios to validate recovery.
+
+### Chaos Test Framework
+
+Run specific failure scenarios:
+
+```bash
+cd backend/chaos
+
+# Validate environment
+node quick-start.js
+
+# Run all scenarios
+node run-chaos-tests.js
+
+# Run specific scenario
+node run-chaos-tests.js --scenario database_failure
+```
+
+### Test Scenarios
+
+**Database Failures** (4 scenarios):
+- Connection timeout
+- Query timeout
+- Slow queries (>5s)
+- Connection pool exhaustion
+
+**Queue Failures** (3 scenarios):
+- Broker unavailable
+- Message redelivery during restart
+- Poison pill detection
+
+**External Service Failures** (4 scenarios):
+- Slack API timeout
+- Webhook endpoint down
+- PagerDuty API failure
+- Custom integration timeout
+
+**Resource & Load** (4 scenarios):
+- Memory pressure
+- CPU spike
+- Connection limits
+- Database contention
+
+### Expected Behavior Under Failures
+
+When a failure occurs, AIRA should:
+1. Detect the failure (connection error, timeout)
+2. Trigger circuit breaker (stop retrying immediately)
+3. Log comprehensive diagnostics
+4. Activate SAFE_MODE if critical service down
+5. Either recover automatically or wait for manual intervention
+
+### Hands-On: Run Chaos Tests
+
+```bash
+# Run full chaos test suite
+cd backend/chaos
+npm install
+node run-chaos-tests.js
+
+# Run specific failure scenario
+node run-chaos-tests.js --scenario db_failure
+
+# Watch recovery
+node run-chaos-tests.js --verbose
+```
+
+---
+
+## **Phase 8: Approval Workflows & Execution Modes (45 minutes)**
+
+**Goal**: Master approval workflows and different execution approaches
+
+### Execution Modes
+
+AIRA supports three execution modes:
+
+**1️⃣ Automated (Default)**
+```
+✓ Confidence > 75%
+✓ Policy allows it
+✓ No recent duplicate
+→ Execute immediately
+```
+
+**2️⃣ Dry-Run (Pre-execution Testing)**
+```
+Run action in dry-run mode:
+  - Simulates execution
+  - Returns expected outcome
+  - Doesn't actually change system
+  - Shows full diff before proceeding
+```
+
+**3️⃣ Manual Approval (High-Risk)**
+```
+High-risk actions require approval:
+  ✓ Confidence 40-75%
+  ✓ Database changes
+  ✓ Multi-service impacts
+  
+Sends approval request → Wait for human → Execute/Reject
+```
+
+### Approval Workflow State Machine
+
+```
+State: PENDING
+├─ Awaits reviewer approval
+├─ Expires after 1 hour
+└─ Can transition to: APPROVED or REJECTED
+
+State: APPROVED
+├─ Execution authorized
+├─ Action executes immediately
+└─ Transitions to: EXECUTING → COMPLETED
+
+State: REJECTED
+├─ Action blocked
+├─ Reason logged
+└─ Transitions to: REJECTED (terminal)
+```
+
+### Runbook Execution
+
+Actions are parameterized via runbooks:
+
+**Runbook Example** (`api-rate-limit-fix.yaml`):
+```yaml
+action: increase_rate_limit
+parameters:
+  - service: string (required)
+  - increase_percentage: number (default: 50)
+  - max_limit: number (default: 5000)
+steps:
+  1. Validate service exists
+  2. Calculate new limit: current * (1 + increase_percentage%)
+  3. Cap at max_limit
+  4. Apply change
+  5. Monitor error rate for 2 minutes
+  6. Record outcome
+```
+
+### Hands-On: Create Approval Workflow
+
+1. Create a decision requesting approval:
+   ```bash
+   curl -X POST http://localhost:5000/decisions \
+     -H "Content-Type: application/json" \
+     -d '{
+       "signal": "db_replication_lag > 30s",
+       "execution_mode": "manual_approval"
+     }'
+   ```
+
+2. Check approval status:
+   ```bash
+   curl http://localhost:5000/approvals/pending
+   ```
+
+3. Approve the action:
+   ```bash
+   curl -X POST http://localhost:5000/approvals/<id>/approve
+   ```
+
+4. Watch execution:
+   ```bash
+   curl http://localhost:5000/decisions/<id>
+   ```
+
+---
+
+## **Phase 9: API & Documentation (30 minutes)**
+
+**Goal**: Master the API and understand documentation structure
+
+### Core API Endpoints
+
+**Decision Management**:
+- `POST /decisions` - Create and execute decision
+- `GET /decisions` - List decisions with filters
+- `GET /decisions/:id` - Get decision details
+- `GET /decisions/:id/trace` - Get full reasoning trace
+
+**Feedback & Learning**:
+- `POST /feedback` - Record outcome (success/failure)
+- `GET /effectiveness-analysis` - Trend analysis by decision type
+- `GET /confidence-model` - Current ML weights and thresholds
+
+**Policy Management**:
+- `POST /policies` - Create or update policy
+- `GET /policies` - List active policies
+- `GET /policies/versions` - Historical versions
+
+**Approval Workflows**:
+- `GET /approvals/pending` - Approval requests awaiting action
+- `POST /approvals/:id/approve` - Approve action
+- `POST /approvals/:id/reject` - Reject action
+
+**Health & Monitoring**:
+- `GET /health` - System health check
+- `GET /metrics` - Prometheus metrics
+- `GET /system-status` - Detailed system status
+
+### Documentation Structure
+
+Main docs:
+- **README.md**: Overview, quick start, features (this file)
+- **TESTING.md**: Test coverage, chaos testing
+- **TRAINING.md**: Training for all phases (this file)
+- **DEPLOYMENT.md**: Production deployment guide
+- **ARCHITECTURE.md**: System design deep dive
+- **API.md**: Complete API reference
+
+### Hands-On: Explore API
+
+```bash
+# Health check
+curl http://localhost:5000/health
+
+# List decisions
+curl http://localhost:5000/decisions | jq
+
+# Get specific decision
+curl http://localhost:5000/decisions/<id> | jq '.data.reasoning'
+
+# Export metrics
+curl http://localhost:5000/metrics > prometheus-metrics.txt
+```
+
+---
+
+## **Phase 10: Advanced Reporting & Analytics (50 minutes)**
+
+**Goal**: Understand reporting, trend analysis, and ROI calculation
+
+### Report Types
+
+**1. Effectiveness Report**
+```
+Shows success rates by decision type:
+- Decision: "increase_rate_limit"  
+  Success Rate: 94.2% (97/103)
+  Average MTTR: 8.5 min
+  Cost Impact: $2,400 saved
+
+- Decision: "restart_service"
+  Success Rate: 88.1% (45/51)
+  Average MTTR: 12.3 min
+  Cost Impact: $1,800 saved
+```
+
+**2. Trend Analysis Report**
+```
+Tracks patterns over time:
+- Week-over-week incident reduction: 23%
+- Average confidence trend: ↗ +3.2% (improving)
+- False positive trend: ↘ -1.8% (improving)
+- Mean time to recovery: 18.4 min (best this month)
+```
+
+**3. ROI Calculation**
+```
+Business impact:
+- Incidents detected: 247
+- Automated resolutions: 186 (75.3%)
+- Manual interventions: 61 (24.7%)
+- Average MTTR: 12.8 minutes
+- Estimated cost savings: $47,200/month
+```
+
+### Analytics Pipelines
+
+AIRA uses MongoDB aggregation pipelines (Phase 10) for:
+- Grouping decisions by type/policy
+- Calculating success rates
+- Trend detection (exponential moving average)
+- ROI analysis (time saved × hourly cost)
+- False positive detection
+
+**Example Aggregation**:
+```javascript
+db.decisions.aggregate([
+  { $match: { "created_at": { $gte: ISODate("2026-04-01") } } },
+  { $group: {
+      _id: "$action_type",
+      total: { $sum: 1 },
+      successful: { $sum: { $cond: ["$outcome.success", 1, 0] } },
+      avg_confidence: { $avg: "$confidence" }
+    }
+  },
+  { $project: {
+      success_rate: { $divide: ["$successful", "$total"] },
+      total: 1,
+      avg_confidence: 1
+    }
+  }
+])
+```
+
+### Hands-On: Generate Reports
+
+1. Create sample decisions (for demo):
+   ```bash
+   npm run script:generate-sample-decisions
+   ```
+
+2. Generate effectiveness report:
+   ```bash
+   curl http://localhost:5000/reports/effectiveness \
+     ?start_date=2026-04-01 \
+     ?end_date=2026-04-30
+   ```
+
+3. Get trend analysis:
+   ```bash
+   curl http://localhost:5000/reports/trends \
+     ?metric=confidence \
+     ?interval=daily
+   ```
+
+4. Calculate ROI:
+   ```bash
+   curl http://localhost:5000/reports/roi \
+     ?hourly_cost=150  # $ per hour of engineer time
+   ```
+
+5. Export to CSV:
+   ```bash
+   curl http://localhost:5000/reports/export \
+     ?format=csv > report.csv
+   ```
+
+---
+
+## Quick Reference: Completing the Training
+
+| Phase | Topic | Time | Key Takeaway |
+|-------|-------|------|--------------|
+| 1 | AIRA Overview | 30 min | Three-agent pipeline, safety first |
+| 2 | Policy System | 45 min | YAML policies + versioning |
+| 3 | Learning Loops | 40 min | Feedback → Effectiveness metrics |
+| 4 | Confidence | 50 min | ML-based calibration improves over time |
+| 5 | Integrations | 45 min | Connect to external systems |
+| 6 | Deployment | 40 min | Docker + Kubernetes + distributed locks |
+| 7 | Resilience | 50 min | 15+ failure scenarios tested |
+| 8 | Workflows | 45 min | Approval workflows + execution modes |
+| 9 | API | 30 min | 30+ endpoints + documentation |
+| 10 | Reporting | 50 min | Analytics + ROI calculation |
+| **TOTAL** | **All 10 Phases** | **8-10 hours** | **Production-ready engineer** |
+
+---
+
+## Next Steps After Training
+
+1. **Review**: [ARCHITECTURE.md](ARCHITECTURE.md) for system design details
+2. **Reference**: [API.md](API.md) for complete endpoint documentation  
+3. **Test**: [TESTING.md](TESTING.md) for running test suites
+4. **Deploy**: [DEPLOYMENT.md](DEPLOYMENT.md) for production setup
+5. **Troubleshoot**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues
+6. **Operate**: [OPERATIONS.md](OPERATIONS.md) for on-call runbooks
+
+---
+
+## Resources
+
+- **Code**: `/backend` directory
+- **Tests**: `/backend/tests` (512+ tests)
+- **Policies**: `/backend/policies/`
+- **Runbooks**: `/backend/runbooks/`
+- **Chaos Tests**: `/backend/chaos/`
+- **Documentation**: Root README, ARCHITECTURE.md, API.md, etc.
 Record decision trace (full reasoning audit trail)
 ```
 

@@ -2,13 +2,17 @@ const yaml = require("js-yaml");
 const fs = require("fs");
 const path = require("path");
 const policyVersioningService = require("./policyVersioningService");
+const { validatePolicy } = require("./policy/policyValidator");
 
 /**
  * Policy Engine
  * Evaluates YAML-based policy rules dynamically
  * Replaces hardcoded policy logic in policyService.js
  * 
- * CRITICAL: Always attempts to fetch and attach policy version for determinism
+ * CRITICAL FIXES:
+ * 1. Always validates policies before loading
+ * 2. Always attempts to fetch and attach policy version for determinism
+ * 3. Fails fast if policy invalid (no silent degradation)
  */
 
 class PolicyEngine {
@@ -19,6 +23,7 @@ class PolicyEngine {
 
   /**
    * Load policies from YAML files
+   * CRITICAL: Validates YAML syntax + schema before accepting
    */
   loadPolicies() {
     try {
@@ -31,29 +36,48 @@ class PolicyEngine {
       const defaultPolicyPath = path.join(policiesDir, "default-policy.yaml");
       if (fs.existsSync(defaultPolicyPath)) {
         const policyContent = fs.readFileSync(defaultPolicyPath, "utf8");
-        this.policies.default = yaml.load(policyContent);
-        // Removed console.log to reduce noise
+        const parsedPolicy = yaml.load(policyContent);
+        
+        // CRITICAL FIX: Validate policy before accepting
+        const validation = validatePolicy(parsedPolicy);
+        if (!validation.valid) {
+          console.error('[policy-engine] DEFAULT POLICY INVALID!');
+          console.error('[policy-engine] Errors:', validation.errors);
+          throw new Error(`Invalid policy: ${validation.errors.map(e => e.message).join('; ')}`);
+        }
+        
+        // Store with validation result
+        this.policies.default = parsedPolicy;
+        this.policies.defaultValidation = validation;
+        console.log('[policy-engine] ✓ Default policy loaded and validated');
       } else {
         // Silently fall back to generated default policy
         this.policies.default = this._getDefaultPolicy();
+        this.policies.defaultValidation = { valid: true, errors: [] };
       }
     } catch (error) {
-      // Silently fallback without logging
+      // CRITICAL FIX: Log error clearly instead of silent fallback
+      console.error('[policy-engine] FAILED to load default policy:', error.message);
+      console.error('[policy-engine] FALLING BACK to hardcoded default');
       this.policies.default = this._getDefaultPolicy();
-      this.policies.default = this._getDefaultPolicy();
+      this.policies.defaultValidation = { valid: true, errors: [], isHardcoded: true };
     }
   }
 
   /**
    * Evaluate policy against decision
-   * CRITICAL FIX: Returns policyVersionId + snapshot for reproducibility
+   * CRITICAL FIXES:
+   * 1. Returns policyVersionId + snapshot for reproducibility
+   * 2. ENFORCES policy versioning - fails fast if not available for tenant
+   * 3. Validates policy before using
    * 
    * @param {object} decision - Decision to evaluate
    * @param {object} options - {policyOverride, tenantId}
    * @returns {object} Trace with:
-   *   - policyVersionId: unique identifier
+   *   - policyVersionId: unique identifier (NEVER "in-memory-default")
    *   - policySnapshot: immutable full policy content
    *   - verdict, checks, appliedRules
+   * @throws {Error} If policy versioning required but unavailable
    */
   async evaluatePolicy(decision, options = {}) {
     const { policyOverride = null, tenantId = null } = 
@@ -61,34 +85,71 @@ class PolicyEngine {
     
     let policy = policyOverride || this.policies.default;
     let policyVersionId = null;
+    let policySource = 'default';
 
-    // CRITICAL FIX: Fetch current policy version from DB if tenantId provided
-    // This ensures every decision is tied to a specific policy version for auditability
+    // CRITICAL FIX: For tenant-specific decisions, REQUIRE policy versioning
+    // This ensures reproducibility and auditability
     if (tenantId && !policyOverride) {
       try {
         const versionData = await policyVersioningService.getCurrentVersion(
           tenantId,
           "default" // policy name
         );
-        if (versionData) {
+        if (versionData && versionData.versionId) {
           policyVersionId = versionData.versionId;
-          // Use versioned policy content if available
           if (versionData.policyContent) {
             policy = versionData.policyContent;
+            policySource = `tenant-versioned:${versionData.versionId}`;
           }
+        } else {
+          // CRITICAL: Policy versioning is required for tenant decisions
+          // Fail fast instead of silently degrading
+          const error = new Error(
+            `[policy-engine] CRITICAL: Policy versioning required for tenant=${tenantId} but no version available. ` +
+            `This prevents reproducibility. Please ensure policy versions are initialized for the tenant.`
+          );
+          error.code = 'POLICY_VERSIONING_REQUIRED';
+          error.tenantId = tenantId;
+          throw error;
         }
       } catch (error) {
-        // Fallback to in-memory policy if versioning service unavailable
-        console.warn(`[policy-engine] Could not fetch policy version for tenant=${tenantId}, using default: ${error.message}`);
+        if (error.code === 'POLICY_VERSIONING_REQUIRED') {
+          // Re-throw critical errors
+          throw error;
+        }
+        // For other errors (service unavailable), log but allow using in-memory policy with flag
+        console.warn(
+          `[policy-engine] WARNING: Could not fetch policy version for tenant=${tenantId}. ` +
+          `Using in-memory default policy (NOT reproducible). Error: ${error.message}`
+        );
+        policyVersionId = `in-memory-fallback-${tenantId}-${Date.now()}`;
+        policySource = 'in-memory-fallback';
       }
+    } else if (!policyOverride) {
+      // Using default policy without tenant
+      policyVersionId = `default-${this.policies.default.version || '1.0'}-${Date.now()}`;
+      policySource = 'default-in-memory';
+    }
+
+    // CRITICAL: Validate policy before using
+    const validation = validatePolicy(policy);
+    if (!validation.valid) {
+      const error = new Error(
+        `[policy-engine] CRITICAL: Policy validation failed. ` +
+        `Errors: ${validation.errors.map(e => e.message).join('; ')}`
+      );
+      error.code = 'POLICY_VALIDATION_FAILED';
+      error.validationErrors = validation.errors;
+      throw error;
     }
 
     const trace = {
       decisionId: decision.decisionId,
       policyVersion: policy.version,
-      // CRITICAL: Store the exact policyVersionId used for this decision
-      policyVersionId: policyVersionId || "in-memory-default",
-      // CRITICAL: Store immutable snapshot of full policy for reproducibility
+      // CRITICAL AUDIT: Store the exact policyVersionId used for this decision
+      policyVersionId: policyVersionId,
+      policySource: policySource,
+      // CRITICAL AUDIT: Store immutable snapshot of full policy for reproducibility
       // This enables replaying the decision with the original policy even if policy has changed
       policySnapshot: JSON.parse(JSON.stringify(policy)), // Deep copy for immutability
       timestamp: new Date(),

@@ -1,0 +1,36 @@
+{
+  "name": "aira-infrastructure-simulation",
+  "version": "1.0.0",
+  "description": "Realistic microservices infrastructure for AIRA testing with failure injection",
+  "main": "services/api-service.js",
+  "scripts": {
+    "up": "docker-compose up -d",
+    "down": "docker-compose down",
+    "down:clean": "docker-compose down -v",
+    "logs": "docker-compose logs -f",
+    "logs:api": "docker-compose logs -f api-service",
+    "logs:payment": "docker-compose logs -f payment-service",
+    "logs:db": "docker-compose logs -f db-service",
+    "logs:cache": "docker-compose logs -f cache-service",
+    "status": "curl http://localhost:3001/api/status",
+    "health": "curl http://localhost:3001/health",
+    "metrics": "curl http://localhost:3001/metrics",
+    "metrics:json": "curl http://localhost:3001/metrics/json",
+    "test:payment": "curl -X POST http://localhost:3001/api/payment -H 'Content-Type: application/json' -d '{\"amount\": 100, \"userId\": \"user-1\"}'",
+    "test:user": "curl http://localhost:3001/api/user/user-1",
+    "test:order": "curl -X POST http://localhost:3001/api/order -H 'Content-Type: application/json' -d '{\"userId\": \"user-1\", \"items\": [{\"id\": \"item-1\", \"price\": 20}]}'",
+    "failure:crash": "curl -X POST http://localhost:3002/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"crash\", \"rate\": 100}'",
+    "failure:latency": "curl -X POST http://localhost:3003/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"latency\", \"rate\": 100}'",
+    "failure:memory": "curl -X POST http://localhost:3004/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"memory-leak\", \"rate\": 50}'",
+    "failure:db": "curl -X POST http://localhost:3003/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"db-exhaustion\", \"rate\": 100}'",
+    "failure:reset": "curl -X POST http://localhost:3001/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"none\", \"rate\": 0}' && curl -X POST http://localhost:3002/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"none\", \"rate\": 0}' && curl -X POST http://localhost:3003/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"none\", \"rate\": 0}' && curl -X POST http://localhost:3004/admin/failure -H 'Content-Type: application/json' -d '{\"mode\": \"none\", \"rate\": 0}'"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,103 +1,651 @@
-# Deployment Guide
+# Deployment Guide (All Phases 1-10)
 
-**Version**: 2.2 | **Last Updated**: March 31, 2026  
-**Status**: � PRODUCTION READY - All features validated, test suite passing, deployment-ready
+**Version**: 5.0.0 (Phase 4-10 Complete)  
+**Last Updated**: Current  
+**Status**: 🟢 **PRODUCTION READY** - All 10 phases tested, deployment-ready
 
-> **IMPORTANT**: System is production-ready. All 606 tests passing with 0 failures. Ready for enterprise deployment with complete safety, observability, and resilience features.
+> **EXECUTIVE SUMMARY**: Deploy AIRA to production with complete safety mechanisms (Phases 1-3), adaptive confidence (Phase 4), integrations (Phase 5), containerization (Phase 6), failure resilience (Phase 7), approval workflows (Phase 8), APIs (Phase 9), and advanced reporting (Phase 10).
 
 ---
 
-## Overview
+## Deployment Overview
 
-This guide covers deploying the Decision Engine to production environments using Docker, Kubernetes, and cloud platforms. The system includes built-in safety, observability, and resilience features ready for production deployment.
+AIRA supports three deployment models:
 
-**Current Deployment Status**: ✅ Safety features validated | ✅ Observability complete | ✅ Resilience infrastructure operational | ✅ Production validated
-
-**Pre-Deployment**: Review deployment checklist and start with Phase 1 features below
+| Model | Use Case | Effort | Availability |
+|-------|----------|--------|--------------|
+| **Docker Compose** | Development, small teams | Low | Single-machine |
+| **Kubernetes** | Production, multi-region | Medium | Auto-scaling, HA |
+| **Managed Cloud** | Enterprise, fully managed | High | Global, SLAs |
 
 ---
 
 ## Prerequisites
 
-- **Node.js**: 18+
-- **Docker**: 20.10+
-- **Kubernetes**: 1.24+ (for K8s deployments)
-- **Cloud**: AWS/GCP/Azure account (optional)
+**Required**:
+- Node.js 18+
+- Docker 20.10+
+- MongoDB 4.4+ (or MongoDB Atlas)
+- RabbitMQ 3.8+ (or cloud equivalent)
+- Redis 6.0+ (or cloud equivalent)
+
+**Optional**:
+- Kubernetes 1.24+ (for K8s deployment)
+- AWS/GCP/Azure accounts (for cloud deployment)
+- Slack workspace (for Phase 5 notifications)
+- Datadog/Prometheus (for Phase 5 integrations)
 
 ---
 
-## Local Development Setup
+## 1. Local Development Setup (15 minutes)
 
-### 1. Start Infrastructure
+Perfect for getting started and testing all 10 phases locally.
+
+### Step 1: Clone & Setup
 
 ```bash
+cd /path/to/aira-project/backend
+
+# Install dependencies
+npm install
+
+# Copy environment template
+cp .env.example .env
+
+# Configure for local development
+export ENVIRONMENT=development
+export DATABASE_URL=mongodb://localhost:27017/aira-dev
+export RABBITMQ_URL=amqp://localhost:5672
+export REDIS_URL=redis://localhost:6379
+```
+
+### Step 2: Start Infrastructure (Docker Compose)
+
+```bash
+# Start all services (MongoDB, RabbitMQ, Redis)
 docker-compose up -d
 
 # Verify services running
 docker ps
-# Should see: mongodb, rabbitmq, redis
+
+# Check logs
+docker-compose logs -f
 ```
 
-### 2. Install & Run Backend
+### Step 3: Start AIRA Server
 
 ```bash
-cd backend
-npm install
+# Start the backend server
 npm start
 
-# Verify server ready
+# Expected output:
+# ✓ Server listening on port 5000
+# ✓ MongoDB connected
+# ✓ RabbitMQ connected
+# ✓ Redis connected
+
+# Verify health
 curl http://localhost:5000/health
-# Expected: { "status": "ok" }
+# Response: { "status": "ok", "version": "5.0.0" }
 ```
 
-### 3. Run Tests
+### Step 4: Verify All 10 Phases
 
 ```bash
-npm test
-npm run test:coverage
+# Test core decision engine (Phases 1-3)
+curl -X POST http://localhost:5000/decisions \
+  -H "Content-Type: application/json" \
+  -d '{"signal": "error_rate > 10"}'
 
-# Expected: 80+ tests passing, 85% coverage
+# Test Phase 4: Confidence system
+curl http://localhost:5000/confidence-model
+
+# Test Phase 5: Integration slack
+curl http://localhost:5000/integrations/slack/test
+
+# Test Phase 7: Failure scenarios
+cd backend/chaos && node quick-start.js
+
+# Test Phase 10: Reporting
+curl http://localhost:5000/reports/effectiveness?start_date=2026-04-01
+
+# All working? Great! Ready for containerization →
 ```
 
 ---
 
-## Pre-Production Validation (72-Hour Checklist)
+## 2. Docker Deployment (30 minutes)
 
-### Day 1: Code & Build Validation
+Run AIRA as a single container for staging/demos.
 
-**Morning**:
-- [ ] Run full test suite: `npm test` (all passing)
-- [ ] Check code coverage: `npm run test:coverage` (≥85%)
-- [ ] Run lint checks: `npm run lint`
-- [ ] Build Docker image: `docker build -t decision-engine:vX.Y.Z .`
-- [ ] Scan image for vulnerabilities: `docker scan decision-engine:vX.Y.Z`
+### Step 1: Build Docker Image
 
-**Afternoon**:
-- [ ] Test database migrations (if any)
-- [ ] Validate schema compatibility
-- [ ] Check backward compatibility with v1.0
-- [ ] Review changelog for breaking changes
+```bash
+# Navigate to project root
+cd /path/to/aira-project
 
-**Evening**:
-- [ ] Run chaos tests: `npm run test:chaos`
-- [ ] Verify all 8 failure scenarios pass
-- [ ] Check recovery times (<30s target)
+# Build image
+docker build -t aira:v5.0.0 .
 
-### Day 2: Staging Deployment
+# Verify build
+docker images | grep aira
+```
 
-**Morning**:
-- [ ] Deploy to staging environment
-- [ ] Verify all pods running
-- [ ] Run smoke tests
-- [ ] Check database replication
+### Step 2: Configure Environment
 
-**Afternoon**:
-- [ ] Load testing: 100 requests/second
-- [ ] Latency profiling: p95 < 200ms
-- [ ] Memory usage: < 512MB per pod
-- [ ] CPU usage: < 50% under load
+Create `.env.docker`:
+```env
+# Server
+ENVIRONMENT=production
+PORT=5000
+NODE_ENV=production
 
-**Evening**:
+# Database (Phase 2-3)
+DATABASE_URL=mongodb://mongodb:27017/aira-prod
+DB_NAME=aira-prod
+
+# Message Queue (Phase 1)
+RABBITMQ_URL=amqp://rabbitmq:5672
+
+# Cache & Locks (Phase 6)
+REDIS_URL=redis://redis:6379
+
+# Integrations (Phase 5)
+SLACK_TOKEN=xoxb-your-token
+SLACK_WEBHOOK_URL=https://hooks.slack.com/...
+DATADOG_API_KEY=your-key
+PROMETHEUS_PUSHGATEWAY=prometheus:9091
+
+# Confidence System (Phase 4)
+CONFIDENCE_THRESHOLD=0.65
+SAFE_MODE_ENABLED=false
+
+# Approval Workflows (Phase 8)
+APPROVAL_EXPIRATION_MINUTES=60
+REQUIRE_APPROVAL_FOR_HIGH_RISK=true
+```
+
+### Step 3: Run with Docker Compose
+
+```bash
+# Create override file for production
+cat > docker-compose.prod.yml << 'EOF'
+version: '3.8'
+services:
+  aira:
+    image: aira:v5.0.0
+    ports:
+      - "5000:5000"
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=mongodb://mongodb:27017/aira-prod
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - mongodb
+      - rabbitmq
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  mongodb:
+    image: mongo:latest
+    volumes:
+      - mongo-data:/data/db
+    
+  rabbitmq:
+    image: rabbitmq:3-management
+    
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+volumes:
+  mongo-data:
+EOF
+
+# Start production stack
+docker-compose -f docker-compose.prod.yml up -d
+
+# Monitor
+docker-compose -f docker-compose.prod.yml logs -f aira
+```
+
+---
+
+## 3. Kubernetes Deployment (Production Grade)
+
+Deploy to Kubernetes for multi-instance, auto-scaling, enterprise-grade deployment.
+
+### Step 1: Prepare Kubernetes Manifests
+
+Create `k8s/namespace.yaml`:
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aira
+```
+
+Create `k8s/configmap.yaml`:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aira-config
+  namespace: aira
+data:
+  ENVIRONMENT: production
+  CONFIDENCE_THRESHOLD: "0.65"
+  SAFE_MODE_ENABLED: "false"
+  APPROVAL_EXPIRATION_MINUTES: "60"
+```
+
+Create `k8s/secret.yaml`:
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: aira-secrets
+  namespace: aira
+type: Opaque
+stringData:
+  DATABASE_URL: mongodb://mongodb:27017/aira-prod
+  RABBITMQ_URL: amqp://rabbitmq:5672
+  REDIS_URL: redis://redis:6379
+  SLACK_TOKEN: xoxb-your-token
+  SLACK_WEBHOOK_URL: https://hooks.slack.com/...
+  DATADOG_API_KEY: your-key
+```
+
+### Step 2: Deploy AIRA Pods
+
+Create `k8s/deployment.yaml`:
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aira
+  namespace: aira
+spec:
+  replicas: 3  # High availability
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: aira
+  template:
+    metadata:
+      labels:
+        app: aira
+    spec:
+      containers:
+      - name: aira
+        image: aira:v5.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+          name: http
+        
+        # Phase 6: Health checks for Kubernetes
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 2
+        
+        # Resource management (Phase 6)
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        
+        # Configuration from Phase 1-10
+        envFrom:
+        - configMapRef:
+            name: aira-config
+        - secretRef:
+            name: aira-secrets
+        
+        # Graceful shutdown (Phase 6)
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+```
+
+### Step 3: Service & Load Balancing
+
+Create `k8s/service.yaml`:
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: aira-service
+  namespace: aira
+spec:
+  type: LoadBalancer
+  selector:
+    app: aira
+  ports:
+  - port: 5000
+    targetPort: 5000
+    name: http
+```
+
+### Step 4: Horizontal Pod Autoscaler (Phase 6)
+
+Create `k8s/hpa.yaml`:
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aira-hpa
+  namespace: aira
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aira
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+### Step 5: Deploy to Kubernetes
+
+```bash
+# Create namespace
+kubectl apply -f k8s/namespace.yaml
+
+# Deploy configuration
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/secret.yaml
+
+# Deploy AIRA
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+kubectl apply -f k8s/hpa.yaml
+
+# Verify deployment
+kubectl get pods -n aira -w
+
+# Expected: 3 AIRA pods RUNNING
+NAME                   READY   STATUS    RESTARTS   AGE
+aira-7b4d8c9f5-2k9np   1/1     Running   0          2m
+aira-7b4d8c9f5-8q3lm   1/1     Running   0          2m
+aira-7b4d8c9f5-x5n8p   1/1     Running   0          2m
+
+# Check service
+kubectl get service -n aira
+# Get external IP from EXTERNAL-IP column
+```
+
+---
+
+## 4. Cloud Deployment Options
+
+### AWS ECS/Fargate
+
+```bash
+# Create ECS task definition
+aws ecs register-task-definition \
+  --family aira-task \
+  --requires-compatibilities FARGATE \
+  --network-mode awsvpc \
+  --cpu 512 \
+  --memory 1024 \
+  --container-definitions file://ecs-container-def.json
+
+# Create ECS service
+aws ecs create-service \
+  --cluster aira-cluster \
+  --service-name aira-service \
+  --task-definition aira-task:1 \
+  --desired-count 3
+```
+
+### GCP Cloud Run
+
+```bash
+# Build and push to GCP
+gcloud builds submit --tag gcr.io/PROJECT_ID/aira:v5.0.0
+
+# Deploy
+gcloud run deploy aira \
+  --image gcr.io/PROJECT_ID/aira:v5.0.0 \
+  --platform managed \
+  --region us-central1 \
+  --set-env-vars DATABASE_URL=... \
+  --memory 512Mi \
+  --timeout 3600
+```
+
+### Azure Container Instances
+
+```bash
+# Create container group
+az container create \
+  --resource-group aira-rg \
+  --name aira-container \
+  --image aira:v5.0.0 \
+  --cpu 2 \
+  --memory 1 \
+  --environment-variables DATABASE_URL=... \
+  --ports 5000
+```
+
+---
+
+## 5. Phase 4: Confidence System Setup
+
+Configure adaptive confidence for production:
+
+```bash
+# Set confidence thresholds
+CONFIDENCE_THRESHOLD=0.65           # Execute above this
+CONFIDENCE_CAUTION_THRESHOLD=0.40   # Manual approval below
+CONFIDENCE_BLOCK_THRESHOLD=0.20     # Block execution below
+
+# Enable learning from feedback
+ENABLE_CONFIDENCE_LEARNING=true
+LEARNING_WINDOW_DAYS=30
+
+# Kill-switch for low confidence
+SAFE_MODE_ENABLED=false  # Will auto-enable if avg confidence < 50%
+```
+
+---
+
+## 6. Phase 5: Integration Setup
+
+### Slack Notifications
+
+```env
+SLACK_TOKEN=xoxb-your-bot-token
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+SLACK_CHANNEL_DECISIONS=aira-decisions
+SLACK_CHANNEL_ERRORS=aira-errors
+SLACK_NOTIFY_ON_SUCCESS=true
+SLACK_NOTIFY_ON_FAILURE=true
+```
+
+### Datadog Integration
+
+```env
+DATADOG_ENABLED=true
+DATADOG_API_KEY=your-api-key
+DATADOG_APP_KEY=your-app-key
+DATADOG_SITE=datadoghq.com
+```
+
+### Prometheus Metrics Export
+
+```bash
+# Metrics available at:
+curl http://localhost:5000/metrics
+
+# Configure Prometheus scrape:
+# Add to prometheus.yml:
+scrape_configs:
+  - job_name: 'aira'
+    static_configs:
+      - targets: ['localhost:5000']
+    metrics_path: '/metrics'
+```
+
+---
+
+## 7. Phase 8: Approval Workflow Setup
+
+Configure approval routing for Phase 8:
+
+```env
+# Approval system
+SEND_APPROVAL_REQUESTS=true
+APPROVAL_EXPIRATION_MINUTES=60
+APPROVAL_ROUTE_TO_EMAIL=ops-team@company.com
+REQUIRE_APPROVAL_FOR_HIGH_RISK=true
+REQUIRE_APPROVAL_FOR_DB_CHANGES=true
+```
+
+---
+
+## Pre-Production Validation Checklist
+
+### Code & Build (Day 1)
+- [ ] Run full test suite: `npm test` (all 512 tests passing)
+- [ ] Coverage ≥91%: `npm run test:coverage`
+- [ ] Lint checks pass: `npm run lint`
+- [ ] Build Docker image: `docker build -t aira:v5.0.0 .`
+- [ ] Security scan: `docker scan aira:v5.0.0`
+- [ ] Run chaos tests: `npm run test:chaos` (all scenarios pass)
+
+### Staging Deployment (Day 2)
+- [ ] Deploy to staging K8s cluster
+- [ ] All 3 pods RUNNING
+- [ ] Service health checks passing
+- [ ] Database migrations completed
+- [ ] Load test: 100 req/sec, p95 < 500ms
+- [ ] Memory: < 512MB per pod
+- [ ] CPU: < 60% under load
+- [ ] Slack integration verified
+- [ ] Metrics exported to Prometheus
+
+### Production Readiness (Day 3)
+- [ ] All Day 2 items verified in staging
+- [ ] Runbooks prepared (see [OPERATIONS.md](OPERATIONS.md))
+- [ ] On-call schedule configured
+- [ ] Monitoring dashboards created
+- [ ] Alerts configured (CPU, Memory, Error rate)
+- [ ] Backup/recovery tested
+- [ ] Rollback plan documented
+- [ ] Security review completed
+
+---
+
+## Post-Deployment Monitoring
+
+### Key Metrics to Monitor
+
+```bash
+# Performance
+- Decision latency (p95, p99)
+- Throughput (decisions/sec)
+- Confidence levels (average, distribution)
+
+# Reliability
+- Error rate
+- Pod restarts
+- Database connection count
+- Queue depth
+
+# Business
+- Success rate by decision type
+- MTTR (Mean Time To Recovery)
+- False positive rate
+- Approval workflow completion time
+```
+
+### Create Monitoring Dashboard
+
+See [OBSERVABILITY.md](OBSERVABILITY.md) for Prometheus/Datadog setup.
+
+---
+
+## Rollback Procedure
+
+If issues occur in production:
+
+```bash
+# For Kubernetes
+kubectl rollout undo deployment/aira -n aira
+kubectl rollout status deployment/aira -n aira
+
+# For Docker
+docker service update --image aira:v5.0.0-previous aira_service
+
+# Verify rollback
+curl http://your-aira-endpoint/health
+```
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| Pods not starting | Check logs: `kubectl logs -n aira deployment/aira` |
+| Database connection failed | Verify DATABASE_URL, firewall rules |
+| High memory usage | Check for memory leaks, increase resource limits |
+| Timeout errors | Increase request timeout, check external service health |
+| Slack notifications failing | Verify SLACK_TOKEN and webhook URL |
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed troubleshooting.
+
+---
+
+## Resources
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) - System design
+- [OPERATIONS.md](OPERATIONS.md) - On-call runbooks
+- [OBSERVABILITY.md](OBSERVABILITY.md) - Monitoring setup
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues
+- [TESTING.md](TESTING.md) - Test coverage
 - [ ] Soak test: 8-hour runtime stability
 - [ ] Monitor for memory leaks
 - [ ] Check log file rotation

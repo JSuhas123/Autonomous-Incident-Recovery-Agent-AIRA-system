@@ -1,0 +1,25 @@
+{
+  "company_name": "FinEdge",
+  "category": "FinTech/SaaS",
+  "domain": "Digital banking backend",
+  "description": "Commercial banking platform with transaction processing",
+  "system_architecture": "Distributed microservices",
+  "infra_type": "kubernetes",
+  "observability_maturity": "high",
+  "incident_types": [
+    "high_error_rate",
+    "latency_spike",
+    "db_connection_exhaustion",
+    "cascading_failure",
+    "traffic_spike"
+  ],
+  "average_incidents_per_day": 1.8,
+  "criticality_level": "high",
+  "sla_target_minutes": 5,
+  "team_size": 50,
+  "on_call_availability": "24/7",
+  "automation_maturity": "medium-high",
+  "monitoring_tools": ["datadog", "splunk", "custom"],
+  "incident_budget_minutes_per_month": 45,
+  "estimated_loss_per_minute": 20000
+}

@@ -1,0 +1,25 @@
+{
+  "company_name": "StreamFlow",
+  "category": "SRE-Heavy",
+  "domain": "Real-time streaming backend system",
+  "description": "Event streaming platform for real-time data pipelines",
+  "system_architecture": "Distributed microservices with Kafka/Pulsar",
+  "infra_type": "kubernetes",
+  "observability_maturity": "high",
+  "incident_types": [
+    "high_error_rate",
+    "latency_spike",
+    "pod_crash_loop",
+    "db_connection_exhaustion",
+    "cascading_failure"
+  ],
+  "average_incidents_per_day": 3.1,
+  "criticality_level": "high",
+  "sla_target_minutes": 2,
+  "team_size": 40,
+  "on_call_availability": "24/7",
+  "automation_maturity": "high",
+  "monitoring_tools": ["prometheus", "grafana", "jaeger"],
+  "incident_budget_minutes_per_month": 20,
+  "estimated_loss_per_minute": 15000
+}

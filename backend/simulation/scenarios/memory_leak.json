@@ -1,0 +1,30 @@
+{
+  "scenario_name": "memory_leak",
+  "description": "Gradual memory consumption increase leading to out-of-memory conditions",
+  "severity": "high",
+  "recovery_difficulty": "high",
+  "probability_of_occurrence": 0.18,
+  "trigger_conditions": {
+    "memory_usage_percent": 92,
+    "growth_rate_percent_per_hour": 5
+  },
+  "expected_resolution_actions": [
+    "identify_leaking_service",
+    "collect_heap_dump",
+    "analyze_memory_profile",
+    "apply_fix_or_restart",
+    "monitor_memory_trend"
+  ],
+  "mttf_hours": 720,
+  "typical_cost_impact_percent": 15,
+  "chaos_characteristics": {
+    "blast_radius": "single_service",
+    "root_causes": [
+      "unclosed_connections",
+      "event_listener_accumulation",
+      "memory_cache_growth",
+      "circular_references"
+    ],
+    "cascading_potential": false
+  }
+}

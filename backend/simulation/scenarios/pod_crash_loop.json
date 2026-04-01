@@ -1,0 +1,31 @@
+{
+  "scenario_name": "pod_crash_loop",
+  "description": "Pods repeatedly crashing and restarting in Kubernetes cluster",
+  "severity": "high",
+  "recovery_difficulty": "medium-high",
+  "probability_of_occurrence": 0.28,
+  "trigger_conditions": {
+    "restart_count": 5,
+    "duration_seconds": 180
+  },
+  "expected_resolution_actions": [
+    "check_pod_logs",
+    "identify_crash_cause",
+    "fix_application_or_config",
+    "update_image_or_restart",
+    "monitor_pod_health"
+  ],
+  "mttf_hours": 240,
+  "typical_cost_impact_percent": 12,
+  "chaos_characteristics": {
+    "blast_radius": "single_pod_or_deployment",
+    "root_causes": [
+      "oom_kill",
+      "liveness_probe_failure",
+      "bad_startup_script",
+      "missing_dependencies",
+      "corrupted_binary"
+    ],
+    "cascading_potential": false
+  }
+}

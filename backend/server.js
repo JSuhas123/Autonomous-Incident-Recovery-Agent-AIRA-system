@@ -10,6 +10,12 @@ const featureFlags = require("./config/featureFlags");
 
 const coreApiRoutes = require("./routes/coreApiRoutes");
 const approvalRoutes = require("./routes/approvalRoutes");
+const policyManagementRoutes = require("./routes/policyManagementRoutes");
+const effectivenessRoutes = require("./routes/effectivenessRoutes");
+const confidenceRoutes = require("./routes/confidenceRoutes");
+const integrationRoutes = require("./routes/integrationRoutes");
+const executionModesRoutes = require("./routes/executionModesRoutes");
+const reportingRoutes = require("./routes/reportingRoutes");
 
 
 // PHASE 1 SAFETY: Import kill switch and sanitization middleware
@@ -50,6 +56,8 @@ const { getIdempotencyService } = require("./services/infrastructure/idempotency
 const { runbookExecutionService } = require("./services/execution");
 const { getK8sClient } = require("./services/k8s");
 
+const { correlationIdMiddleware } = require("./middleware/correlationIdMiddleware");
+
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -60,6 +68,9 @@ app.use(
   })
 );
 app.use(express.json());
+
+// CRITICAL AUDIT: Add correlation ID tracking (must be early)
+app.use(correlationIdMiddleware);
 
 // PHASE 1 SAFETY: Apply sanitization and kill switch enforcement
 // These must be applied early, before any handlers
@@ -186,6 +197,93 @@ app.use("/api/v1/tenants/:tenantId", coreApiRoutes);
  * - GET /approvals/queue/stats - Monitor approval queue
  */
 app.use("/api/v1/tenants/:tenantId/approvals", approvalRoutes);
+
+/**
+ * PHASE 2: POLICY MANAGEMENT API
+ * 
+ * Schema validation, dry-run, and automatic rollback
+ * - POST /policy/validate - Validate policy against schema
+ * - POST /policy/dry-run - Simulate action without executing
+ * - POST /policy/create-version - Create new policy version
+ * - POST /policy/activate-version - Activate specific version
+ * - POST /policy/rollback - Manually rollback to previous version
+ * - GET /policy/version-history - Retrieve version history
+ * - GET /policy/rollback-history - View rollback events
+ */
+app.use("/api/v1/policy", policyManagementRoutes);
+
+/**
+ * PHASE 3: ACTION EFFECTIVENESS METRICS API
+ * 
+ * Track and analyze effectiveness of AIRA actions
+ * - POST /effectiveness/record-before - Record pre-action metrics
+ * - POST /effectiveness/record-after - Record post-action metrics
+ * - GET /effectiveness/:traceId - Get metrics for specific decision
+ * - GET /effectiveness/compare/actions - Compare actions by effectiveness
+ * - GET /effectiveness/pattern/:pattern - Get pattern-specific effectiveness
+ * - GET /effectiveness/trends/:action - Get effectiveness trends over time
+ */
+app.use("/api/v1/effectiveness", effectivenessRoutes);
+
+/**
+ * PHASE 4: ADAPTIVE CONFIDENCE CALIBRATION API
+ * 
+ * Dynamically adjust confidence weights based on historical accuracy
+ * - POST /confidence/record-prediction - Record confidence prediction
+ * - POST /confidence/record-outcome - Record actual outcome
+ * - GET /confidence/weights - Get current calibration weights
+ * - POST /confidence/recalibrate - Recalibrate weights
+ * - GET /confidence/accuracy/by-action - Accuracy breakdown by action
+ * - GET /confidence/accuracy/by-pattern - Accuracy breakdown by pattern
+ * - GET /confidence/trends - Confidence trends over time
+ * - POST /confidence/adjust-confidence - Apply weight adjustment
+ */
+app.use("/api/v1/confidence", confidenceRoutes);
+
+/**
+ * PHASE 5: INTEGRATIONS API
+ * 
+ * Slack notifications and webhook ingestion from external monitoring systems
+ * - POST /integrations/webhooks/register - Register webhook source
+ * - POST /integrations/webhooks/ingest - Receive webhook event
+ * - POST /integrations/webhooks/:eventId/decision - Record AIRA decision
+ * - GET /integrations/webhooks/history - Webhook event history
+ * - GET /integrations/webhooks/stats - Webhook statistics
+ * - POST /integrations/slack/notify - Send Slack notification
+ * - POST /integrations/webhooks/datadog - Datadog webhook endpoint
+ * - POST /integrations/webhooks/prometheus - Prometheus webhook endpoint
+ */
+app.use("/api/v1/integrations", integrationRoutes);
+
+/**
+ * PHASE 8: EXECUTION MODES API
+ * 
+ * Manage AUTO, APPROVAL, and SUGGEST_ONLY execution modes
+ * - POST /execution/config/default-mode - Set default execution mode
+ * - POST /execution/config/action-mode - Set mode for specific action
+ * - POST /execution/requests - Create execution request
+ * - POST /execution/requests/:traceId/approve - Approve request
+ * - POST /execution/requests/:traceId/reject - Reject request
+ * - POST /execution/requests/:traceId/execute - Start execution
+ * - POST /execution/requests/:traceId/complete - Mark as completed
+ * - GET /execution/approvals/pending - Get pending approvals
+ * - GET /execution/stats - Execution statistics
+ */
+app.use("/api/v1/execution", executionModesRoutes);
+
+/**
+ * PHASE 10: REPORTING API
+ * 
+ * Generate comprehensive reports on effectiveness, failures, and recommendations
+ * - POST /reports/effectiveness - Generate effectiveness report
+ * - POST /reports/failure-analysis - Generate failure analysis report
+ * - POST /reports/confidence-calibration - Generate calibration report
+ * - POST /reports/executive-summary - Generate executive summary
+ * - GET /reports - List all reports
+ * - GET /reports/:reportId - Get specific report
+ * - POST /reports/:reportId/archive - Archive report
+ */
+app.use("/api/v1/reports", reportingRoutes);
 
 // ============================================================================
 // PHASE 1: SAFETY CONTROL ENDPOINTS (Kill Switches & Confidence Thresholds)

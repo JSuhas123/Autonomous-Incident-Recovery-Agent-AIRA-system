@@ -1,0 +1,30 @@
+{
+  "scenario_name": "cascading_failure",
+  "description": "Failure in one component causing failures in dependent services",
+  "severity": "critical",
+  "recovery_difficulty": "high",
+  "probability_of_occurrence": 0.15,
+  "trigger_conditions": {
+    "dependent_services_failing_percent": 50,
+    "duration_seconds": 300
+  },
+  "expected_resolution_actions": [
+    "identify_root_cause_service",
+    "implement_circuit_breaker",
+    "fix_failing_service",
+    "gradually_restore_traffic",
+    "verify_full_recovery"
+  ],
+  "mttf_hours": 360,
+  "typical_cost_impact_percent": 25,
+  "chaos_characteristics": {
+    "blast_radius": "multiple_services",
+    "root_causes": [
+      "shared_resource_failure",
+      "broken_dependency",
+      "bad_deployment_to_core_service",
+      "network_partition"
+    ],
+    "cascading_potential": true
+  }
+}

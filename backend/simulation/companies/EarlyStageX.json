@@ -1,0 +1,24 @@
+{
+  "company_name": "EarlyStageX",
+  "category": "Edge/Poor Fit",
+  "domain": "Early-stage SaaS",
+  "description": "Startup with minimal observability and alerting",
+  "system_architecture": "Monolith with Docker",
+  "infra_type": "container",
+  "observability_maturity": "low",
+  "incident_types": [
+    "high_error_rate",
+    "latency_spike",
+    "memory_leak",
+    "cascading_failure"
+  ],
+  "average_incidents_per_day": 2.8,
+  "criticality_level": "medium",
+  "sla_target_minutes": 30,
+  "team_size": 8,
+  "on_call_availability": "core_hours",
+  "automation_maturity": "low",
+  "monitoring_tools": ["basic_logging"],
+  "incident_budget_minutes_per_month": 300,
+  "estimated_loss_per_minute": 800
+}

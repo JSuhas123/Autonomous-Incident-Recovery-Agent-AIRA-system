@@ -1,14 +1,18 @@
-# Decision Engine Learning Validation Harness
+# AIRA Simulation Framework
+
+**A production-grade simulation platform for evaluating AIRA's effectiveness across real-world incident scenarios.**
 
 ## Overview
 
-A comprehensive long-term simulation harness designed to validate the Decision Engine's learning stability and weight convergence. This system runs continuous simulations to verify:
+The AIRA Simulation Framework is an internal platform that answers:
 
-✅ **Weight Convergence** - Confidence weights stabilize over time  
-✅ **System Learning** - Accuracy improves as patterns are learned  
-✅ **Stability** - No oscillation or instability (swings < 10%)  
-✅ **Calibration** - Confidence aligns with actual outcomes  
-✅ **Adaptation** - System adapts to new patterns without instability  
+> **Does AIRA actually improve incident response in real-world scenarios?**
+
+This framework simulates **14 different companies** across multiple categories, generates realistic incidents, and compares three incident response modes:
+
+1. **AIRA (Autonomous)** - Autonomous deterministic response
+2. **Datadog + PagerDuty** - Traditional monitoring with human response
+3. **Manual Only** - Manual detection and response  
 
 ## Architecture
 
