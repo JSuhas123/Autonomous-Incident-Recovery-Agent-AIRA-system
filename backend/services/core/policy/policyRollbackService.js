@@ -92,8 +92,8 @@ const rollbackEventSchema = new mongoose.Schema(
 
 class PolicyRollbackService {
   constructor() {
-    this.PolicyVersion = mongoose.models.PolicyVersion || mongoose.model('PolicyVersion', policyVersionSchema);
-    this.RollbackEvent = mongoose.models.RollbackEvent || mongoose.model('RollbackEvent', rollbackEventSchema);
+    this.PolicyVersion = mongoose.models['PolicyVersion'] || mongoose.model('PolicyVersion', policyVersionSchema);
+    this.RollbackEvent = mongoose.models['RollbackEvent'] || mongoose.model('RollbackEvent', rollbackEventSchema);
     
     // Configuration
     this.config = {

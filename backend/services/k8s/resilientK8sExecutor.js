@@ -10,8 +10,8 @@
  * 5. Handles partial failures gracefully
  */
 
-const loggingService = require('../infrastructure/loggingService');
-const metricsService = require('../infrastructure/metricsService');
+const { loggingService } = require('../infrastructure/loggingService');
+const { metricsService } = require('../infrastructure/metricsService');
 
 class ResilientK8sExecutor {
   constructor(k8sClient) {

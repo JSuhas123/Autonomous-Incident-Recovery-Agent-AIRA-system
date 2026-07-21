@@ -71,3 +71,4 @@ backend/simulation/simulation-results/
 *SESSION-SUMMARY*.md
 *VERIFICATION*.md
 *ASSESSMENT*.md
+k8s/secret-generated.yaml 

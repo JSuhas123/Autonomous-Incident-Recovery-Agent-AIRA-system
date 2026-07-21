@@ -2,12 +2,12 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: aira-backend
-  namespace: default
+  namespace: aira
   labels:
     app: aira
     component: backend
 spec:
-  replicas: 3
+  replicas: 2
   selector:
     matchLabels:
       app: aira
@@ -20,40 +20,20 @@ spec:
     spec:
       containers:
       - name: aira
-        image: your-registry/aira-backend:latest
+        image: aira-deploy-app:latest
+        imagePullPolicy: Never
         imagePullPolicy: Always
         ports:
         - containerPort: 5000
           name: http
           protocol: TCP
         
-        # Environment variables
-        env:
-        - name: NODE_ENV
-          value: "production"
-        - name: PORT
-          value: "5000"
-        - name: MONGODB_URI
-          valueFrom:
-            secretKeyRef:
-              name: aira-secrets
-              key: mongodb-uri
-        - name: RABBITMQ_URL
-          valueFrom:
-            secretKeyRef:
-              name: aira-secrets
-              key: rabbitmq-url
-        - name: REDIS_URL
-          valueFrom:
-            configMapKeyRef:
-              name: aira-config
-              key: redis-url
-        - name: SLACK_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: aira-secrets
-              key: slack-token
-              optional: true
+        # Environment variables from ConfigMap and Secrets
+        envFrom:
+        - configMapRef:
+            name: aira-config
+        - secretRef:
+            name: aira-secrets
         
         # Resource limits
         resources:
@@ -92,6 +72,19 @@ spec:
           capabilities:
             drop:
             - ALL
+        
+        # Volume mounts for writable paths (readOnlyRootFilesystem requires explicit mounts)
+        volumeMounts:
+        - name: logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      
+      volumes:
+      - name: logs
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
       
       # Pod security and restart policy
       restartPolicy: Always
@@ -103,7 +96,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: aira-backend
-  namespace: default
+  namespace: aira
   labels:
     app: aira
     component: backend
@@ -122,7 +115,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: aira-backend-hpa
-  namespace: default
+  namespace: aira
 spec:
   scaleTargetRef:
     apiVersion: apps/v1

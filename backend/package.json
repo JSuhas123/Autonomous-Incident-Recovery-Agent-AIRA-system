@@ -36,22 +36,22 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@kubernetes/client-node": "^0.20.0",
+    "@kubernetes/client-node": "^0.21.0",
     "amqplib": "^0.10.4",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "xss": "^1.0.14",
     "joi": "^17.11.0",
     "js-yaml": "^4.1.0",
     "mongodb-memory-server": "^10.1.4",
     "mongoose": "^8.6.2",
     "prom-client": "^15.1.0",
     "redis": "^4.6.12",
-    "uuid": "^9.0.0",
-    "winston": "^3.11.0"
+    "uuid": "^11.1.1",
+    "winston": "^3.11.0",
+    "xss": "^1.0.14"
   },
   "devDependencies": {
     "@types/jest": "^29.5.8",
