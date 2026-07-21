@@ -62,9 +62,10 @@ const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
 // Global middleware
+const allowedOrigin = process.env.CORS_ORIGIN || "http://localhost:3000";
 app.use(
   cors({
-    origin: "http://localhost:3000",
+    origin: allowedOrigin,
   })
 );
 app.use(express.json());
@@ -852,7 +853,7 @@ async function startServer() {
     } catch (error) {
       console.warn("[server] Queue service failed, using mock service:", error.message);
       // Fall back to mock queue service
-      const { setMockFallback } = require("./services/queueService");
+      const { setMockFallback } = require("./services/infrastructure/queueService");
       setMockFallback();
       queueService = await getQueueService();
       console.log("[server] ✓ Mock queue service initialized");

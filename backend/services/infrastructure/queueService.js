@@ -340,7 +340,7 @@ let useMockFallback = false;
 async function getQueueService(url) {
   if (useMockFallback) {
     // Return mock service when real service fails
-    return require("../tests/mocks/mockQueueService");
+    return require("../../tests/mocks/mockQueueService");
   }
   
   if (!instance) {

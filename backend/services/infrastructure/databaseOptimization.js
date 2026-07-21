@@ -12,6 +12,8 @@
  */
 
 const mongoose = require('mongoose');
+// Ensure Log model is registered before index creation
+require('../../models/Log');
 
 class DatabaseOptimizationService {
   constructor() {
@@ -99,13 +101,16 @@ class DatabaseOptimizationService {
         
         for (const indexConfig of indexConfigs) {
           try {
+            const indexOptions = {
+              name: indexConfig.name,
+              ...indexConfig.options,
+            };
+            if (indexConfig.expireAfterSeconds !== undefined) {
+              indexOptions.expireAfterSeconds = indexConfig.expireAfterSeconds;
+            }
             await Model.collection.createIndex(
               indexConfig.fields,
-              {
-                name: indexConfig.name,
-                expireAfterSeconds: indexConfig.expireAfterSeconds,
-                ...indexConfig.options,
-              }
+              indexOptions
             );
             console.log(`✓ ${modelName}.${indexConfig.name}`);
           } catch (error) {

@@ -89,7 +89,7 @@ class MultiInstanceCoordinator {
   async getActiveInstances() {
     try {
       const key = 'instance:registry';
-      const instances = await this.redis.hgetall(key);
+      const instances = await this.redis.hGetAll(key);
       
       const active = [];
       for (const [instanceId, data] of Object.entries(instances)) {
@@ -183,7 +183,7 @@ class MultiInstanceCoordinator {
     });
     
     try {
-      await this.redis.hset(key, this.instanceId, data);
+      await this.redis.hSet(key, this.instanceId, data);
       await this.redis.expire(key, 3600); // Auto-expire old registry
       console.log(`[multi-instance] ✓ Registered instance: ${this.instanceId}`);
     } catch (error) {
@@ -198,7 +198,7 @@ class MultiInstanceCoordinator {
    */
   async _unregisterInstance() {
     try {
-      await this.redis.hdel('instance:registry', this.instanceId);
+      await this.redis.hDel('instance:registry', this.instanceId);
       console.log(`[multi-instance] ✓ Unregistered instance: ${this.instanceId}`);
     } catch (error) {
       console.warn('[multi-instance] Failed to unregister:', error.message);
@@ -223,7 +223,7 @@ class MultiInstanceCoordinator {
         leader: this.isLeader,
       });
       
-      await this.redis.hset(key, this.instanceId, data);
+      await this.redis.hSet(key, this.instanceId, data);
       this.lastHeartbeat = Date.now();
     } catch (error) {
       console.warn(`[multi-instance] Heartbeat failed: ${error.message}`);
@@ -237,14 +237,14 @@ class MultiInstanceCoordinator {
   async _healthCheck() {
     try {
       const key = 'instance:registry';
-      const instances = await this.redis.hgetall(key);
+      const instances = await this.redis.hGetAll(key);
       
       for (const [instanceId, data] of Object.entries(instances)) {
         const parsed = JSON.parse(data);
         const age = Date.now() - parsed.lastHeartbeat;
         
         if (age > this.heartbeatTimeout) {
-          await this.redis.hdel(key, instanceId);
+          await this.redis.hDel(key, instanceId);
           console.log(
             `[multi-instance] ⚠️  Removed dead instance (${instanceId}, age: ${Math.round(age / 1000)}s)`
           );

@@ -63,7 +63,14 @@ function sanitizeString(value, options = {}) {
   const config = options.allowRichText ? sanitizeConfigRichText : sanitizeConfig;
 
   try {
-    return xss(value.trim(), config);
+    let sanitized = xss(value.trim(), config);
+    // Block DOM-based XSS vectors not caught by tag stripping
+    sanitized = sanitized.replace(/document\s*\.\s*(location|cookie|write|domain|referrer)/gi, '[removed]');
+    sanitized = sanitized.replace(/window\s*\.\s*(location|open|eval|document)/gi, '[removed]');
+    sanitized = sanitized.replace(/\beval\s*\(/gi, '[removed](');
+    sanitized = sanitized.replace(/\binnerHTML\s*=/gi, '[removed]=');
+    sanitized = sanitized.replace(/\bouterHTML\s*=/gi, '[removed]=');
+    return sanitized;
   } catch (error) {
     console.warn('[sanitization] xss error, returning original value:', error.message);
     // Fail-safe: return original if sanitization fails (should not happen)
