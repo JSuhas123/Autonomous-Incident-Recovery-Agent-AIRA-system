@@ -21,7 +21,6 @@ spec:
       containers:
       - name: aira
         image: aira-deploy-app:latest
-        imagePullPolicy: Never
         imagePullPolicy: Always
         ports:
         - containerPort: 5000

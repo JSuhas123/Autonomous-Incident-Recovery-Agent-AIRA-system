@@ -5,6 +5,7 @@ const { memoryService } = require("../services/learning");
 const { circuitBreakerService, decisionExecutionPublisher } = require("../services/execution");
 const { getQueueService } = require("../services/infrastructure/queueService");
 const { decisionPipelineObservability } = require("../services/observability");
+const { loggingService } = require("../services/infrastructure");
 const DecisionTrace = require("../models/DecisionTrace");
 const { randomUUID } = require("node:crypto");
 
@@ -35,13 +36,7 @@ function buildTieredDecision(errorRate, responseTime, affectedServices, severity
   );
   const isCriticalSeverity = severity === 'CRITICAL' || severity === 'HIGH';
   
-  // DEBUG: Log the parameters
-  if (affectedServices.some(s => s.toLowerCase().includes('database')) || severity === 'CRITICAL') {
-    console.log(`[buildTieredDecision] DEBUG - errorRate=${errorRate}, responseTime=${responseTime}, affectedServices=${JSON.stringify(affectedServices)}, severity=${severity}, hasCoreService=${hasCoreService}, isCriticalSeverity=${isCriticalSeverity}`);
-  }
-  
   if (isCriticalSeverity && hasCoreService) {
-    console.log(`[buildTieredDecision] MATCH! Returning ESCALATE for cascade`);
     return {
       patternType: 'CASCADE_FAILURE',
       recommendedAction: 'ESCALATE',
@@ -130,21 +125,18 @@ function getTierReasoning(tier) {
  * 
  * NO SIGNAL IS SILENTLY DROPPED
  */
-router.post("/signals", async (req, res) => {
+router.post("/signals", async (req, res, next) => {
   try {
     const tenantId = req.tenant?.id; // Use auth middleware's tenant context
     const signal = req.body;
 
     if (!tenantId) {
-      console.error('[coreApi] WARNING: tenantId is undefined! req.tenant:', req.tenant);
       return res.status(400).json({ error: 'tenantId not set by auth middleware' });
     }
 
     // Create decision ID for tracing
     const decisionId = randomUUID();
     const correlationId = randomUUID();
-    
-    console.log(`[coreApi] Signal endpoint: tenantId=${tenantId}, decisionId=${decisionId}`);
 
     // OBSERVABILITY: Record signal injection
     decisionPipelineObservability.recordSignalInjected(signal, tenantId);
@@ -164,7 +156,6 @@ router.post("/signals", async (req, res) => {
     } catch (backpressureError) {
       // Queue full or service overloaded
       if (backpressureError.message?.includes('BACKPRESSURE') || backpressureError.message?.includes('buffer')) {
-        console.warn(`[coreApi] BACKPRESSURE: Queue full for tenant=${tenantId}, rejecting request`);
         return res.status(503).json({
           error: 'System overloaded - queue depth exceeded',
           reason: 'Please retry after brief delay',
@@ -193,11 +184,6 @@ router.post("/signals", async (req, res) => {
     const errorRate = signal.errorRate || 0;
     const responseTime = signal.responseTime || 0;
     const affectedServices = signal.affectedServices || [];
-    
-    // DEBUG: Log signal details if it looks like cascade scenario
-    if (affectedServices.some(s => s.toLowerCase().includes('database')) || severity === 'CRITICAL') {
-      console.log(`[coreApi] Signal for ${affectedServices.join(',')} - errorRate=${errorRate}, responseTime=${responseTime}, severity=${severity}, affectedServices=${JSON.stringify(affectedServices)}`);
-    }
     
     // Build tiered decision based on signal characteristics
     const {
@@ -290,19 +276,6 @@ router.post("/signals", async (req, res) => {
     );
     
     const savedTrace = await decisionTrace.save();
-    
-    // OBSERVABILITY: Record decision latency
-    const decisionLatency = Date.now() - startDecisionTrace;
-    decisionPipelineObservability.recordDecisionLatency(decisionLatency);
-    
-    console.log(`[coreApi] ✓ DecisionTrace saved successfully:`, {
-      decisionId: savedTrace.decisionId,
-      tenantId: savedTrace.tenantId,
-      latency_ms: decisionLatency,
-      _id: savedTrace._id,
-    });
-
-    // CRITICAL FIX: Publish decision for execution
     // This ensures every decision is actually executed, not just stored in DB
     // Also enforce hard backpressure - must not silently lose messages
     try {
@@ -311,23 +284,14 @@ router.post("/signals", async (req, res) => {
         tenantId,
         correlationId
       );
-      console.log(`[coreApi] ✓ Decision published for execution via queue`);
     } catch (pubError) {
-      // Check if this is a backpressure error
-      if (pubError.message?.includes('BACKPRESSURE') || pubError.message?.includes('buffer')) {
-        console.error(`[coreApi] CRITICAL BACKPRESSURE: Could not publish decision for execution (queue full)`);
-        // This is critical but decision is saved in DB, exec will retry
-        // Return 503 to client but keep the decision saved
-        return res.status(503).json({
-          error: 'System overloaded - cannot queue for execution',
-          reason: 'Decision saved but execution delayed',
-          decisionId,
-          correlationId,
-          retryAfter: 'PT30S',
-        });
-      }
-      // Log but don't fail - decision is saved, execution will be retried
-      console.error('[coreApi] Warning: Could not publish decision for execution:', pubError.message);
+      // Non-fatal: decision is saved; execution will be retried by the retry processor.
+      // Do not fail the request — the caller already has a decisionId to poll.
+      loggingService.warn('[coreApi] Could not publish decision for execution', {
+        message: pubError.message,
+        decisionId,
+        tenantId,
+      });
     }
 
     // Return success response
@@ -345,8 +309,7 @@ router.post("/signals", async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("[coreApi] Error submitting signal:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -354,16 +317,10 @@ router.post("/signals", async (req, res) => {
  * GET /api/v1/decisions/:id
  * Retrieve full decision trace (primary endpoint for explainability)
  */
-router.get("/decisions/:id", async (req, res) => {
+router.get("/decisions/:id", async (req, res, next) => {
   try {
     const tenantId = req.tenant?.id; // Use auth middleware's tenant context (same as POST endpoint)
     const { id } = req.params;
-
-    console.log(`[coreApi] GET decisions - Retrieved from auth middleware:`, {
-      tenantId,
-      id,
-      reqTenant: req.tenant,
-    });
 
     const trace = await decisionTraceService.getTrace(id, tenantId);
 
@@ -395,8 +352,7 @@ router.get("/decisions/:id", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error retrieving decision:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -404,7 +360,7 @@ router.get("/decisions/:id", async (req, res) => {
  * GET /api/v1/decisions
  * List recent decisions for tenant
  */
-router.get("/decisions", async (req, res) => {
+router.get("/decisions", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const { limit = 50, action, status } = req.query;
@@ -433,8 +389,7 @@ router.get("/decisions", async (req, res) => {
       summary,
     });
   } catch (error) {
-    console.error("[coreApi] Error listing decisions:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -442,7 +397,7 @@ router.get("/decisions", async (req, res) => {
  * GET /api/v1/incidents/:id
  * Get incident details
  */
-router.get("/incidents/:id", async (req, res) => {
+router.get("/incidents/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
     const tenantId = req.tenant?.id;
@@ -467,8 +422,7 @@ router.get("/incidents/:id", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error retrieving incident:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -476,7 +430,7 @@ router.get("/incidents/:id", async (req, res) => {
  * GET /api/v1/actions/:id
  * Get action execution result
  */
-router.get("/actions/:id", async (req, res) => {
+router.get("/actions/:id", async (req, res, next) => {
   try {
     const { id } = req.params;
     const tenantId = req.tenant?.id;
@@ -505,8 +459,7 @@ router.get("/actions/:id", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error retrieving action:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -514,7 +467,7 @@ router.get("/actions/:id", async (req, res) => {
  * POST /api/v1/actions/:id/dry-run
  * Simulate execution of high-risk action
  */
-router.post("/actions/:id/dry-run", async (req, res) => {
+router.post("/actions/:id/dry-run", async (req, res, next) => {
   try {
     const { id } = req.params;
     const tenantId = req.tenant?.id;
@@ -533,8 +486,7 @@ router.post("/actions/:id/dry-run", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error dry-running action:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -542,7 +494,7 @@ router.post("/actions/:id/dry-run", async (req, res) => {
  * GET /api/v1/patterns
  * View recurring incident patterns and memory
  */
-router.get("/patterns", async (req, res) => {
+router.get("/patterns", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
 
@@ -573,8 +525,7 @@ router.get("/patterns", async (req, res) => {
       totalPatterns: summary.totalPatterns,
     });
   } catch (error) {
-    console.error("[coreApi] Error listing patterns:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -582,7 +533,7 @@ router.get("/patterns", async (req, res) => {
  * GET /api/v1/audit/:id
  * Retrieve full audit trail for decision
  */
-router.get("/audit/:id", async (req, res) => {
+router.get("/audit/:id", async (req, res, next) => {
   try {
     const { tenantId, id } = req.params;
 
@@ -642,8 +593,7 @@ router.get("/audit/:id", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error retrieving audit trail:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -651,7 +601,7 @@ router.get("/audit/:id", async (req, res) => {
  * GET /api/v1/metrics
  * System-level decision metrics
  */
-router.get("/metrics", async (req, res) => {
+router.get("/metrics", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
 
@@ -668,8 +618,7 @@ router.get("/metrics", async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("[coreApi] Error getting metrics:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -677,7 +626,7 @@ router.get("/metrics", async (req, res) => {
  * GET /api/v1/circuit-breakers
  * View circuit breaker status
  */
-router.get("/circuit-breakers", async (req, res) => {
+router.get("/circuit-breakers", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
 
@@ -689,8 +638,7 @@ router.get("/circuit-breakers", async (req, res) => {
       totalHalfOpen: statuses.filter((s) => s.status === "HALF_OPEN").length,
     });
   } catch (error) {
-    console.error("[coreApi] Error getting circuit breakers:", error);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 

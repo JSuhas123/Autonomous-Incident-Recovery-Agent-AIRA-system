@@ -11,14 +11,20 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      MONGODB_URI: mongodb://root:${MONGO_PASSWORD:-password}@mongodb:27017/decision_engine?authSource=admin
-      RABBITMQ_URL: amqp://guest:${RABBITMQ_PASSWORD:-guest}@rabbitmq:5672
+      MONGODB_URI: mongodb://root:${MONGO_PASSWORD:?MONGO_PASSWORD must be set}@mongodb:27017/decision_engine?authSource=admin
+      RABBITMQ_URL: amqp://guest:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD must be set}@rabbitmq:5672
       REDIS_URL: redis://redis:6379
       DISABLE_MEMORY_DB: "true"
       ALLOW_IN_MEMORY_LOCKS: "false"
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      AUDIT_SECRET: ${AUDIT_SECRET}
+      # AUDIT_SECRET is required — the server will exit with an error if absent.
+      AUDIT_SECRET: ${AUDIT_SECRET:?AUDIT_SECRET must be set (min 32 chars)}
+      # INTERNAL_API_TOKEN protects /metrics and /health/detailed.
+      # Set to a strong random string in all non-trivial environments.
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Set CORS_ORIGIN to your frontend origin (e.g. https://your-app.example.com).
+      # Wildcard "*" is rejected in production by startupValidator.
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
     depends_on:
       mongodb:

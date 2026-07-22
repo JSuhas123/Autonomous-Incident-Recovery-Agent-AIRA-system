@@ -13,7 +13,7 @@ const confidenceCalibrationService = require('../services/core/confidence/confid
  * POST /record-prediction
  * Record a confidence prediction before action execution
  */
-router.post('/record-prediction', async (req, res) => {
+router.post('/record-prediction', async (req, res, next) => {
   try {
     const { tenantId = 'default', decisionTraceId, predictionData } = req.body;
 
@@ -32,10 +32,7 @@ router.post('/record-prediction', async (req, res) => {
 
     res.json({ success: true, data: result });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -43,7 +40,7 @@ router.post('/record-prediction', async (req, res) => {
  * POST /record-outcome
  * Record actual outcome of decision and calculate prediction accuracy
  */
-router.post('/record-outcome', async (req, res) => {
+router.post('/record-outcome', async (req, res, next) => {
   try {
     const { tenantId = 'default', decisionTraceId, outcomeData } = req.body;
 
@@ -68,10 +65,7 @@ router.post('/record-outcome', async (req, res) => {
         : 'Prediction was inaccurate - consider weight adjustment'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -79,7 +73,7 @@ router.post('/record-outcome', async (req, res) => {
  * GET /weights
  * Get current confidence weights for tenant
  */
-router.get('/weights', async (req, res) => {
+router.get('/weights', async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.query;
 
@@ -101,10 +95,7 @@ router.get('/weights', async (req, res) => {
       lastCalibratedAt: weights.last_calibrated_at
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -112,7 +103,7 @@ router.get('/weights', async (req, res) => {
  * POST /recalibrate
  * Recalibrate weights based on recent prediction accuracy
  */
-router.post('/recalibrate', async (req, res) => {
+router.post('/recalibrate', async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.body;
 
@@ -127,10 +118,7 @@ router.post('/recalibrate', async (req, res) => {
       adjustmentHistory: weights.adjustment_history.slice(-3) // Last 3 adjustments
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -138,7 +126,7 @@ router.post('/recalibrate', async (req, res) => {
  * GET /accuracy/by-action
  * Get prediction accuracy broken down by action type
  */
-router.get('/accuracy/by-action', async (req, res) => {
+router.get('/accuracy/by-action', async (req, res, next) => {
   try {
     const { tenantId = 'default', timeRangeHours = 24 } = req.query;
 
@@ -164,10 +152,7 @@ router.get('/accuracy/by-action', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -175,7 +160,7 @@ router.get('/accuracy/by-action', async (req, res) => {
  * GET /accuracy/by-pattern
  * Get prediction accuracy by incident pattern
  */
-router.get('/accuracy/by-pattern', async (req, res) => {
+router.get('/accuracy/by-pattern', async (req, res, next) => {
   try {
     const { tenantId = 'default', timeRangeHours = 24 } = req.query;
 
@@ -199,10 +184,7 @@ router.get('/accuracy/by-pattern', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -210,7 +192,7 @@ router.get('/accuracy/by-pattern', async (req, res) => {
  * GET /calibration-data
  * Get raw calibration data (confidence vs effectiveness scatter points)
  */
-router.get('/calibration-data', async (req, res) => {
+router.get('/calibration-data', async (req, res, next) => {
   try {
     const { tenantId = 'default', limit = 50 } = req.query;
 
@@ -252,10 +234,7 @@ router.get('/calibration-data', async (req, res) => {
       interpretation: regression?.accuracy || 'Insufficient data for calibration analysis'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -263,7 +242,7 @@ router.get('/calibration-data', async (req, res) => {
  * GET /trends
  * Get confidence and accuracy trends over time
  */
-router.get('/trends', async (req, res) => {
+router.get('/trends', async (req, res, next) => {
   try {
     const { 
       tenantId = 'default', 
@@ -298,10 +277,7 @@ router.get('/trends', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -309,7 +285,7 @@ router.get('/trends', async (req, res) => {
  * POST /adjust-confidence
  * Apply calibrated weights to adjust a raw confidence score
  */
-router.post('/adjust-confidence', async (req, res) => {
+router.post('/adjust-confidence', async (req, res, next) => {
   try {
     const { tenantId = 'default', rawConfidence, factors } = req.body;
 
@@ -332,10 +308,7 @@ router.post('/adjust-confidence', async (req, res) => {
       message: `Confidence adjusted from ${Math.round(result.raw_confidence * 1000) / 10}% to ${Math.round(result.adjusted_confidence * 1000) / 10}%`
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -343,7 +316,7 @@ router.post('/adjust-confidence', async (req, res) => {
  * GET /stats
  * Get overall confidence calibration statistics
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.query;
 
@@ -374,10 +347,7 @@ router.get('/stats', async (req, res) => {
         : new Date()
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 

@@ -66,7 +66,13 @@ class AuditService {
     // Normalize timestamp to milliseconds (number) regardless of input type
     const timestampMs = timestamp instanceof Date ? timestamp.getTime() : timestamp;
     const message = JSON.stringify(payload) + tenantId + timestampMs;
-    const secret = process.env.AUDIT_SECRET || "audit-secret";
+    const secret = process.env.AUDIT_SECRET;
+    if (!secret) {
+      throw new Error(
+        "AUDIT_SECRET environment variable is not set. " +
+        "Cannot compute audit signature without a secret."
+      );
+    }
     return crypto.createHmac("sha256", secret).update(message).digest("hex");
   }
 
@@ -322,7 +328,7 @@ class AuditService {
    * @param {string} signature - Signature to verify
    * @param {string} secret - Secret key
    */
-  static verifySignature(data, signature, secret = process.env.AUDIT_SECRET || 'audit-secret') {
+  static verifySignature(data, signature, secret = process.env.AUDIT_SECRET) {
     if (!signature) return false;
     const expectedSignature = this.signMessage(data, secret);
     try {

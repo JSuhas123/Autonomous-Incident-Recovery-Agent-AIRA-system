@@ -33,7 +33,7 @@ router.post('/validate', (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({ error: 'Validation failed', details: error.message });
+    next(error);
   }
 });
 
@@ -41,7 +41,7 @@ router.post('/validate', (req, res) => {
  * POST /api/policy/dry-run
  * Simulate action execution without actually running it
  */
-router.post('/dry-run', async (req, res) => {
+router.post('/dry-run', async (req, res, next) => {
   try {
     const { action, conditions, incidentData, policy } = req.body;
 
@@ -83,10 +83,7 @@ router.post('/dry-run', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Dry-run simulation failed',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -94,7 +91,7 @@ router.post('/dry-run', async (req, res) => {
  * POST /api/policy/dry-run/compare
  * Compare multiple scenarios through dry-run
  */
-router.post('/dry-run/compare', async (req, res) => {
+router.post('/dry-run/compare', async (req, res, next) => {
   try {
     const { scenarios, policy } = req.body;
 
@@ -134,10 +131,7 @@ router.post('/dry-run/compare', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Comparison failed',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -156,7 +150,7 @@ router.get('/dry-run/results', (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to retrieve results' });
+    next(error);
   }
 });
 
@@ -164,7 +158,7 @@ router.get('/dry-run/results', (req, res) => {
  * POST /api/policy/create-version
  * Create a new policy version
  */
-router.post('/create-version', async (req, res) => {
+router.post('/create-version', async (req, res, next) => {
   try {
     const { tenantId, policyId, content, createdBy } = req.body;
 
@@ -197,10 +191,7 @@ router.post('/create-version', async (req, res) => {
       createdAt: version.createdAt,
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to create policy version',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -208,7 +199,7 @@ router.post('/create-version', async (req, res) => {
  * POST /api/policy/activate-version
  * Activate a specific policy version
  */
-router.post('/activate-version', async (req, res) => {
+router.post('/activate-version', async (req, res, next) => {
   try {
     const { tenantId, policyId, version } = req.body;
 
@@ -231,10 +222,7 @@ router.post('/activate-version', async (req, res) => {
       activatedAt: activated.activatedAt,
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to activate version',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -242,7 +230,7 @@ router.post('/activate-version', async (req, res) => {
  * POST /api/policy/rollback
  * Manually rollback to previous version
  */
-router.post('/rollback', async (req, res) => {
+router.post('/rollback', async (req, res, next) => {
   try {
     const { tenantId, policyId, targetVersion, reason, actor } = req.body;
 
@@ -268,10 +256,7 @@ router.post('/rollback', async (req, res) => {
       rollbackAt: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Rollback failed',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -279,7 +264,7 @@ router.post('/rollback', async (req, res) => {
  * POST /api/policy/record-outcome
  * Record the outcome of a policy action
  */
-router.post('/record-outcome', async (req, res) => {
+router.post('/record-outcome', async (req, res, next) => {
   try {
     const { tenantId, policyId, success, resolutionTimeMs, action } = req.body;
 
@@ -305,10 +290,7 @@ router.post('/record-outcome', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to record outcome',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -316,7 +298,7 @@ router.post('/record-outcome', async (req, res) => {
  * GET /api/policy/version-history
  * Get version history for a policy
  */
-router.get('/version-history', async (req, res) => {
+router.get('/version-history', async (req, res, next) => {
   try {
     const { tenantId, policyId } = req.query;
 
@@ -347,10 +329,7 @@ router.get('/version-history', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve version history',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -358,7 +337,7 @@ router.get('/version-history', async (req, res) => {
  * GET /api/policy/rollback-history
  * Get rollback events for a policy
  */
-router.get('/rollback-history', async (req, res) => {
+router.get('/rollback-history', async (req, res, next) => {
   try {
     const { tenantId, policyId } = req.query;
     const limit = Math.min(parseInt(req.query.limit) || 20, 100);
@@ -383,10 +362,7 @@ router.get('/rollback-history', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve rollback history',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -415,10 +391,7 @@ router.post('/check-allowed', (req, res) => {
       approvers: result.approvers,
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Check failed',
-      details: error.message,
-    });
+    next(error);
   }
 });
 

@@ -12,7 +12,7 @@ const router = express.Router();
  * POST /api/effectiveness/record-before
  * Record metrics before action execution
  */
-router.post('/record-before', async (req, res) => {
+router.post('/record-before', async (req, res, next) => {
   try {
     const { decisionTraceId, tenantId, metrics } = req.body;
 
@@ -35,10 +35,7 @@ router.post('/record-before', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to record before metrics',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -46,7 +43,7 @@ router.post('/record-before', async (req, res) => {
  * POST /api/effectiveness/record-action
  * Record action execution details
  */
-router.post('/record-action', async (req, res) => {
+router.post('/record-action', async (req, res, next) => {
   try {
     const { decisionTraceId, actionId, durationMs, success } = req.body;
 
@@ -70,10 +67,7 @@ router.post('/record-action', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to record action',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -81,7 +75,7 @@ router.post('/record-action', async (req, res) => {
  * POST /api/effectiveness/record-after
  * Record metrics after action execution and incident resolution
  */
-router.post('/record-after', async (req, res) => {
+router.post('/record-after', async (req, res, next) => {
   try {
     const { decisionTraceId, metrics } = req.body;
 
@@ -104,10 +98,7 @@ router.post('/record-after', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to record after metrics',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -115,7 +106,7 @@ router.post('/record-after', async (req, res) => {
  * GET /api/effectiveness/:decisionTraceId
  * Get effectiveness metrics for a specific decision
  */
-router.get('/:decisionTraceId', async (req, res) => {
+router.get('/:decisionTraceId', async (req, res, next) => {
   try {
     const { decisionTraceId } = req.params;
 
@@ -136,10 +127,7 @@ router.get('/:decisionTraceId', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve metrics',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -147,7 +135,7 @@ router.get('/:decisionTraceId', async (req, res) => {
  * GET /api/effectiveness/compare/actions
  * Compare effectiveness across different actions
  */
-router.get('/compare/actions', async (req, res) => {
+router.get('/compare/actions', async (req, res, next) => {
   try {
     const tenantId = req.query.tenantId || 'default';
     const timeRangeHours = parseInt(req.query.timeRangeHours || 24);
@@ -166,10 +154,7 @@ router.get('/compare/actions', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to compare actions',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -177,7 +162,7 @@ router.get('/compare/actions', async (req, res) => {
  * GET /api/effectiveness/pattern/:pattern
  * Get effectiveness for a specific incident pattern
  */
-router.get('/pattern/:pattern', async (req, res) => {
+router.get('/pattern/:pattern', async (req, res, next) => {
   try {
     const tenantId = req.query.tenantId || 'default';
     const { pattern } = req.params;
@@ -212,10 +197,7 @@ router.get('/pattern/:pattern', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve pattern effectiveness',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -223,7 +205,7 @@ router.get('/pattern/:pattern', async (req, res) => {
  * GET /api/effectiveness/trends/:action
  * Get effectiveness trends for a specific action
  */
-router.get('/trends/:action', async (req, res) => {
+router.get('/trends/:action', async (req, res, next) => {
   try {
     const tenantId = req.query.tenantId || 'default';
     const { action } = req.params;
@@ -243,10 +225,7 @@ router.get('/trends/:action', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve trends',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -254,7 +233,7 @@ router.get('/trends/:action', async (req, res) => {
  * POST /api/effectiveness/cost-analysis
  * Calculate ROI for an action
  */
-router.post('/cost-analysis', async (req, res) => {
+router.post('/cost-analysis', async (req, res, next) => {
   try {
     const { decisionTraceId, actionCostEstimate } = req.body;
 
@@ -280,10 +259,7 @@ router.post('/cost-analysis', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to calculate cost analysis',
-      details: error.message,
-    });
+    next(error);
   }
 });
 
@@ -291,7 +267,7 @@ router.post('/cost-analysis', async (req, res) => {
  * GET /api/effectiveness/stats
  * Get overall effectiveness statistics
  */
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
   try {
     const tenantId = req.query.tenantId || 'default';
 
@@ -319,10 +295,7 @@ router.get('/', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    res.status(500).json({
-      error: 'Failed to retrieve statistics',
-      details: error.message,
-    });
+    next(error);
   }
 });
 

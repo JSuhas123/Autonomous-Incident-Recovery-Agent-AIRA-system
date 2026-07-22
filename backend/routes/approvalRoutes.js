@@ -21,7 +21,7 @@ const approvalService = getApprovalService();
  * GET /approvals
  * Get pending approval requests for tenant
  */
-router.get('/', validateInput, async (req, res) => {
+router.get('/', validateInput, async (req, res, next) => {
   try {
     const { tenantId } = req.params;
 
@@ -49,8 +49,7 @@ router.get('/', validateInput, async (req, res) => {
       })),
     });
   } catch (error) {
-    console.error('[approval-routes] Error getting pending approvals:', error.message);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -58,7 +57,7 @@ router.get('/', validateInput, async (req, res) => {
  * GET /approvals/queue/stats
  * Get approval queue statistics
  */
-router.get('/queue/stats', validateInput, async (req, res) => {
+router.get('/queue/stats', validateInput, async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const stats = await approvalService.getQueueStats(tenantId);
@@ -68,8 +67,7 @@ router.get('/queue/stats', validateInput, async (req, res) => {
       queue: stats,
     });
   } catch (error) {
-    console.error('[approval-routes] Error getting queue stats:', error.message);
-    res.status(500).json({ error: error.message });
+    next(error);
   }
 });
 
@@ -77,7 +75,7 @@ router.get('/queue/stats', validateInput, async (req, res) => {
  * GET /approvals/:approvalId
  * Get specific approval request status
  */
-router.get('/:approvalId', validateInput, async (req, res) => {
+router.get('/:approvalId', validateInput, async (req, res, next) => {
   try {
     const { tenantId, approvalId } = req.params;
 
@@ -94,11 +92,8 @@ router.get('/:approvalId', validateInput, async (req, res) => {
       approval: status,
     });
   } catch (error) {
-    if (error.message.includes('not found')) {
-      return res.status(404).json({ error: error.message });
-    }
-    console.error('[approval-routes] Error getting approval status:', error.message);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes('not found')) error.status = 404;
+    next(error);
   }
 });
 
@@ -112,7 +107,7 @@ router.get('/:approvalId', validateInput, async (req, res) => {
  *   "comment": "optional approval comment"
  * }
  */
-router.post('/:approvalId/approve', validateInput, async (req, res) => {
+router.post('/:approvalId/approve', validateInput, async (req, res, next) => {
   try {
     const { tenantId, approvalId } = req.params;
     const { approvedBy, comment } = req.body;
@@ -149,14 +144,9 @@ router.post('/:approvalId/approve', validateInput, async (req, res) => {
       result,
     });
   } catch (error) {
-    if (error.message.includes('not found')) {
-      return res.status(404).json({ error: error.message });
-    }
-    if (error.message.includes('Cannot approve') || error.message.includes('expired')) {
-      return res.status(409).json({ error: error.message });
-    }
-    console.error('[approval-routes] Error approving request:', error.message);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes('not found')) error.status = 404;
+    if (error.message.includes('Cannot approve') || error.message.includes('expired')) error.status = 409;
+    next(error);
   }
 });
 
@@ -170,7 +160,7 @@ router.post('/:approvalId/approve', validateInput, async (req, res) => {
  *   "reason": "reason for rejection"
  * }
  */
-router.post('/:approvalId/reject', validateInput, async (req, res) => {
+router.post('/:approvalId/reject', validateInput, async (req, res, next) => {
   try {
     const { tenantId, approvalId } = req.params;
     const { rejectedBy, reason } = req.body;
@@ -208,14 +198,9 @@ router.post('/:approvalId/reject', validateInput, async (req, res) => {
       result,
     });
   } catch (error) {
-    if (error.message.includes('not found')) {
-      return res.status(404).json({ error: error.message });
-    }
-    if (error.message.includes('Cannot reject')) {
-      return res.status(409).json({ error: error.message });
-    }
-    console.error('[approval-routes] Error rejecting request:', error.message);
-    res.status(500).json({ error: error.message });
+    if (error.message.includes('not found')) error.status = 404;
+    if (error.message.includes('Cannot reject')) error.status = 409;
+    next(error);
   }
 });
 

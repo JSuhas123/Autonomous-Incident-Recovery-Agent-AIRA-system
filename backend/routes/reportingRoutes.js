@@ -12,7 +12,7 @@ const reportingService = require('../services/core/reportingService');
  * POST /effectiveness
  * Generate effectiveness report
  */
-router.post('/effectiveness', async (req, res) => {
+router.post('/effectiveness', async (req, res, next) => {
   try {
     const { tenantId = 'default', startDate, endDate } = req.body;
 
@@ -37,10 +37,7 @@ router.post('/effectiveness', async (req, res) => {
       metrics: report.metrics
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -48,7 +45,7 @@ router.post('/effectiveness', async (req, res) => {
  * POST /failure-analysis
  * Generate failure analysis report
  */
-router.post('/failure-analysis', async (req, res) => {
+router.post('/failure-analysis', async (req, res, next) => {
   try {
     const { tenantId = 'default', startDate, endDate } = req.body;
 
@@ -75,10 +72,7 @@ router.post('/failure-analysis', async (req, res) => {
       riskAreas: report.riskAreas
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -86,7 +80,7 @@ router.post('/failure-analysis', async (req, res) => {
  * POST /confidence-calibration
  * Generate confidence calibration report
  */
-router.post('/confidence-calibration', async (req, res) => {
+router.post('/confidence-calibration', async (req, res, next) => {
   try {
     const { tenantId = 'default', startDate, endDate } = req.body;
 
@@ -112,10 +106,7 @@ router.post('/confidence-calibration', async (req, res) => {
       recommendations: report.recommendations
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -123,7 +114,7 @@ router.post('/confidence-calibration', async (req, res) => {
  * POST /executive-summary
  * Generate executive summary report
  */
-router.post('/executive-summary', async (req, res) => {
+router.post('/executive-summary', async (req, res, next) => {
   try {
     const { tenantId = 'default', startDate, endDate } = req.body;
 
@@ -149,10 +140,7 @@ router.post('/executive-summary', async (req, res) => {
       businessImpact: report.metrics.businessImpact
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -160,7 +148,7 @@ router.post('/executive-summary', async (req, res) => {
  * GET /reports
  * Get all reports for tenant
  */
-router.get('/reports', async (req, res) => {
+router.get('/reports', async (req, res, next) => {
   try {
     const { tenantId = 'default', type, limit = 10 } = req.query;
 
@@ -183,10 +171,7 @@ router.get('/reports', async (req, res) => {
       }))
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -194,7 +179,7 @@ router.get('/reports', async (req, res) => {
  * GET /reports/:reportId
  * Get specific report
  */
-router.get('/reports/:reportId', async (req, res) => {
+router.get('/reports/:reportId', async (req, res, next) => {
   try {
     const { reportId } = req.params;
 
@@ -212,10 +197,7 @@ router.get('/reports/:reportId', async (req, res) => {
       report
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -223,7 +205,7 @@ router.get('/reports/:reportId', async (req, res) => {
  * POST /reports/:reportId/archive
  * Archive report
  */
-router.post('/reports/:reportId/archive', async (req, res) => {
+router.post('/reports/:reportId/archive', async (req, res, next) => {
   try {
     const { reportId } = req.params;
 
@@ -235,10 +217,7 @@ router.post('/reports/:reportId/archive', async (req, res) => {
       reportId
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 

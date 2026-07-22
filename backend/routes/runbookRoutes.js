@@ -13,7 +13,7 @@ const { runbookExecutionService } = require("../services/execution");
  * List all runbooks for a tenant
  * Query params: incidentType, enabled
  */
-router.get("/", async (req, res) => {
+router.get("/", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const { incidentType, enabled } = req.query;
@@ -30,11 +30,7 @@ router.get("/", async (req, res) => {
       runbooks,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error fetching runbooks:", error.message);
-    res.status(500).json({
-      error: "Failed to fetch runbooks",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -42,7 +38,7 @@ router.get("/", async (req, res) => {
  * GET /api/tenants/:tenantId/runbooks/:runbookId
  * Get a specific runbook
  */
-router.get("/:runbookId", async (req, res) => {
+router.get("/:runbookId", async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
 
@@ -63,11 +59,7 @@ router.get("/:runbookId", async (req, res) => {
       runbook,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error fetching runbook:", error.message);
-    res.status(500).json({
-      error: "Failed to fetch runbook",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -76,7 +68,7 @@ router.get("/:runbookId", async (req, res) => {
  * Create a new runbook
  * Body: { name, incidentType, steps, rollback, successCriteria, enabled }
  */
-router.post("/", async (req, res) => {
+router.post("/", async (req, res, next) => {
   try {
     const { tenantId } = req.params;
     const { name, incidentType, steps, rollback, successCriteria, enabled } = req.body;
@@ -106,11 +98,7 @@ router.post("/", async (req, res) => {
       runbook,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error creating runbook:", error.message);
-    res.status(500).json({
-      error: "Failed to create runbook",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -119,7 +107,7 @@ router.post("/", async (req, res) => {
  * Update a runbook
  * Body: { name?, steps?, rollback?, enabled?, ... }
  */
-router.put("/:runbookId", async (req, res) => {
+router.put("/:runbookId", async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
     const updates = req.body;
@@ -143,11 +131,7 @@ router.put("/:runbookId", async (req, res) => {
       runbook,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error updatingrunbook:", error.message);
-    res.status(500).json({
-      error: "Failed to update runbook",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -155,7 +139,7 @@ router.put("/:runbookId", async (req, res) => {
  * DELETE /api/tenants/:tenantId/runbooks/:runbookId
  * Delete a runbook
  */
-router.delete("/:runbookId", async (req, res) => {
+router.delete("/:runbookId", async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
 
@@ -177,11 +161,7 @@ router.delete("/:runbookId", async (req, res) => {
       runbookId,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error deleting runbook:", error.message);
-    res.status(500).json({
-      error: "Failed to delete runbook",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -190,7 +170,7 @@ router.delete("/:runbookId", async (req, res) => {
  * Execute a runbook for an incident
  * Body: { correlationId, incidentContext }
  */
-router.post("/:runbookId/execute", async (req, res) => {
+router.post("/:runbookId/execute", async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
     const { correlationId, incidentContext } = req.body;
@@ -227,11 +207,7 @@ router.post("/:runbookId/execute", async (req, res) => {
       status: execution.status,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error executing runbook:", error.message);
-    res.status(500).json({
-      error: "Failed to execute runbook",
-      message: error.message,
-    });
+    next(error);
   }
 });
 
@@ -240,7 +216,7 @@ router.post("/:runbookId/execute", async (req, res) => {
  * Get execution history for a runbook
  * Query params: limit
  */
-router.get("/:runbookId/executions", async (req, res) => {
+router.get("/:runbookId/executions", async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
     const { limit = 10 } = req.query;
@@ -258,11 +234,7 @@ router.get("/:runbookId/executions", async (req, res) => {
       executions,
     });
   } catch (error) {
-    console.error("[runbook-routes] Error fetching execution history:", error.message);
-    res.status(500).json({
-      error: "Failed to fetch execution history",
-      message: error.message,
-    });
+    next(error);
   }
 });
 

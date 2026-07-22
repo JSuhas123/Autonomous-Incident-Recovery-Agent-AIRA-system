@@ -12,7 +12,7 @@ const webhookIngestionService = require('../services/integrations/webhookIngesti
  * POST /webhooks/register
  * Register a webhook source (Datadog, PagerDuty, Prometheus, etc)
  */
-router.post('/webhooks/register', async (req, res) => {
+router.post('/webhooks/register', async (req, res, next) => {
   try {
     const { tenantId = 'default', sourceConfig } = req.body;
 
@@ -34,10 +34,7 @@ router.post('/webhooks/register', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -45,7 +42,7 @@ router.post('/webhooks/register', async (req, res) => {
  * POST /webhooks/ingest
  * Receive webhook event from external monitoring system
  */
-router.post('/webhooks/ingest', async (req, res) => {
+router.post('/webhooks/ingest', async (req, res, next) => {
   try {
     const { tenantId = 'default', source, payload } = req.body;
 
@@ -65,10 +62,7 @@ router.post('/webhooks/ingest', async (req, res) => {
       message: 'Webhook received and queued for processing'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -76,7 +70,7 @@ router.post('/webhooks/ingest', async (req, res) => {
  * POST /webhooks/:eventId/decision
  * Record AIRA decision for webhook event
  */
-router.post('/webhooks/:eventId/decision', async (req, res) => {
+router.post('/webhooks/:eventId/decision', async (req, res, next) => {
   try {
     const { eventId } = req.params;
     const { decision } = req.body;
@@ -97,10 +91,7 @@ router.post('/webhooks/:eventId/decision', async (req, res) => {
       message: 'AIRA decision recorded'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -108,7 +99,7 @@ router.post('/webhooks/:eventId/decision', async (req, res) => {
  * GET /webhooks/history
  * Get webhook event history
  */
-router.get('/webhooks/history', async (req, res) => {
+router.get('/webhooks/history', async (req, res, next) => {
   try {
     const { tenantId = 'default', source, limit = 50 } = req.query;
 
@@ -125,10 +116,7 @@ router.get('/webhooks/history', async (req, res) => {
       events
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -136,7 +124,7 @@ router.get('/webhooks/history', async (req, res) => {
  * GET /webhooks/stats
  * Get webhook ingestion statistics
  */
-router.get('/webhooks/stats', async (req, res) => {
+router.get('/webhooks/stats', async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.query;
 
@@ -156,10 +144,7 @@ router.get('/webhooks/stats', async (req, res) => {
       bySource: stats
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -167,7 +152,7 @@ router.get('/webhooks/stats', async (req, res) => {
  * POST /slack/notify
  * Send Slack notification (requires SLACK_TOKEN environment variable)
  */
-router.post('/slack/notify', async (req, res) => {
+router.post('/slack/notify', async (req, res, next) => {
   try {
     const { channel, messageType, content } = req.body;
 
@@ -193,10 +178,7 @@ router.post('/slack/notify', async (req, res) => {
       channel
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -204,7 +186,7 @@ router.post('/slack/notify', async (req, res) => {
  * Example: POST /webhooks/datadog
  * Receive Datadog webhook
  */
-router.post('/webhooks/datadog', async (req, res) => {
+router.post('/webhooks/datadog', async (req, res, next) => {
   try {
     const payload = req.body;
 
@@ -219,10 +201,7 @@ router.post('/webhooks/datadog', async (req, res) => {
 
     res.json({ success: true, eventId: event.eventId });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -230,7 +209,7 @@ router.post('/webhooks/datadog', async (req, res) => {
  * Example: POST /webhooks/prometheus
  * Receive Prometheus AlertManager webhook
  */
-router.post('/webhooks/prometheus', async (req, res) => {
+router.post('/webhooks/prometheus', async (req, res, next) => {
   try {
     const { alerts } = req.body;
 
@@ -249,10 +228,7 @@ router.post('/webhooks/prometheus', async (req, res) => {
 
     res.json({ success: true, eventsIngested: results.length });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 

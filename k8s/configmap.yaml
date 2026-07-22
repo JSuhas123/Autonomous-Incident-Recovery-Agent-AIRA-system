@@ -12,6 +12,10 @@ data:
   METRICS_ENABLED: "true"
   DISABLE_MEMORY_DB: "true"
   ALLOW_IN_MEMORY_LOCKS: "false"
-  CORS_ORIGIN: "*"
+  # CORS_ORIGIN must be set to your actual frontend origin in the deployment
+  # environment (e.g. https://your-app.example.com).  Do NOT use "*".
+  # Override this value via the aira-secrets Secret or a Kustomize patch.
+  CORS_ORIGIN: "https://change-me.example.com"
   REDIS_URL: "redis://aira-redis:6379"
-  RABBITMQ_URL: "amqp://aira:airapass@aira-rabbitmq:5672"
+  # RABBITMQ_URL is intentionally absent from this ConfigMap because it
+  # contains credentials.  It is supplied via the aira-secrets Secret.

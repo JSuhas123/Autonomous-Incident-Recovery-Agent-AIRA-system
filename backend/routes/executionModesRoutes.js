@@ -12,7 +12,7 @@ const executionModesService = require('../services/core/executionModesService');
  * POST /config/default-mode
  * Set default execution mode for tenant
  */
-router.post('/config/default-mode', async (req, res) => {
+router.post('/config/default-mode', async (req, res, next) => {
   try {
     const { tenantId = 'default', mode } = req.body;
 
@@ -31,10 +31,7 @@ router.post('/config/default-mode', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -42,7 +39,7 @@ router.post('/config/default-mode', async (req, res) => {
  * POST /config/action-mode
  * Set execution mode for specific action
  */
-router.post('/config/action-mode', async (req, res) => {
+router.post('/config/action-mode', async (req, res, next) => {
   try {
     const { tenantId = 'default', action, mode } = req.body;
 
@@ -61,10 +58,7 @@ router.post('/config/action-mode', async (req, res) => {
       data: result
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -72,7 +66,7 @@ router.post('/config/action-mode', async (req, res) => {
  * POST /requests
  * Create execution request
  */
-router.post('/requests', async (req, res) => {
+router.post('/requests', async (req, res, next) => {
   try {
     const { tenantId = 'default', requestData } = req.body;
 
@@ -96,10 +90,7 @@ router.post('/requests', async (req, res) => {
       message: `Request created with mode: ${request.executionMode}`
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -107,7 +98,7 @@ router.post('/requests', async (req, res) => {
  * POST /requests/:decisionTraceId/approve
  * Approve execution request
  */
-router.post('/requests/:decisionTraceId/approve', async (req, res) => {
+router.post('/requests/:decisionTraceId/approve', async (req, res, next) => {
   try {
     const { decisionTraceId } = req.params;
     const { tenantId = 'default', approverId, approverName } = req.body;
@@ -137,10 +128,7 @@ router.post('/requests/:decisionTraceId/approve', async (req, res) => {
         : `Approval recorded (${request.approval.currentApprovals}/${request.approval.requiredApprovals})`
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -148,7 +136,7 @@ router.post('/requests/:decisionTraceId/approve', async (req, res) => {
  * POST /requests/:decisionTraceId/reject
  * Reject execution request
  */
-router.post('/requests/:decisionTraceId/reject', async (req, res) => {
+router.post('/requests/:decisionTraceId/reject', async (req, res, next) => {
   try {
     const { decisionTraceId } = req.params;
     const { tenantId = 'default', rejecterId, reason } = req.body;
@@ -173,10 +161,7 @@ router.post('/requests/:decisionTraceId/reject', async (req, res) => {
       message: 'Request rejected'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -184,7 +169,7 @@ router.post('/requests/:decisionTraceId/reject', async (req, res) => {
  * POST /requests/:decisionTraceId/execute
  * Mark request as executing
  */
-router.post('/requests/:decisionTraceId/execute', async (req, res) => {
+router.post('/requests/:decisionTraceId/execute', async (req, res, next) => {
   try {
     const { decisionTraceId } = req.params;
     const { tenantId = 'default' } = req.body;
@@ -201,10 +186,7 @@ router.post('/requests/:decisionTraceId/execute', async (req, res) => {
       message: 'Execution started'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -212,7 +194,7 @@ router.post('/requests/:decisionTraceId/execute', async (req, res) => {
  * POST /requests/:decisionTraceId/complete
  * Mark request as completed
  */
-router.post('/requests/:decisionTraceId/complete', async (req, res) => {
+router.post('/requests/:decisionTraceId/complete', async (req, res, next) => {
   try {
     const { decisionTraceId } = req.params;
     const { tenantId = 'default', result } = req.body;
@@ -231,10 +213,7 @@ router.post('/requests/:decisionTraceId/complete', async (req, res) => {
       message: 'Execution completed'
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -242,7 +221,7 @@ router.post('/requests/:decisionTraceId/complete', async (req, res) => {
  * GET /approvals/pending
  * Get pending approvals
  */
-router.get('/approvals/pending', async (req, res) => {
+router.get('/approvals/pending', async (req, res, next) => {
   try {
     const { tenantId = 'default', limit = 50 } = req.query;
 
@@ -258,10 +237,7 @@ router.get('/approvals/pending', async (req, res) => {
       requests
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 
@@ -269,7 +245,7 @@ router.get('/approvals/pending', async (req, res) => {
  * GET /stats
  * Get execution statistics
  */
-router.get('/stats', async (req, res) => {
+router.get('/stats', async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.query;
 
@@ -281,10 +257,7 @@ router.get('/stats', async (req, res) => {
       statistics: stats
     });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    next(error);
   }
 });
 

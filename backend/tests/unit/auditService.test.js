@@ -10,6 +10,16 @@ describe('AuditService', () => {
   const SECRET_KEY = 'test-secret-key-phase1';
   const TEST_TENANT = 'test-tenant-audit';
 
+  // AUDIT_SECRET must be present because _computeSignature now throws without it.
+  // Use a fixed test value that meets the 32-char minimum.
+  beforeAll(() => {
+    process.env.AUDIT_SECRET = 'test-audit-secret-key-32-chars!!';
+  });
+
+  afterAll(() => {
+    delete process.env.AUDIT_SECRET;
+  });
+
   describe('signMessage', () => {
     test('should generate valid HMAC signature', () => {
       const data = { action: 'CREATE_POLICY', resourceId: 'policy-123' };
