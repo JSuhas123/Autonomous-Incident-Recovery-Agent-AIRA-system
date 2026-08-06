@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const { MongoMemoryServer } = require("mongodb-memory-server");
 
 let memoryServer = null;
 
@@ -23,6 +22,8 @@ async function connectDatabase() {
       "[db] Failed to connect to configured MongoDB URI. Falling back to in-memory MongoDB."
     );
 
+    // lazy require — mongodb-memory-server is a devDependency, not available in production
+    const { MongoMemoryServer } = require("mongodb-memory-server");
     memoryServer = await MongoMemoryServer.create();
     const memoryUri = memoryServer.getUri("autonomous_incident_agent");
 
