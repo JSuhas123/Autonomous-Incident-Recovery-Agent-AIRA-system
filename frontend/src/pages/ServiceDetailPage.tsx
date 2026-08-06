@@ -1,12 +1,12 @@
-import { useNavigate, useParams } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ArrowLeft, Server, Activity, Plug, AlertTriangle, Sparkles, Settings } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { useService } from '@/api/hooks/useServices'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useService } from '@/api/hooks/useServices'
+import { motion } from 'framer-motion'
+import { Activity, AlertTriangle, ArrowLeft, Plug, Server, Settings, Sparkles } from 'lucide-react'
+import { useNavigate, useParams } from 'react-router-dom'
 
 function ComingSoon({ label }: { label: string }) {
   return (
@@ -93,6 +93,9 @@ export default function ServiceDetailPage() {
           <TabsTrigger value="overview" className="gap-1.5">
             <Server className="w-3.5 h-3.5" /> Overview
           </TabsTrigger>
+          <TabsTrigger value="verification" className="gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5" /> Verification
+          </TabsTrigger>
           <TabsTrigger value="monitoring" className="gap-1.5">
             <Activity className="w-3.5 h-3.5" /> Monitoring
           </TabsTrigger>
@@ -155,6 +158,10 @@ export default function ServiceDetailPage() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="verification" className="mt-4">
+          <VerificationWizard serviceId={svc.id} hasBaseUrl={!!svc.baseUrl} />
         </TabsContent>
 
         <TabsContent value="monitoring" className="mt-4">

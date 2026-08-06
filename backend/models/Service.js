@@ -99,6 +99,15 @@ const serviceSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    verificationMethod: {
+      type: String,
+      enum: ["dns_txt", "file", "meta_tag", null],
+      default: null,
+    },
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
     archivedAt: {
       type: Date,
       default: null,

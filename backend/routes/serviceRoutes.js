@@ -5,6 +5,7 @@ const Joi = require("joi");
 const crypto = require("crypto");
 
 const Service = require("../models/Service");
+const verificationRoutes = require("./verificationRoutes");
 const { validateServiceUrl } = require("../utils/urlValidator");
 const { record: auditRecord } = require("../services/identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../constants/authEvents");
@@ -46,6 +47,8 @@ function safeService(doc) {
     monitoringStatus: doc.monitoringStatus,
     tags: doc.tags,
     createdBy: doc.createdBy,
+    verificationMethod: doc.verificationMethod,
+    verifiedAt: doc.verifiedAt,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
     archivedAt: doc.archivedAt,
@@ -326,5 +329,8 @@ router.delete("/:serviceId", async (req, res, next) => {
     next(err);
   }
 });
+
+// Mount verification sub-router
+router.use("/:serviceId/verification", verificationRoutes);
 
 module.exports = router;

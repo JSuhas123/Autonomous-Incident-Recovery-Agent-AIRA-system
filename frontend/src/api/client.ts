@@ -159,6 +159,33 @@ export const serviceApi = {
     request<{ success: boolean; data: Service }>(`/api/v1/services/${id}`, { method: 'DELETE' }),
 }
 
+// ─── Verification endpoints ──────────────────────────────────────────────────
+
+import type {
+  VerificationChallenge,
+  VerificationCheckResult,
+  VerificationMethod,
+  VerificationStatus,
+} from '@/types/verification'
+
+export const verificationApi = {
+  get: (serviceId: string, signal?: AbortSignal) =>
+    request<{ success: boolean; data: VerificationStatus }>(
+      `/api/v1/services/${serviceId}/verification`, { signal }),
+
+  challenge: (serviceId: string, method: VerificationMethod) =>
+    request<{ success: boolean; data: VerificationChallenge }>(
+      `/api/v1/services/${serviceId}/verification/challenge`, { method: 'POST', body: { method } }),
+
+  check: (serviceId: string) =>
+    request<{ success: boolean; data: VerificationCheckResult }>(
+      `/api/v1/services/${serviceId}/verification/check`, { method: 'POST' }),
+
+  regenerate: (serviceId: string, method: VerificationMethod) =>
+    request<{ success: boolean; data: VerificationChallenge }>(
+      `/api/v1/services/${serviceId}/verification/regenerate`, { method: 'POST', body: { method } }),
+}
+
 // ─── Dashboard endpoints ─────────────────────────────────────────────────────
 
 export const dashboardApi = {

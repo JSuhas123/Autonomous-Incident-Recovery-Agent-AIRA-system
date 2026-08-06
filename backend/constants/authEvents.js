@@ -18,6 +18,10 @@ const AUTH_EVENT_TYPES = {
   SERVICE_PAUSED: "service_paused",
   SERVICE_RESTORED: "service_restored",
   SERVICE_ARCHIVED: "service_archived",
+  VERIFICATION_CHALLENGE_CREATED: "verification_challenge_created",
+  VERIFICATION_SUCCEEDED: "verification_succeeded",
+  VERIFICATION_FAILED: "verification_failed",
+  VERIFICATION_REGENERATED: "verification_regenerated",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);
