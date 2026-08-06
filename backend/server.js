@@ -57,6 +57,10 @@ const { startDecisionAgent, stopDecisionAgent } = require("./agents/decisionAgen
 const { startActionAgent, stopActionAgent } = require("./agents/actionAgent");
 const authMiddleware = require("./middleware/authMiddleware");
 const { tenantIsolationMiddleware, auditDataAccessMiddleware } = require("./middleware/tenantIsolationMiddleware");
+const cookieParser = require("cookie-parser");
+const authRoutes = require("./routes/authRoutes");
+const { csrfProtection } = require("./middleware/csrfMiddleware");
+const { sessionAuthMiddleware } = require("./middleware/sessionAuthMiddleware");
 const { rateLimitingMiddleware } = require("./middleware/rateLimitingMiddleware");
 const { validateInput } = require("./middleware/inputValidationMiddleware");
 
@@ -111,6 +115,7 @@ const corsOptions = {
     "X-Signature",
     "X-Timestamp",
     "X-Request-Id",
+    "X-CSRF-Token",
     "Accept",
   ],
   exposedHeaders: ["X-Request-Id", "Retry-After", "X-Correlation-ID"],
@@ -128,9 +133,13 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
+app.use(cookieParser());
 
 // CRITICAL AUDIT: Add correlation ID tracking (must be early)
 app.use(correlationIdMiddleware);
+
+// Human auth routes mount before sanitization so passwords are not XSS-stripped
+app.use("/api/v1/auth", authRoutes);
 
 // PHASE 1 SAFETY: Apply sanitization and kill switch enforcement
 // These must be applied early, before any handlers
@@ -320,8 +329,10 @@ app.use("/api/v1/tenants/:tenantId/approvals", approvalRoutes);
  * - POST /policy/rollback - Manually rollback to previous version
  * - GET /policy/version-history - Retrieve version history
  * - GET /policy/rollback-history - View rollback events
+ *
+ * Classification: browser-session (dashboard)
  */
-app.use("/api/v1/policy", policyManagementRoutes);
+app.use("/api/v1/policy", sessionAuthMiddleware, policyManagementRoutes);
 
 /**
  * PHASE 3: ACTION EFFECTIVENESS METRICS API
@@ -333,8 +344,10 @@ app.use("/api/v1/policy", policyManagementRoutes);
  * - GET /effectiveness/compare/actions - Compare actions by effectiveness
  * - GET /effectiveness/pattern/:pattern - Get pattern-specific effectiveness
  * - GET /effectiveness/trends/:action - Get effectiveness trends over time
+ *
+ * Classification: browser-session (dashboard reads)
  */
-app.use("/api/v1/effectiveness", effectivenessRoutes);
+app.use("/api/v1/effectiveness", sessionAuthMiddleware, effectivenessRoutes);
 
 /**
  * PHASE 4: ADAPTIVE CONFIDENCE CALIBRATION API
@@ -348,21 +361,25 @@ app.use("/api/v1/effectiveness", effectivenessRoutes);
  * - GET /confidence/accuracy/by-pattern - Accuracy breakdown by pattern
  * - GET /confidence/trends - Confidence trends over time
  * - POST /confidence/adjust-confidence - Apply weight adjustment
+ *
+ * Classification: browser-session (dashboard reads)
  */
-app.use("/api/v1/confidence", confidenceRoutes);
+app.use("/api/v1/confidence", sessionAuthMiddleware, confidenceRoutes);
 
 /**
  * PHASE 5: INTEGRATIONS API
  * 
  * Slack notifications and webhook ingestion from external monitoring systems
  * - POST /integrations/webhooks/register - Register webhook source
- * - POST /integrations/webhooks/ingest - Receive webhook event
- * - POST /integrations/webhooks/:eventId/decision - Record AIRA decision
- * - GET /integrations/webhooks/history - Webhook event history
- * - GET /integrations/webhooks/stats - Webhook statistics
- * - POST /integrations/slack/notify - Send Slack notification
- * - POST /integrations/webhooks/datadog - Datadog webhook endpoint
- * - POST /integrations/webhooks/prometheus - Prometheus webhook endpoint
+ * - POST /integrations/webhooks/ingest - Receive webhook event (machine ingestion — no auth)
+ * - POST /integrations/webhooks/:eventId/decision - Record AIRA decision (no auth)
+ * - GET /integrations/webhooks/history - Webhook event history (browser-session)
+ * - GET /integrations/webhooks/stats - Webhook statistics (browser-session)
+ * - POST /integrations/slack/notify - Send Slack notification (browser-session)
+ * - POST /integrations/webhooks/datadog - Datadog webhook endpoint (machine — no auth)
+ * - POST /integrations/webhooks/prometheus - Prometheus webhook endpoint (machine — no auth)
+ *
+ * Session auth is applied per-route in integrationRoutes.js.
  */
 app.use("/api/v1/integrations", integrationRoutes);
 
@@ -379,8 +396,10 @@ app.use("/api/v1/integrations", integrationRoutes);
  * - POST /execution/requests/:traceId/complete - Mark as completed
  * - GET /execution/approvals/pending - Get pending approvals
  * - GET /execution/stats - Execution statistics
+ *
+ * Classification: browser-session (dashboard)
  */
-app.use("/api/v1/execution", executionModesRoutes);
+app.use("/api/v1/execution", sessionAuthMiddleware, executionModesRoutes);
 
 /**
  * PHASE 10: REPORTING API
@@ -393,8 +412,10 @@ app.use("/api/v1/execution", executionModesRoutes);
  * - GET /reports - List all reports
  * - GET /reports/:reportId - Get specific report
  * - POST /reports/:reportId/archive - Archive report
+ *
+ * Classification: browser-session (dashboard)
  */
-app.use("/api/v1/reports", reportingRoutes);
+app.use("/api/v1/reports", sessionAuthMiddleware, reportingRoutes);
 
 /**
  * RUNBOOK MANAGEMENT API
@@ -422,9 +443,9 @@ app.use("/api/v1/tenants/:tenantId/action-logs", actionLogRoutes);
 /**
  * Kill Switch Status Endpoint
  * GET /api/v1/safety/kill-switches
- * Returns current state of all kill switches (actions enabled, learning enabled, emergency mode, etc)
+ * Classification: browser-session (dashboard reads safety state)
  */
-app.get("/api/v1/safety/kill-switches", killSwitchStatusEndpoint);
+app.get("/api/v1/safety/kill-switches", sessionAuthMiddleware, killSwitchStatusEndpoint);
 
 /**
  * Kill Switch Control Endpoint
@@ -437,9 +458,9 @@ app.post("/api/v1/safety/kill-switches", authMiddleware, killSwitchControlEndpoi
 /**
  * Confidence Thresholds Endpoint (GET)
  * GET /api/v1/safety/thresholds
- * Returns current confidence-based decision thresholds
+ * Classification: browser-session (dashboard reads threshold config)
  */
-app.get("/api/v1/safety/thresholds", confidenceThresholdsEndpoint);
+app.get("/api/v1/safety/thresholds", sessionAuthMiddleware, confidenceThresholdsEndpoint);
 
 /**
  * Confidence Thresholds Endpoint (UPDATE)

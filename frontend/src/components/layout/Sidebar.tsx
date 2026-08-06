@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { useLogout } from '@/hooks/useLogout'
 import { cn } from '@/lib/cn'
 import { useAuthStore } from '@/store/authStore'
 import {
@@ -16,7 +17,7 @@ import {
     Shield,
     Zap
 } from 'lucide-react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -36,14 +37,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onNavigate }: SidebarProps) {
-  const logout = useAuthStore((s) => s.logout)
-  const credentials = useAuthStore((s) => s.credentials)
-  const navigate = useNavigate()
-
-  function handleLogout() {
-    logout()
-    navigate('/login')
-  }
+  const organization = useAuthStore((s) => s.organization)
+  const logout = useLogout()
 
   return (
     <div className="flex flex-col h-full w-full bg-sidebar border-r border-border">
@@ -55,7 +50,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <div>
           <div className="text-sm font-semibold text-foreground">AIRA</div>
           <div className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-            {credentials?.tenantId ?? 'No tenant'}
+            {organization?.tenantId ?? 'No tenant'}
           </div>
         </div>
       </div>
@@ -90,7 +85,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
           variant="ghost"
           size="sm"
           className="w-full justify-start gap-3 text-muted-foreground hover:text-destructive"
-          onClick={handleLogout}
+          onClick={logout}
         >
           <LogOut className="w-4 h-4" />
           Sign Out

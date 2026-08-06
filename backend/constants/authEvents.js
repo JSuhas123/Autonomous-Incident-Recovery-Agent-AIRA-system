@@ -1,0 +1,33 @@
+"use strict";
+
+const AUTH_EVENT_TYPES = {
+  REGISTRATION_SUCCEEDED: "registration_succeeded",
+  REGISTRATION_FAILED: "registration_failed",
+  LOGIN_SUCCEEDED: "login_succeeded",
+  LOGIN_FAILED: "login_failed",
+  LOGOUT: "logout",
+  SESSION_CREATED: "session_created",
+  SESSION_REVOKED: "session_revoked",
+  EMAIL_VERIFIED: "email_verified",
+  PASSWORD_RESET_REQUESTED: "password_reset_requested",
+  PASSWORD_CHANGED: "password_changed",
+  ACCOUNT_LOCKED: "account_locked",
+  PERMISSION_DENIED: "permission_denied",
+};
+
+const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);
+
+const AUTH_EVENT_OUTCOMES = {
+  SUCCESS: "success",
+  FAILURE: "failure",
+  DENIED: "denied",
+};
+
+const AUTH_EVENT_OUTCOME_VALUES = Object.values(AUTH_EVENT_OUTCOMES);
+
+module.exports = {
+  AUTH_EVENT_TYPES,
+  AUTH_EVENT_TYPE_VALUES,
+  AUTH_EVENT_OUTCOMES,
+  AUTH_EVENT_OUTCOME_VALUES,
+};

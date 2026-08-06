@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button'
-import { useAuthStore } from '@/store/authStore'
 import { useNotificationsStore } from '@/store/notificationsStore'
 import { Bell, Menu, User } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
@@ -10,7 +9,6 @@ interface TopBarProps {
 
 export function TopBar({ onMenuClick }: TopBarProps) {
   const unreadCount = useNotificationsStore((s) => s.unreadCount)
-  const credentials = useAuthStore((s) => s.credentials)
   const navigate = useNavigate()
 
   return (

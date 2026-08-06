@@ -3,7 +3,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useMutation, useQuery } from '@tanstack/react-query'
 
 function useTenantId() {
-  return useAuthStore((s) => s.credentials?.tenantId ?? '')
+  return useAuthStore((s) => s.organization?.tenantId ?? '')
 }
 
 export function useReports() {

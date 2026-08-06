@@ -6,6 +6,7 @@ import { ProtectedRoute } from './ProtectedRoute'
 
 // Auth
 const LoginPage = lazy(() => import('@/pages/LoginPage'))
+const SignupPage = lazy(() => import('@/pages/SignupPage'))
 
 // Feature pages
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -34,6 +35,14 @@ export const router = createBrowserRouter([
     element: (
       <Suspense fallback={<PageLoader />}>
         <LoginPage />
+      </Suspense>
+    ),
+  },
+  {
+    path: '/signup',
+    element: (
+      <Suspense fallback={<PageLoader />}>
+        <SignupPage />
       </Suspense>
     ),
   },

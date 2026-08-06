@@ -1,22 +1,17 @@
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useLogout } from '@/hooks/useLogout'
 import { useAuthStore } from '@/store/authStore'
 import { motion } from 'framer-motion'
 import { LogOut } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
 
 export default function ProfilePage() {
-  const credentials = useAuthStore((s) => s.credentials)
-  const logout = useAuthStore((s) => s.logout)
-  const navigate = useNavigate()
+  const user = useAuthStore((s) => s.user)
+  const organization = useAuthStore((s) => s.organization)
+  const logout = useLogout()
 
-  const initials = (credentials?.keyId ?? 'U').slice(0, 2).toUpperCase()
-
-  function handleLogout() {
-    logout()
-    navigate('/login')
-  }
+  const initials = (user?.fullName ?? user?.email ?? 'U').slice(0, 2).toUpperCase()
 
   return (
     <motion.div
@@ -36,19 +31,19 @@ export default function ProfilePage() {
             <AvatarFallback className="text-base">{initials}</AvatarFallback>
           </Avatar>
           <div>
-            <p className="font-semibold">{credentials?.keyId ?? 'Unknown'}</p>
-            <p className="text-sm text-muted-foreground">{credentials?.tenantId ?? 'No tenant'}</p>
+            <p className="font-semibold">{user?.fullName ?? user?.email ?? 'Unknown'}</p>
+            <p className="text-sm text-muted-foreground">{organization?.name ?? organization?.tenantId ?? 'No organization'}</p>
           </div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>Credentials</CardTitle></CardHeader>
+        <CardHeader><CardTitle>Account</CardTitle></CardHeader>
         <CardContent className="space-y-3 text-sm">
           {[
-            ['Tenant ID', credentials?.tenantId],
-            ['Key ID', credentials?.keyId],
-            ['Secret', '••••••••••••'],
+            ['Email', user?.email],
+            ['Organization', organization?.name],
+            ['Tenant ID', organization?.tenantId],
           ].map(([label, value]) => (
             <div key={label} className="flex justify-between">
               <span className="text-muted-foreground">{label}</span>
@@ -58,7 +53,7 @@ export default function ProfilePage() {
         </CardContent>
       </Card>
 
-      <Button variant="destructive" size="sm" onClick={handleLogout}>
+      <Button variant="destructive" size="sm" onClick={logout}>
         <LogOut className="w-4 h-4 mr-2" /> Sign Out
       </Button>
     </motion.div>

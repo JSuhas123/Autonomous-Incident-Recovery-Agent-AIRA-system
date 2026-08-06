@@ -1,4 +1,3 @@
-import { ApiError } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { motion } from 'framer-motion'
@@ -6,13 +5,9 @@ import { ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
 async function adminRequest<T>(path: string): Promise<T> {
-  const { buildAuthHeaders } = await import('@/lib/hmac')
-  const { useAuthStore } = await import('@/store/authStore')
-  const { credentials } = useAuthStore.getState()
-  if (!credentials) throw new ApiError(401, 'Not authenticated')
-  const authHeaders = await buildAuthHeaders(credentials.keyId, credentials.secret, '')
   const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}${path}`, {
-    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
   })
   return res.json() as Promise<T>
 }

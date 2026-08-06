@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const webhookIngestionService = require('../services/integrations/webhookIngestionService');
+const { sessionAuthMiddleware } = require('../middleware/sessionAuthMiddleware');
 
 /**
  * Phase 5: Integration Routes
@@ -98,8 +99,9 @@ router.post('/webhooks/:eventId/decision', async (req, res, next) => {
 /**
  * GET /webhooks/history
  * Get webhook event history
+ * Classification: browser-session (dashboard reads)
  */
-router.get('/webhooks/history', async (req, res, next) => {
+router.get('/webhooks/history', sessionAuthMiddleware, async (req, res, next) => {
   try {
     const { tenantId = 'default', source, limit = 50 } = req.query;
 
@@ -123,8 +125,9 @@ router.get('/webhooks/history', async (req, res, next) => {
 /**
  * GET /webhooks/stats
  * Get webhook ingestion statistics
+ * Classification: browser-session (dashboard reads)
  */
-router.get('/webhooks/stats', async (req, res, next) => {
+router.get('/webhooks/stats', sessionAuthMiddleware, async (req, res, next) => {
   try {
     const { tenantId = 'default' } = req.query;
 

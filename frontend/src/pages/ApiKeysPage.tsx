@@ -1,4 +1,3 @@
-import { ApiError } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -17,15 +16,10 @@ interface ApiKey {
 
 // Inline admin fetcher — admin endpoints are not tenant-scoped
 async function adminRequest<T>(path: string, opts: RequestInit = {}): Promise<T> {
-  const { buildAuthHeaders } = await import('@/lib/hmac')
-  const { useAuthStore } = await import('@/store/authStore')
-  const { credentials } = useAuthStore.getState()
-  if (!credentials) throw new ApiError(401, 'Not authenticated')
-  const body = opts.body as string | undefined
-  const authHeaders = await buildAuthHeaders(credentials.keyId, credentials.secret, body ?? '')
   const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}${path}`, {
     ...opts,
-    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...opts.headers },
+    credentials: 'include',
   })
   return res.json() as Promise<T>
 }

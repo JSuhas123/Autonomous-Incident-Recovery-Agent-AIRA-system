@@ -3,11 +3,11 @@ import { useAuthStore } from '@/store/authStore'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 function useTenantId() {
-  return useAuthStore((s) => s.credentials?.tenantId ?? '')
+  return useAuthStore((s) => s.organization?.tenantId ?? '')
 }
 
 function useKeyId() {
-  return useAuthStore((s) => s.credentials?.keyId ?? 'system')
+  return useAuthStore((s) => s.user?.email ?? 'system')
 }
 
 export function useApprovals(status?: string) {

@@ -1,9 +1,8 @@
-import { buildAuthHeaders } from '@/lib/hmac'
-import { useAuthStore } from '@/store/authStore'
+﻿import { useAuthStore } from '@/store/authStore'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
-
+const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export class ApiError extends Error {
   constructor(
@@ -21,38 +20,45 @@ interface RequestOptions {
   method?: string
   body?: unknown
   signal?: AbortSignal
-  /** Skip tenant-scoped auth (for unauthenticated/health endpoints) */
-  noAuth?: boolean
+  /** Skip adding X-CSRF-Token (for public endpoints that don't need it) */
+  skipCsrf?: boolean
 }
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const { method = 'GET', body, signal, noAuth = false } = options
+  const { method = 'GET', body, signal, skipCsrf = false } = options
 
-  const bodyString = body != null ? JSON.stringify(body) : ''
+  const isMutation = MUTATION_METHODS.has(method.toUpperCase())
+  const hasBody = body != null
+  const bodyString = hasBody ? JSON.stringify(body) : undefined
 
-  let headers: Record<string, string> = {
-    'Content-Type': 'application/json',
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
   }
 
-  if (!noAuth) {
-    const { credentials } = useAuthStore.getState()
-    if (!credentials) throw new ApiError(401, 'Not authenticated')
-    const authHeaders = await buildAuthHeaders(
-      credentials.keyId,
-      credentials.secret,
-      bodyString,
-    )
-    headers = { ...headers, ...authHeaders }
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json'
   }
 
-  const url = `${BASE_URL}${path}`
+  // Attach CSRF token only for cookie-authenticated mutations
+  if (isMutation && !skipCsrf) {
+    const csrfToken = useAuthStore.getState().csrfToken
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken
+    }
+  }
 
-  const res = await fetch(url, {
+  const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers,
-    body: bodyString || undefined,
+    body: bodyString,
+    credentials: 'include',
     signal,
   })
+
+  if (res.status === 401) {
+    // Session expired â€” clear local auth state
+    useAuthStore.getState().setUnauthenticated()
+  }
 
   let data: unknown
   const contentType = res.headers.get('content-type') ?? ''
@@ -75,32 +81,51 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   return data as T
 }
 
-// ─── Public health endpoints (no auth) ────────────────────────────────────
+// â”€â”€â”€ Public auth endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-export const healthApi = {
-  /** Alias used by useHealth hook */
-  check: (signal?: AbortSignal) =>
-    request<{ status: string; timestamp: string; components?: Record<string, string> }>(
-      '/health', { noAuth: true, signal },
-    ),
-  get: (signal?: AbortSignal) =>
-    request<{ status: string; timestamp: string; components?: Record<string, string> }>(
-      '/health', { noAuth: true, signal },
-    ),
-  getDetailed: (token: string, signal?: AbortSignal) =>
-    fetch(`${BASE_URL}/health/detailed`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal,
-    }).then((r) => r.json()),
+export const authApi = {
+  register: (body: { fullName: string; email: string; password: string; organizationName: string }) =>
+    request<{ user: unknown; organization: unknown; membership: unknown; csrfToken: string }>(
+      '/api/v1/auth/register', { method: 'POST', body, skipCsrf: true }),
+
+  login: (body: { email: string; password: string; rememberMe?: boolean }) =>
+    request<{ user: unknown; organization: unknown; membership: unknown; csrfToken: string }>(
+      '/api/v1/auth/login', { method: 'POST', body, skipCsrf: true }),
+
+  session: (signal?: AbortSignal) =>
+    request<{
+      authenticated: boolean
+      user: unknown
+      organization: unknown
+      membership: unknown
+      session: unknown
+      csrfToken: string
+    }>('/api/v1/auth/session', { signal }),
+
+  logout: () => request('/api/v1/auth/logout', { method: 'POST' }),
+  logoutAll: () => request('/api/v1/auth/logout-all', { method: 'POST' }),
+  csrf: (signal?: AbortSignal) =>
+    request<{ csrfToken: string }>('/api/v1/auth/csrf', { signal }),
 }
 
-// ─── Tenant-scoped helpers ─────────────────────────────────────────────────
+// â”€â”€â”€ Public health endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export const healthApi = {
+  check: (signal?: AbortSignal) =>
+    request<{ status: string; timestamp: string; components?: Record<string, string> }>(
+      '/health', { signal }),
+  get: (signal?: AbortSignal) =>
+    request<{ status: string; timestamp: string; components?: Record<string, string> }>(
+      '/health', { signal }),
+}
+
+// â”€â”€â”€ Tenant-scoped helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function tenantPath(tenantId: string, suffix: string) {
   return `/api/v1/tenants/${tenantId}${suffix}`
 }
 
-// ─── Signals / Decisions ──────────────────────────────────────────────────
+// â”€â”€â”€ Signals / Decisions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const signalApi = {
   submit: (tenantId: string, body: unknown) =>
@@ -129,10 +154,9 @@ export const signalApi = {
     request(tenantPath(tenantId, '/actions')),
 }
 
-// ─── Approvals ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Approvals â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const approvalApi = {
-  /** Backend only returns pending; status filter is client-side */
   list: (tenantId: string, _status?: string) =>
     request<{ pending: unknown[]; pendingCount: number }>(tenantPath(tenantId, '/approvals')),
 
@@ -159,7 +183,7 @@ export const approvalApi = {
     request(tenantPath(tenantId, `/approvals/${approvalId}/reject`), { method: 'POST', body }),
 }
 
-// ─── Runbooks ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Runbooks â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const runbookApi = {
   list: (tenantId: string, params?: { incidentType?: string; enabled?: boolean }) => {
@@ -181,7 +205,7 @@ export const runbookApi = {
     request(tenantPath(tenantId, `/runbooks/${runbookId}/executions`)),
 }
 
-// ─── Action Logs ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Action Logs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const actionLogApi = {
   list: (tenantId: string, params?: Record<string, string> | number) => {
@@ -192,25 +216,20 @@ export const actionLogApi = {
   },
 }
 
-// ─── Policy ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Policy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const policyApi = {
-  /** Get current policy — returns the latest version */
   get: (_tenantId: string) =>
-    request<unknown>('/api/v1/policy/version-history', { noAuth: true }).then((r) => {
+    request<unknown>('/api/v1/policy/version-history').then((r) => {
       const versions: any[] = (r as any)?.versions ?? (Array.isArray(r) ? r : [])
       return versions[0] ?? { yaml: '', content: '', policyYaml: '' }
     }),
 
   versions: (_tenantId: string) =>
-    request('/api/v1/policy/version-history', { noAuth: true }),
+    request('/api/v1/policy/version-history'),
 
   validate: (_tenantId: string, policyYaml: string) =>
-    request('/api/v1/policy/validate', {
-      method: 'POST',
-      body: { policyYaml },
-      noAuth: true,
-    }),
+    request('/api/v1/policy/validate', { method: 'POST', body: { policyYaml } }),
 
   update: (tenantId: string, policyYaml: string) =>
     request('/api/v1/policy/create-version', {
@@ -219,71 +238,64 @@ export const policyApi = {
     }),
 
   dryRun: (_tenantId: string, policyYaml: string, signal: Record<string, unknown>) =>
-    request('/api/v1/policy/dry-run', {
-      method: 'POST',
-      body: { policyYaml, signal },
-      noAuth: true,
-    }),
+    request('/api/v1/policy/dry-run', { method: 'POST', body: { policyYaml, signal } }),
 
   rollback: (body: unknown) =>
     request('/api/v1/policy/rollback', { method: 'POST', body }),
   dryRunResults: () =>
-    request('/api/v1/policy/dry-run/results', { noAuth: true }),
+    request('/api/v1/policy/dry-run/results'),
   versionHistory: () =>
-    request('/api/v1/policy/version-history', { noAuth: true }),
+    request('/api/v1/policy/version-history'),
   rollbackHistory: () =>
-    request('/api/v1/policy/rollback-history', { noAuth: true }),
+    request('/api/v1/policy/rollback-history'),
 }
 
-// ─── Confidence ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Confidence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const confidenceApi = {
-  /** Not tenant-scoped — pass optional AbortSignal only */
   weights: (signal?: AbortSignal) =>
-    request('/api/v1/confidence/weights', { noAuth: true, signal }),
+    request('/api/v1/confidence/weights', { signal }),
   trends: (signal?: AbortSignal) =>
-    request('/api/v1/confidence/trends', { noAuth: true, signal }),
+    request('/api/v1/confidence/trends', { signal }),
   byAction: (signal?: AbortSignal) =>
-    request('/api/v1/confidence/accuracy/by-action', { noAuth: true, signal }),
+    request('/api/v1/confidence/accuracy/by-action', { signal }),
   byPattern: (signal?: AbortSignal) =>
-    request('/api/v1/confidence/accuracy/by-pattern', { noAuth: true, signal }),
+    request('/api/v1/confidence/accuracy/by-pattern', { signal }),
   recalibrate: (body: unknown) =>
     request('/api/v1/confidence/recalibrate', { method: 'POST', body }),
 }
 
-// ─── Effectiveness ────────────────────────────────────────────────────────
+// â”€â”€â”€ Effectiveness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const effectivenessApi = {
   get: (decisionTraceId: string, signal?: AbortSignal) =>
-    request(`/api/v1/effectiveness/${decisionTraceId}`, { noAuth: true, signal }),
-  /** Overall stats — GET /api/v1/effectiveness/ */
+    request(`/api/v1/effectiveness/${decisionTraceId}`, { signal }),
   list: (_tenantId?: string) =>
-    request('/api/v1/effectiveness/', { noAuth: true }),
-  /** Action accuracy */
+    request('/api/v1/effectiveness/'),
   accuracy: (_tenantId?: string) =>
-    request('/api/v1/effectiveness/compare/actions', { noAuth: true }),
+    request('/api/v1/effectiveness/compare/actions'),
   compareActions: (signal?: AbortSignal) =>
-    request('/api/v1/effectiveness/compare/actions', { noAuth: true, signal }),
+    request('/api/v1/effectiveness/compare/actions', { signal }),
 }
 
-// ─── Integrations ─────────────────────────────────────────────────────────
+// â”€â”€â”€ Integrations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const integrationApi = {
   webhookHistory: (_tenantId?: string, signal?: AbortSignal) =>
-    request('/api/v1/integrations/webhooks/history', { noAuth: true, signal }),
+    request('/api/v1/integrations/webhooks/history', { signal }),
   webhookStats: (_tenantId?: string, signal?: AbortSignal) =>
-    request('/api/v1/integrations/webhooks/stats', { noAuth: true, signal }),
+    request('/api/v1/integrations/webhooks/stats', { signal }),
   registerWebhook: (body: unknown) =>
     request('/api/v1/integrations/webhooks/register', { method: 'POST', body }),
   slackNotify: (body: unknown) =>
     request('/api/v1/integrations/slack/notify', { method: 'POST', body }),
 }
 
-// ─── Reports ──────────────────────────────────────────────────────────────
+// â”€â”€â”€ Reports â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const reportApi = {
   list: (_tenantId?: string) =>
-    request('/api/v1/reports', { noAuth: true }),
+    request('/api/v1/reports'),
   generate: (tenantId: string, params: Record<string, unknown>) =>
     request('/api/v1/reports/effectiveness', {
       method: 'POST',
@@ -293,7 +305,6 @@ export const reportApi = {
         endDate: params.endDate ?? new Date().toISOString(),
         ...params,
       },
-      noAuth: true,
     }),
   effectiveness: (body: unknown) =>
     request('/api/v1/reports/effectiveness', { method: 'POST', body }),
@@ -301,18 +312,16 @@ export const reportApi = {
     request('/api/v1/reports/failure-analysis', { method: 'POST', body }),
   executiveSummary: (body: unknown) =>
     request('/api/v1/reports/executive-summary', { method: 'POST', body }),
-  get: (reportId: string) => request(`/api/v1/reports/${reportId}`, { noAuth: true }),
+  get: (reportId: string) => request(`/api/v1/reports/${reportId}`),
   archive: (reportId: string) =>
     request(`/api/v1/reports/${reportId}/archive`, { method: 'POST' }),
 }
 
-// ─── Safety ───────────────────────────────────────────────────────────────
+// â”€â”€â”€ Safety â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const safetyApi = {
-  /** GET — no auth required */
   getKillSwitches: (_tenantId?: string) =>
-    request('/api/v1/safety/kill-switches', { noAuth: true }),
-  /** POST — uses HMAC auth (not tenant-scoped) */
+    request('/api/v1/safety/kill-switches'),
   toggleKillSwitch: (
     _tenantId: string,
     action: 'activate' | 'deactivate',
@@ -321,21 +330,20 @@ export const safetyApi = {
     request('/api/v1/safety/kill-switches', { method: 'POST', body: { action, scope } }),
   setKillSwitch: (body: unknown) =>
     request('/api/v1/safety/kill-switches', { method: 'POST', body }),
-  /** GET — no auth required */
   getThresholds: (_tenantId?: string) =>
-    request('/api/v1/safety/thresholds', { noAuth: true }),
-  /** POST — uses HMAC auth (not tenant-scoped) */
+    request('/api/v1/safety/thresholds'),
   updateThresholds: (_tenantId: string, thresholds: Record<string, number>) =>
     request('/api/v1/safety/thresholds', { method: 'POST', body: thresholds }),
   setThresholds: (body: unknown) =>
     request('/api/v1/safety/thresholds', { method: 'POST', body }),
 }
 
-// ─── Execution Modes ──────────────────────────────────────────────────────
+// â”€â”€â”€ Execution Modes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export const executionApi = {
-  stats: () => request('/api/v1/execution/stats', { noAuth: true }),
-  pendingApprovals: () => request('/api/v1/execution/approvals/pending', { noAuth: true }),
+  stats: () => request('/api/v1/execution/stats'),
+  pendingApprovals: () => request('/api/v1/execution/approvals/pending'),
   setDefaultMode: (body: unknown) =>
     request('/api/v1/execution/config/default-mode', { method: 'POST', body }),
 }
+

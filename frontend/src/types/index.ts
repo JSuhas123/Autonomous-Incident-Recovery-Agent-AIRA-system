@@ -1,10 +1,59 @@
 // ─── Auth & Tenant ─────────────────────────────────────────────────────────
 
+/** @deprecated Use SafeUser from session auth */
 export interface AuthCredentials {
   tenantId: string
   keyId: string
   secret: string
   tenantName?: string
+}
+
+export interface SafeUser {
+  id: string
+  fullName: string
+  email: string
+  status: string
+  primaryOrganizationId: string | null
+  emailVerifiedAt: string | null
+  lastLoginAt: string | null
+  createdAt: string
+}
+
+export interface SafeOrganization {
+  id: string
+  name: string
+  slug: string
+  tenantId: string
+  status: string
+  createdAt: string
+}
+
+export interface SafeMembership {
+  id: string
+  role: string
+  status: string
+  joinedAt: string | null
+}
+
+export interface SafeSession {
+  id: string
+  assuranceLevel: string
+  lastActivityAt: string
+  idleExpiresAt: string
+  absoluteExpiresAt: string
+  rememberMe: boolean
+}
+
+export type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated'
+
+export interface AuthState {
+  status: AuthStatus
+  user: SafeUser | null
+  organization: SafeOrganization | null
+  membership: SafeMembership | null
+  session: SafeSession | null
+  csrfToken: string | null
+  error: string | null
 }
 
 export interface ApiKey {

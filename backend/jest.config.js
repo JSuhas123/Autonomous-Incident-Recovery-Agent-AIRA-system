@@ -1,11 +1,11 @@
 module.exports = {
   testEnvironment: 'node',
-  // Provide a safe AUDIT_SECRET for all test runs so that any code path that
-  // calls auditService._computeSignature() does not throw due to a missing env var.
   testEnvironmentOptions: {},
-  // globalSetup runs once before the test suite in the Node process.
-  // We inject the env var here so it is available before any module is required.
   setupFiles: ['<rootDir>/tests/setup-test-env.js'],
+  // Explicit roots prevents jest-haste-map from missing files in large trees
+  roots: ['<rootDir>/tests', '<rootDir>/services', '<rootDir>/middleware', '<rootDir>/models'],
+  // Disable watchman to force a full filesystem crawl on every run
+  watchman: false,
   coverageDirectory: 'coverage',
   collectCoverageFrom: [
     'services/**/*.js',

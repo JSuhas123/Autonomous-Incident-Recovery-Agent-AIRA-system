@@ -1,43 +1,54 @@
-import type { AuthCredentials } from '@/types'
+import type { AuthState, SafeMembership, SafeOrganization, SafeSession, SafeUser } from '@/types'
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 
-interface AuthState {
-  credentials: AuthCredentials | null
-  isAuthenticated: boolean
-  login: (creds: AuthCredentials) => void
-  logout: () => void
+interface AuthActions {
+  setAuthenticated: (payload: {
+    user: SafeUser
+    organization: SafeOrganization | null
+    membership: SafeMembership | null
+    session: SafeSession | null
+    csrfToken: string | null
+  }) => void
+  setUnauthenticated: (error?: string) => void
+  setLoading: () => void
+  setCsrfToken: (token: string) => void
   updateTenantName: (name: string) => void
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      credentials: null,
-      isAuthenticated: false,
+const INITIAL: AuthState = {
+  status: 'loading',
+  user: null,
+  organization: null,
+  membership: null,
+  session: null,
+  csrfToken: null,
+  error: null,
+}
 
-      login(creds) {
-        set({ credentials: creds, isAuthenticated: true })
-      },
+export const useAuthStore = create<AuthState & AuthActions>()((set) => ({
+  ...INITIAL,
 
-      logout() {
-        set({ credentials: null, isAuthenticated: false })
-      },
+  setAuthenticated({ user, organization, membership, session, csrfToken }) {
+    set({ status: 'authenticated', user, organization, membership, session, csrfToken, error: null })
+  },
 
-      updateTenantName(name) {
-        set((state) => ({
-          credentials: state.credentials
-            ? { ...state.credentials, tenantName: name }
-            : null,
-        }))
-      },
-    }),
-    {
-      name: 'aira-auth',
-      partialize: (state) => ({
-        credentials: state.credentials,
-        isAuthenticated: state.isAuthenticated,
-      }),
-    },
-  ),
-)
+  setUnauthenticated(error = undefined) {
+    set({ status: 'unauthenticated', user: null, organization: null, membership: null, session: null, csrfToken: null, error: error ?? null })
+  },
+
+  setLoading() {
+    set({ status: 'loading' })
+  },
+
+  setCsrfToken(csrfToken) {
+    set({ csrfToken })
+  },
+
+  updateTenantName(name) {
+    set((state) =>
+      state.organization
+        ? { organization: { ...state.organization, name } }
+        : {},
+    )
+  },
+}))
