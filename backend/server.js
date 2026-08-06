@@ -56,6 +56,7 @@ const { startAnalysisAgent, stopAnalysisAgent } = require("./agents/analysisAgen
 const { startDecisionAgent, stopDecisionAgent } = require("./agents/decisionAgent");
 const { startActionAgent, stopActionAgent } = require("./agents/actionAgent");
 const authMiddleware = require("./middleware/authMiddleware");
+const dualAuthMiddleware = require("./middleware/dualAuthMiddleware");
 const { tenantIsolationMiddleware, auditDataAccessMiddleware } = require("./middleware/tenantIsolationMiddleware");
 const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/authRoutes");
@@ -300,8 +301,8 @@ app.get("/health/multi-instance", internalTokenGuard, async (req, res) => {
   }
 });
 
-// API endpoints require authentication and tenant isolation
-app.use("/api/v1/tenants/:tenantId", authMiddleware);
+// API endpoints require authentication and tenant isolation (browser session OR machine HMAC)
+app.use("/api/v1/tenants/:tenantId", dualAuthMiddleware);
 app.use("/api/v1/tenants/:tenantId", rateLimitingMiddleware('api'));
 app.use("/api/v1/tenants/:tenantId", tenantIsolationMiddleware);
 app.use("/api/v1/tenants/:tenantId", auditDataAccessMiddleware);
