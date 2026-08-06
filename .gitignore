@@ -71,4 +71,42 @@ backend/simulation/simulation-results/
 *SESSION-SUMMARY*.md
 *VERIFICATION*.md
 *ASSESSMENT*.md
-k8s/secret-generated.yaml 
+k8s/secret-generated.yaml
+
+# Build artifacts
+frontend/build.log
+frontend/tsconfig.tsbuildinfo
+frontend/tsconfig.node.tsbuildinfo
+frontend/vite.config.d.ts
+frontend/vite.config.js
+backend/jest_config_dump.txt
+backend/jest-config-out.txt
+backend/jest-full-config.txt
+
+# Junk / corrupted files
+backend/{
+backend/console.error*
+frontend/{
+frontend/console.error*
+frontend/test-lines.txt
+frontend/src/pages/({
+frontend/src/pages/s.login)
+
+# One-off audit/summary docs that shouldn't be in root
+AIRA-*.md
+API-REFERENCE.md
+API.md
+CANARY-GO-NO-GO-CHECKLIST.md
+DEPLOYMENT-GUIDE.md
+DEPLOYMENT-INTEGRATION-GUIDE.md
+DEPLOYMENT_AUDIT.md
+DEPLOYMENT_CHECKLIST.md
+DOCUMENTATION-INDEX.md
+DOCUMENTATION-STRATEGY.md
+E2E_TEST_REPORT.json
+FINAL_E2E_TEST_REPORT.md
+api-services-validation.js
+e2e-infra-test.js
+
+# docs/ folder (content duplicated in root-level .md files)
+docs/
