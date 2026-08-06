@@ -6,6 +6,7 @@ const crypto = require("crypto");
 
 const Service = require("../models/Service");
 const verificationRoutes = require("./verificationRoutes");
+const { serviceMonitorRouter } = require("./monitorRoutes");
 const { validateServiceUrl } = require("../utils/urlValidator");
 const { record: auditRecord } = require("../services/identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../constants/authEvents");
@@ -332,5 +333,8 @@ router.delete("/:serviceId", async (req, res, next) => {
 
 // Mount verification sub-router
 router.use("/:serviceId/verification", verificationRoutes);
+
+// Mount monitor sub-router
+router.use("/:serviceId/monitors", serviceMonitorRouter);
 
 module.exports = router;

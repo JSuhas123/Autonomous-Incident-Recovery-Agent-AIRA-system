@@ -203,6 +203,61 @@ export const healthApi = {
       '/health', { signal }),
 }
 
+// ─── Monitor endpoints ───────────────────────────────────────────────────────
+
+import type { CreateMonitorBody, Monitor, MonitorCheck, UpdateMonitorBody } from '@/types/monitor'
+
+export const monitorApi = {
+  /** List all monitors for a service */
+  listForService: (serviceId: string, signal?: AbortSignal) =>
+    request<{ monitors: Monitor[] }>(`/api/v1/services/${serviceId}/monitors`, { signal }),
+
+  /** Create a monitor for a service */
+  create: (serviceId: string, body: CreateMonitorBody) =>
+    request<{ monitor: Monitor }>(`/api/v1/services/${serviceId}/monitors`, { method: 'POST', body }),
+
+  /** List all monitors across all services for the org */
+  listAll: (signal?: AbortSignal) =>
+    request<{ monitors: Monitor[] }>('/api/v1/monitors', { signal }),
+
+  /** Get a single monitor */
+  get: (monitorId: string, signal?: AbortSignal) =>
+    request<{ monitor: Monitor }>(`/api/v1/monitors/${monitorId}`, { signal }),
+
+  /** Update monitor configuration */
+  update: (monitorId: string, body: UpdateMonitorBody) =>
+    request<{ monitor: Monitor }>(`/api/v1/monitors/${monitorId}`, { method: 'PATCH', body }),
+
+  /** Pause a monitor */
+  pause: (monitorId: string) =>
+    request<{ monitor: Monitor }>(`/api/v1/monitors/${monitorId}/pause`, { method: 'POST' }),
+
+  /** Resume a paused monitor */
+  resume: (monitorId: string) =>
+    request<{ monitor: Monitor }>(`/api/v1/monitors/${monitorId}/resume`, { method: 'POST' }),
+
+  /** Run a one-time test check (not persisted) */
+  test: (monitorId: string) =>
+    request<{ result: MonitorCheck }>(`/api/v1/monitors/${monitorId}/test`, { method: 'POST' }),
+
+  /** Get paginated check history */
+  checks: (monitorId: string, params?: { limit?: number; before?: string }, signal?: AbortSignal) => {
+    const qs = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params)
+            .filter(([, v]) => v != null)
+            .map(([k, v]) => [k, String(v)])
+        ).toString()
+      : ''
+    return request<{ checks: MonitorCheck[]; count: number }>(
+      `/api/v1/monitors/${monitorId}/checks${qs}`, { signal })
+  },
+
+  /** Delete a monitor and its check history */
+  delete: (monitorId: string) =>
+    request<void>(`/api/v1/monitors/${monitorId}`, { method: 'DELETE' }),
+}
+
 // â”€â”€â”€ Tenant-scoped helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function tenantPath(tenantId: string, suffix: string) {

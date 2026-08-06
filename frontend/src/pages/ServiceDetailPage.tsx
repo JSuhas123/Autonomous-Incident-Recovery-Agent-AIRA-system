@@ -1,11 +1,13 @@
 import { useService } from '@/api/hooks/useServices'
+import ServiceMonitoringTab from '@/components/monitors/ServiceMonitoringTab'
+import { VerificationWizard } from '@/components/services/VerificationWizard'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, ArrowLeft, Plug, Server, Settings, Sparkles } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowLeft, Plug, Server, Settings, ShieldCheck, Sparkles } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 
 function ComingSoon({ label }: { label: string }) {
@@ -165,19 +167,7 @@ export default function ServiceDetailPage() {
         </TabsContent>
 
         <TabsContent value="monitoring" className="mt-4">
-          {svc.monitoringStatus === 'not_configured' ? (
-            <Card>
-              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-                <Activity className="w-8 h-8 text-muted-foreground" />
-                <p className="font-medium">Monitoring not configured</p>
-                <p className="text-sm text-muted-foreground">
-                  Connect a monitoring integration to start receiving health data for this service.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <ComingSoon label="Monitoring data" />
-          )}
+          <ServiceMonitoringTab serviceId={svc.id} />
         </TabsContent>
 
         <TabsContent value="integrations" className="mt-4">

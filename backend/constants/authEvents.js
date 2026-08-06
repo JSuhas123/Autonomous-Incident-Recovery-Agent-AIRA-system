@@ -22,6 +22,11 @@ const AUTH_EVENT_TYPES = {
   VERIFICATION_SUCCEEDED: "verification_succeeded",
   VERIFICATION_FAILED: "verification_failed",
   VERIFICATION_REGENERATED: "verification_regenerated",
+  MONITOR_CREATED: "monitor_created",
+  MONITOR_UPDATED: "monitor_updated",
+  MONITOR_DELETED: "monitor_deleted",
+  MONITOR_PAUSED: "monitor_paused",
+  MONITOR_RESUMED: "monitor_resumed",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);

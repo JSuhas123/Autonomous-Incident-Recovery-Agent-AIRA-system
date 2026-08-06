@@ -24,6 +24,7 @@ const executionModesRoutes = require("./routes/executionModesRoutes");
 const reportingRoutes = require("./routes/reportingRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const serviceRoutes = require("./routes/serviceRoutes");
+const { topLevelRouter: monitorTopLevelRoutes } = require("./routes/monitorRoutes");
 const runbookRoutes = require("./routes/runbookRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
 
@@ -386,6 +387,11 @@ app.use("/api/v1/dashboard", sessionAuthMiddleware, dashboardRoutes);
 app.use("/api/v1/services", sessionAuthMiddleware, serviceRoutes);
 
 /**
+ * MONITOR API — browser-session (cross-service monitor list + per-monitor operations)
+ */
+app.use("/api/v1/monitors", sessionAuthMiddleware, monitorTopLevelRoutes);
+
+/**
  * RUNBOOK MANAGEMENT API — browser-session (dashboard)
  */
 app.use("/api/v1/tenants/:tenantId/runbooks", browserTenantAuth, runbookRoutes);
@@ -551,6 +557,12 @@ async function startServer() {
     await startActionAgent();
     console.log("[server] ✓ Core agents started (analysis, decision, action)");
 
+    // 8.1 Start external monitoring scheduler
+    const { MonitorScheduler } = require("./services/monitoring/monitorScheduler");
+    global.monitorScheduler = new MonitorScheduler();
+    global.monitorScheduler.start(30_000);
+    console.log("[server] ✓ Monitor scheduler started");
+
     // 8.5 CRITICAL: Log all feature flags and validate production setup
     console.log("\n[server] ═══════════════════════════════════════");
     featureFlags.logStartupStatus(console);
@@ -664,6 +676,12 @@ async function shutdown() {
   stopAnalysisAgent();
   stopDecisionAgent();
   stopActionAgent();
+
+  // Stop monitor scheduler
+  if (global.monitorScheduler) {
+    await global.monitorScheduler.stop();
+    console.log("[server] ✓ Monitor scheduler stopped");
+  }
 
   // Shutdown background jobs
   memoryCleanupJob.stop();
