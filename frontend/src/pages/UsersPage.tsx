@@ -1,12 +1,24 @@
+import { ApiError } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useAuthStore } from '@/store/authStore'
 import { motion } from 'framer-motion'
 import { Plus, Trash2, Users } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+async function adminRequest<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const { buildAuthHeaders } = await import('@/lib/hmac')
+  const { useAuthStore } = await import('@/store/authStore')
+  const { credentials } = useAuthStore.getState()
+  if (!credentials) throw new ApiError(401, 'Not authenticated')
+  const body = opts.body as string | undefined
+  const authHeaders = await buildAuthHeaders(credentials.keyId, credentials.secret, body ?? '')
+  const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}${path}`, {
+    ...opts,
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+  })
+  return res.json() as Promise<T>
+}
 
 interface User {
   id: string
@@ -18,16 +30,12 @@ interface User {
 }
 
 export default function UsersPage() {
-  const token = useAuthStore((s) => s.credentials?.token)
   const [users, setUsers] = useState<User[]>([])
   const [loading, setLoading] = useState(true)
 
   async function fetchUsers() {
     try {
-      const res = await fetch(`${BASE_URL}/api/admin/users`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const data = await res.json()
+      const data = await adminRequest<{ users: User[] }>('/api/admin/users')
       setUsers(data.users ?? [])
     } catch {
       // ignore
@@ -39,10 +47,7 @@ export default function UsersPage() {
   useEffect(() => { fetchUsers() }, [])
 
   async function deleteUser(id: string) {
-    await fetch(`${BASE_URL}/api/admin/users/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    await adminRequest(`/api/admin/users/${id}`, { method: 'DELETE' })
     fetchUsers()
   }
 

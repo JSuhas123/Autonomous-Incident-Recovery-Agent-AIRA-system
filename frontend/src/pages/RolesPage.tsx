@@ -1,11 +1,21 @@
+import { ApiError } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useAuthStore } from '@/store/authStore'
 import { motion } from 'framer-motion'
 import { ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
+async function adminRequest<T>(path: string): Promise<T> {
+  const { buildAuthHeaders } = await import('@/lib/hmac')
+  const { useAuthStore } = await import('@/store/authStore')
+  const { credentials } = useAuthStore.getState()
+  if (!credentials) throw new ApiError(401, 'Not authenticated')
+  const authHeaders = await buildAuthHeaders(credentials.keyId, credentials.secret, '')
+  const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}${path}`, {
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+  })
+  return res.json() as Promise<T>
+}
 
 interface Role {
   id: string
@@ -16,15 +26,11 @@ interface Role {
 }
 
 export default function RolesPage() {
-  const token = useAuthStore((s) => s.credentials?.token)
   const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    fetch(`${BASE_URL}/api/admin/roles`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => r.json())
+    adminRequest<{ roles: Role[] }>('/api/admin/roles')
       .then((d) => setRoles(d.roles ?? []))
       .catch(() => {})
       .finally(() => setLoading(false))

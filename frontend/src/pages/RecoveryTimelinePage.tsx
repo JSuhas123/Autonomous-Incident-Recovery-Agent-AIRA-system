@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/cn'
 import { formatDateTime } from '@/lib/format'
+import { motion } from 'framer-motion'
 import { ArrowLeft, Clock } from 'lucide-react'
 import { useNavigate, useParams } from 'react-router-dom'
 

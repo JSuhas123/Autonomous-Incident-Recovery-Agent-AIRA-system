@@ -1,12 +1,10 @@
+import { ApiError } from '@/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useAuthStore } from '@/store/authStore'
 import { motion } from 'framer-motion'
 import { Eye, EyeOff, Key, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
-
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 interface ApiKey {
   id: string
@@ -17,8 +15,22 @@ interface ApiKey {
   createdAt: string
 }
 
+// Inline admin fetcher — admin endpoints are not tenant-scoped
+async function adminRequest<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const { buildAuthHeaders } = await import('@/lib/hmac')
+  const { useAuthStore } = await import('@/store/authStore')
+  const { credentials } = useAuthStore.getState()
+  if (!credentials) throw new ApiError(401, 'Not authenticated')
+  const body = opts.body as string | undefined
+  const authHeaders = await buildAuthHeaders(credentials.keyId, credentials.secret, body ?? '')
+  const res = await fetch(`${import.meta.env.VITE_API_URL ?? 'http://localhost:5000'}${path}`, {
+    ...opts,
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+  })
+  return res.json() as Promise<T>
+}
+
 export default function ApiKeysPage() {
-  const token = useAuthStore((s) => s.credentials?.token)
   const [keys, setKeys] = useState<ApiKey[]>([])
   const [loading, setLoading] = useState(true)
   const [newKey, setNewKey] = useState<ApiKey | null>(null)
@@ -26,10 +38,7 @@ export default function ApiKeysPage() {
 
   async function fetchKeys() {
     try {
-      const res = await fetch(`${BASE_URL}/api/admin/api-keys`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const data = await res.json()
+      const data = await adminRequest<{ apiKeys: ApiKey[] }>('/api/admin/api-keys')
       setKeys(data.apiKeys ?? [])
     } catch {
       // ignore
@@ -41,21 +50,16 @@ export default function ApiKeysPage() {
   useEffect(() => { fetchKeys() }, [])
 
   async function createKey() {
-    const res = await fetch(`${BASE_URL}/api/admin/api-keys`, {
+    const data = await adminRequest<ApiKey>('/api/admin/api-keys', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: 'New API Key' }),
     })
-    const data = await res.json()
     setNewKey(data)
     fetchKeys()
   }
 
   async function deleteKey(id: string) {
-    await fetch(`${BASE_URL}/api/admin/api-keys/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    await adminRequest(`/api/admin/api-keys/${id}`, { method: 'DELETE' })
     fetchKeys()
   }
 

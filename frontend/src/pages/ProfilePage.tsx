@@ -2,6 +2,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuthStore } from '@/store/authStore'
+import { motion } from 'framer-motion'
 import { LogOut } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 

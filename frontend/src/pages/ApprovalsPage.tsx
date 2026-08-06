@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from '@/hooks/useToast'
 import { formatRelative, truncate } from '@/lib/format'
+import { motion } from 'framer-motion'
 import { AlertTriangle, Check, CheckSquare, Clock, X } from 'lucide-react'
 import { useState } from 'react'
 
