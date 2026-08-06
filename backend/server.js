@@ -71,16 +71,62 @@ const { correlationIdMiddleware } = require("./middleware/correlationIdMiddlewar
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
-// Global middleware
-const allowedOrigins = (process.env.CORS_ORIGIN || "http://localhost:3000").split(",").map(s => s.trim());
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-      callback(new Error(`CORS: origin ${origin} not allowed`));
-    },
-  })
+// ---------------------------------------------------------------------------
+// CORS configuration
+// ---------------------------------------------------------------------------
+const PRODUCTION_FRONTEND = "https://autonomous-incident-recovery-agent-ten.vercel.app";
+const DEFAULT_ORIGINS = `http://localhost:5173,http://localhost:3000,${PRODUCTION_FRONTEND}`;
+
+function parseOrigins(raw) {
+  if (!raw) return [];
+  return raw.split(",").map(s => s.trim().replace(/\/+$/, "")).filter(Boolean);
+}
+
+const allowedOrigins = parseOrigins(process.env.CORS_ORIGINS || DEFAULT_ORIGINS);
+
+// Safe startup log — no secrets
+console.log(
+  `[server] CORS: ${allowedOrigins.length} allowed origin(s) | env=${process.env.NODE_ENV || "development"} | credentials=true`
 );
+if (process.env.NODE_ENV === "production" && !allowedOrigins.includes(PRODUCTION_FRONTEND)) {
+  console.warn(`[server] ⚠️  CORS: production frontend origin not in CORS_ORIGINS — browser requests will be blocked`);
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Allow requests without Origin (server-to-server, curl, health checks)
+    if (!origin) return callback(null, true);
+    const normalized = origin.replace(/\/+$/, "");
+    if (allowedOrigins.includes(normalized)) return callback(null, true);
+    // Return controlled false — do NOT throw, which would produce a 500
+    console.warn(`[cors] Rejected origin: ${origin}`);
+    callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "Authorization",
+    "Content-Type",
+    "X-Idempotency-Key",
+    "X-Signature",
+    "X-Timestamp",
+    "X-Request-Id",
+    "Accept",
+  ],
+  exposedHeaders: ["X-Request-Id", "Retry-After", "X-Correlation-ID"],
+  optionsSuccessStatus: 204,
+  maxAge: 86400,
+};
+
+// 1. CORS headers on every response (including preflight)
+app.use(cors(corsOptions));
+
+// 2. Respond 204 to all OPTIONS requests immediately — before any auth middleware
+app.use((req, res, next) => {
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+});
+
 app.use(express.json());
 
 // CRITICAL AUDIT: Add correlation ID tracking (must be early)

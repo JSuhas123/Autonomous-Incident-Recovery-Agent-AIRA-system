@@ -16,6 +16,9 @@ function verifyTimestamp(timestamp, maxAgeMs = 5 * 60 * 1000) {
 
 async function authMiddleware(req, res, next) {
   try {
+    // OPTIONS preflight must never be blocked by authentication
+    if (req.method === "OPTIONS") return next();
+
     // Extract tenantId from URL
     const tenantId = req.params.tenantId;
     if (!tenantId) {
@@ -74,9 +77,9 @@ async function authMiddleware(req, res, next) {
       });
     }
 
-    // Verify idempotency key
+    // Verify idempotency key (required only for state-changing methods)
     const idempotencyKey = req.headers["x-idempotency-key"];
-    if (!idempotencyKey) {
+    if (!idempotencyKey && !["GET", "HEAD"].includes(req.method)) {
       return res.status(400).json({
         error: "Missing X-Idempotency-Key header",
         code: "MISSING_IDEMPOTENCY_KEY",
@@ -153,7 +156,7 @@ async function authMiddleware(req, res, next) {
       config: tenant,
       keyId,
       timestamp: parseInt(timestamp),
-      idempotencyKey,
+      idempotencyKey: idempotencyKey || null,
     };
 
     // Audit log this request
