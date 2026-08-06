@@ -123,11 +123,11 @@ export interface OnboardingStatus {
 // ─── Service endpoints ───────────────────────────────────────────────────────
 
 import type {
-  CreateServiceBody,
-  Service,
-  ServiceListParams,
-  ServiceListResponse,
-  UpdateServiceBody,
+    CreateServiceBody,
+    Service,
+    ServiceListParams,
+    ServiceListResponse,
+    UpdateServiceBody,
 } from '@/types/service'
 
 export const serviceApi = {
@@ -162,10 +162,10 @@ export const serviceApi = {
 // ─── Verification endpoints ──────────────────────────────────────────────────
 
 import type {
-  VerificationChallenge,
-  VerificationCheckResult,
-  VerificationMethod,
-  VerificationStatus,
+    VerificationChallenge,
+    VerificationCheckResult,
+    VerificationMethod,
+    VerificationStatus,
 } from '@/types/verification'
 
 export const verificationApi = {
@@ -524,22 +524,22 @@ export const executionApi = {
 
 
 export const integrationCatalogueApi = {
-  listDefinitions: () => request<{ definitions: import("../types/integration").IntegrationDefinition[] }>("/integration-definitions"),
+  listDefinitions: () => request<{ definitions: import("../types/integration").IntegrationDefinition[] }>("/api/v1/integration-definitions"),
 };
 
 export const integrationConnectionApi = {
-  list: () => request<{ integrations: import("../types/integration").IntegrationConnection[]; count: number }>("/integrations/connections"),
-  get:  (id: string) => request<{ integration: import("../types/integration").IntegrationConnection }>(`/integrations/connections/${id}`),
+  list: () => request<{ integrations: import("../types/integration").IntegrationConnection[]; count: number }>("/api/v1/integrations/connections"),
+  get:  (id: string) => request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}`),
   create: (body: import("../types/integration").CreateConnectionBody) =>
-    request<{ integration: import("../types/integration").IntegrationConnection }>("/integrations/connections", { method: "POST", body: JSON.stringify(body) }),
+    request<{ integration: import("../types/integration").IntegrationConnection }>("/api/v1/integrations/connections", { method: "POST", body: JSON.stringify(body) }),
   update: (id: string, body: import("../types/integration").UpdateConnectionBody) =>
-    request<{ integration: import("../types/integration").IntegrationConnection }>(`/integrations/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   test: (id: string) =>
-    request<{ success: boolean; latencyMs?: number; detail?: string }>(`/integrations/connections/${id}/test`, { method: "POST" }),
+    request<{ success: boolean; latencyMs?: number; detail?: string }>(`/api/v1/integrations/connections/${id}/test`, { method: "POST" }),
   disable: (id: string) =>
-    request<{ integration: import("../types/integration").IntegrationConnection }>(`/integrations/connections/${id}/disable`, { method: "POST" }),
+    request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}/disable`, { method: "POST" }),
   rotateSecret: (id: string, secret: string) =>
-    request<{ success: boolean }>(`/integrations/connections/${id}/rotate-secret`, { method: "POST", body: JSON.stringify({ secret }) }),
+    request<{ success: boolean }>(`/api/v1/integrations/connections/${id}/rotate-secret`, { method: "POST", body: JSON.stringify({ secret }) }),
   delete: (id: string) =>
-    request<void>(`/integrations/connections/${id}`, { method: "DELETE" }),
+    request<void>(`/api/v1/integrations/connections/${id}`, { method: "DELETE" }),
 };
