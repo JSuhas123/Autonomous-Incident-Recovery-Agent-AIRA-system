@@ -10,30 +10,43 @@
  */
 
 const express = require('express');
+const Joi = require('joi');
 const router = express.Router({ mergeParams: true });
 const { getApprovalService } = require('../services/approval');
-const { validateInput } = require('../middleware/inputValidationMiddleware');
 const { loggingService } = require('../services/infrastructure');
 
 const approvalService = getApprovalService();
+
+const listQuerySchema = Joi.object({
+  status: Joi.string().valid('pending', 'approved', 'rejected', 'expired', 'executed').optional(),
+  limit: Joi.number().integer().min(1).max(100).default(50),
+  sort: Joi.string().valid('asc', 'desc').default('desc'),
+  cursor: Joi.string().optional(),
+});
 
 /**
  * GET /approvals
  * Get pending approval requests for tenant
  */
-router.get('/', validateInput, async (req, res, next) => {
-  try {
-    const { tenantId } = req.params;
+router.get('/', async (req, res, next) => {
+  const { error: qErr } = listQuerySchema.validate(req.query, {
+    abortEarly: false,
+    stripUnknown: true,
+  });
+  if (qErr) {
+    return res.status(400).json({
+      error: 'Invalid query parameters',
+      code: 'VALIDATION_ERROR',
+      details: qErr.details.map(d => ({ field: d.path.join('.'), message: d.message })),
+    });
+  }
 
-    if (!tenantId) {
-      return res.status(400).json({
-        error: 'Missing tenantId',
-      });
-    }
+  try {
+    const tenantId = req.auth.tenantId;
 
     const pending = await approvalService.getPendingApprovals(tenantId);
 
-    res.json({
+    return res.json({
       tenantId,
       pendingCount: pending.length,
       pending: pending.map(p => ({
@@ -45,7 +58,9 @@ router.get('/', validateInput, async (req, res, next) => {
         severity: p.severity,
         createdAt: p.createdAt,
         expiresAt: p.expiresAt,
-        expiresIn: Math.round((new Date(p.expiresAt).getTime() - Date.now()) / 1000) + 's',
+        expiresIn: p.expiresAt
+          ? Math.round((new Date(p.expiresAt).getTime() - Date.now()) / 1000) + 's'
+          : null,
       })),
     });
   } catch (error) {
@@ -57,12 +72,12 @@ router.get('/', validateInput, async (req, res, next) => {
  * GET /approvals/queue/stats
  * Get approval queue statistics
  */
-router.get('/queue/stats', validateInput, async (req, res, next) => {
+router.get('/queue/stats', async (req, res, next) => {
   try {
-    const { tenantId } = req.params;
+    const tenantId = req.auth.tenantId;
     const stats = await approvalService.getQueueStats(tenantId);
 
-    res.json({
+    return res.json({
       tenantId,
       queue: stats,
     });
@@ -75,19 +90,14 @@ router.get('/queue/stats', validateInput, async (req, res, next) => {
  * GET /approvals/:approvalId
  * Get specific approval request status
  */
-router.get('/:approvalId', validateInput, async (req, res, next) => {
+router.get('/:approvalId', async (req, res, next) => {
   try {
-    const { tenantId, approvalId } = req.params;
-
-    if (!approvalId) {
-      return res.status(400).json({
-        error: 'Missing approvalId',
-      });
-    }
+    const { approvalId } = req.params;
+    const tenantId = req.auth.tenantId;
 
     const status = await approvalService.getApprovalStatus(approvalId);
 
-    res.json({
+    return res.json({
       tenantId,
       approval: status,
     });
@@ -107,14 +117,16 @@ router.get('/:approvalId', validateInput, async (req, res, next) => {
  *   "comment": "optional approval comment"
  * }
  */
-router.post('/:approvalId/approve', validateInput, async (req, res, next) => {
+router.post('/:approvalId/approve', async (req, res, next) => {
   try {
-    const { tenantId, approvalId } = req.params;
-    const { approvedBy, comment } = req.body;
+    const { approvalId } = req.params;
+    const tenantId = req.auth.tenantId;
+    const { approvedBy, comment } = req.body || {};
 
-    if (!approvalId || !approvedBy) {
+    if (!approvedBy) {
       return res.status(400).json({
-        error: 'Missing required fields: approvalId, approvedBy',
+        error: 'Missing required field: approvedBy',
+        code: 'VALIDATION_ERROR',
       });
     }
 
@@ -160,14 +172,16 @@ router.post('/:approvalId/approve', validateInput, async (req, res, next) => {
  *   "reason": "reason for rejection"
  * }
  */
-router.post('/:approvalId/reject', validateInput, async (req, res, next) => {
+router.post('/:approvalId/reject', async (req, res, next) => {
   try {
-    const { tenantId, approvalId } = req.params;
-    const { rejectedBy, reason } = req.body;
+    const { approvalId } = req.params;
+    const tenantId = req.auth.tenantId;
+    const { rejectedBy, reason } = req.body || {};
 
-    if (!approvalId || !rejectedBy) {
+    if (!rejectedBy) {
       return res.status(400).json({
-        error: 'Missing required fields: approvalId, rejectedBy',
+        error: 'Missing required field: rejectedBy',
+        code: 'VALIDATION_ERROR',
       });
     }
 

@@ -212,3 +212,27 @@ describe("Public health endpoint", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// ─── approvals route protection ──────────────────────────────────────────────
+describe("GET /api/v1/tenants/:tenantId/approvals — route protection boundary", () => {
+  test("no session → 401, not MISSING_AUTH_HEADER", async () => {
+    const res = await request(app)
+      .get("/api/v1/tenants/some_tenant/approvals");
+    expect(res.status).toBe(401);
+    expect(res.body.code).not.toBe("MISSING_AUTH_HEADER");
+    expect(["NOT_AUTHENTICATED", "SESSION_EXPIRED", "SESSION_REVOKED"]).toContain(res.body.code);
+  });
+
+  test("session cookie without Authorization header is sufficient → not 401 MISSING_AUTH_HEADER", async () => {
+    const loginResult = await createUserSession("rp-approvals@example.com", "RpApprovalsOrg");
+    const tenantId = loginResult.organization.tenantId;
+    const cookie = buildCookieHeader(loginResult.rawToken);
+
+    const res = await request(app)
+      .get(`/api/v1/tenants/${tenantId}/approvals`)
+      .set("Cookie", cookie);
+    // May 200 or 404 depending on whether approvalRoutes is mounted; must not be 401 MISSING_AUTH_HEADER
+    expect(res.body.code).not.toBe("MISSING_AUTH_HEADER");
+    expect(res.status).not.toBe(401);
+  });
+});

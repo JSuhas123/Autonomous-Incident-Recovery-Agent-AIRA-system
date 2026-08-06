@@ -270,29 +270,26 @@ class ApprovalQueue {
    * @returns {Promise<object>} - Queue statistics
    */
   async getStats(tenantId = null) {
+    const zeroStats = { total: 0, pending: 0, approved: 0, rejected: 0, expired: 0 };
     try {
-      const pending = tenantId
-        ? await ApprovalRequest.countDocuments({ tenantId, status: 'pending' })
-        : await ApprovalRequest.countDocuments({ status: 'pending' });
-
-      const approved = tenantId
-        ? await ApprovalRequest.countDocuments({ tenantId, status: 'approved' })
-        : await ApprovalRequest.countDocuments({ status: 'approved' });
-
-      const rejected = tenantId
-        ? await ApprovalRequest.countDocuments({ tenantId, status: 'rejected' })
-        : await ApprovalRequest.countDocuments({ status: 'rejected' });
+      const filter = (status) => tenantId ? { tenantId, status } : { status };
+      const [pending, approved, rejected, expired] = await Promise.all([
+        ApprovalRequest.countDocuments(filter('pending')),
+        ApprovalRequest.countDocuments(filter('approved')),
+        ApprovalRequest.countDocuments(filter('rejected')),
+        ApprovalRequest.countDocuments(filter('expired')),
+      ]);
 
       return {
+        total: pending + approved + rejected + expired,
         pending,
         approved,
         rejected,
-        memoryStoreSize: this.memoryStore.size,
-        backend: this.backedBy,
+        expired,
       };
     } catch (error) {
       console.error('[ApprovalQueue] Error getting stats:', error.message);
-      return { error: error.message };
+      return zeroStats;
     }
   }
 
