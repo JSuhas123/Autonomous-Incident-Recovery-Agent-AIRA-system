@@ -64,6 +64,21 @@ class QueueService {
 
       this.channel = await this.connection.createChannel();
 
+      // Recreate channel automatically if broker closes it
+      this.channel.on("close", async () => {
+        console.warn("[queue] Channel closed; reconnecting...");
+        this.connected = false;
+        try {
+          if (this.connection) {
+            this.channel = await this.connection.createChannel();
+            this.connected = true;
+            console.log("[queue] ✓ Channel reconnected");
+          }
+        } catch (err) {
+          console.error("[queue] Channel reconnect failed:", err.message);
+        }
+      });
+
       // Set up dead-letter exchange
       await this.channel.assertExchange(this.dlx.exchange, "direct", {
         durable: true,
@@ -156,40 +171,57 @@ class QueueService {
   /**
    * Consume events from a topic (handler receives incoming events)
    * @param {string} topic - Topic name
-   * @param {function} handler - Async function(message) to process event
-   * @param {object} options - Consumption options {queueName, prefetch}
+   * @param {string|function} queueNameOrHandler - Stable queue name for durable consumers, or handler function for auto-named queues
+   * @param {function|object} handlerOrOptions - Handler function, or options if queueName was omitted
+   * @param {object} [options] - {prefetch}
    */
-  async consumeEvents(topic, handler, options = {}) {
+  async consumeEvents(topic, queueNameOrHandler, handlerOrOptions, options = {}) {
     if (!this.connected) {
       throw new Error("Queue service not connected");
     }
 
+    // Support both (topic, handler, options) and (topic, queueName, handler, options)
+    let queueName, handler, opts;
+    if (typeof queueNameOrHandler === "function") {
+      queueName = null;
+      handler = queueNameOrHandler;
+      opts = handlerOrOptions || {};
+    } else {
+      queueName = queueNameOrHandler;
+      handler = handlerOrOptions;
+      opts = options;
+    }
+
     try {
-      const queueName =
-        options.queueName || `queue.${topic}.${Date.now()}`;
-      const prefetch = options.prefetch || 1; // Process one message at a time for safety
+      const prefetch = opts.prefetch || 1;
+
+      // Named queues are durable shared worker queues; unnamed are exclusive per-connection temps
+      const isDurable = !!queueName;
+      const resolvedName = queueName || `queue.${topic}.tmp`;
 
       // Assert exchange and queue
       await this.channel.assertExchange(topic, "topic", { durable: true });
-      await this.channel.assertQueue(queueName, {
-        durable: false,
-        deadLetterExchange: this.dlx.exchange,
-        arguments: {
-          "x-message-ttl": 3600000, // 1 hour TTL
-        },
+      await this.channel.assertQueue(resolvedName, {
+        durable: isDurable,
+        exclusive: !isDurable,
+        autoDelete: !isDurable,
+        deadLetterExchange: isDurable ? this.dlx.exchange : undefined,
+        arguments: isDurable
+          ? { "x-message-ttl": 3600000 }
+          : undefined,
       });
 
       // Bind queue to topic (consume all messages)
-      await this.channel.bindQueue(queueName, topic, "#");
+      await this.channel.bindQueue(resolvedName, topic, "#");
 
       // Set prefetch (how many messages to prefetch before ACK)
       await this.channel.prefetch(prefetch);
 
-      console.log(`[queue] Subscribing to ${topic} via ${queueName}`);
+      console.log(`[queue] Subscribing to ${topic} via ${resolvedName}`);
 
       // Consume messages
       await this.channel.consume(
-        queueName,
+        resolvedName,
         async (message) => {
           if (!message) return;
 
@@ -227,7 +259,7 @@ class QueueService {
         { noAck: false }
       );
 
-      return queueName;
+      return resolvedName;
     } catch (error) {
       console.error(
         `[queue] Consume error on topic "${topic}":`,
