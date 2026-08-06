@@ -337,10 +337,18 @@ class QueueService {
 let instance = null;
 let useMockFallback = false;
 
+// Inline no-op mock — avoids dependency on test files in production
+const inMemoryMock = {
+  publish: async () => {},
+  subscribe: async () => {},
+  unsubscribe: async () => {},
+  disconnect: async () => {},
+  isConnected: () => false,
+};
+
 async function getQueueService(url) {
   if (useMockFallback) {
-    // Return mock service when real service fails
-    return require("../../tests/mocks/mockQueueService");
+    return inMemoryMock;
   }
   
   if (!instance) {
