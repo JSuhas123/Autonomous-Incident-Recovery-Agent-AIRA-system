@@ -94,7 +94,7 @@ export const router = createBrowserRouter([
         element: suspend(<IncidentListPage />),
       },
       {
-        path: 'incidents/:decisionId',
+        path: 'incidents/:incidentId',
         element: suspend(<IncidentDetailPage />),
       },
       {

@@ -25,6 +25,7 @@ const reportingRoutes = require("./routes/reportingRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const serviceRoutes = require("./routes/serviceRoutes");
 const { topLevelRouter: monitorTopLevelRoutes } = require("./routes/monitorRoutes");
+const incidentRoutes = require("./routes/incidentRoutes");
 const runbookRoutes = require("./routes/runbookRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
 
@@ -390,6 +391,7 @@ app.use("/api/v1/services", sessionAuthMiddleware, serviceRoutes);
  * MONITOR API — browser-session (cross-service monitor list + per-monitor operations)
  */
 app.use("/api/v1/monitors", sessionAuthMiddleware, monitorTopLevelRoutes);
+app.use("/api/v1/incidents", sessionAuthMiddleware, incidentRoutes);
 
 /**
  * RUNBOOK MANAGEMENT API — browser-session (dashboard)

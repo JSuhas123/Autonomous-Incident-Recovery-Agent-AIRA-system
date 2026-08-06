@@ -192,9 +192,9 @@ export function VerificationWizard({ serviceId, hasBaseUrl }: Props) {
             <p className="text-sm text-green-700 mt-0.5">
               Verified via{' '}
               <span className="font-medium">
-                {status.verificationMethod ? METHOD_LABELS[status.verificationMethod] : 'unknown method'}
+                {status?.verificationMethod ? METHOD_LABELS[status.verificationMethod] : 'unknown method'}
               </span>
-              {status.verifiedAt && (
+              {status?.verifiedAt && (
                 <> on {new Date(status.verifiedAt).toLocaleDateString()}</>
               )}
             </p>

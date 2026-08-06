@@ -266,6 +266,42 @@ function tenantPath(tenantId: string, suffix: string) {
 
 // â”€â”€â”€ Signals / Decisions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+// ─── Incident endpoints ──────────────────────────────────────────────────────
+
+import type { Incident, IncidentListParams, IncidentTimelineEvent } from '@/types/incident'
+
+export const incidentApi = {
+  list: (params?: IncidentListParams, signal?: AbortSignal) => {
+    const qs = params
+      ? '?' + new URLSearchParams(
+          Object.entries(params)
+            .filter(([, v]) => v != null)
+            .map(([k, v]) => [k, String(v)])
+        ).toString()
+      : ''
+    return request<{ incidents: Incident[]; count: number }>(`/api/v1/incidents${qs}`, { signal })
+  },
+
+  get: (incidentId: string, signal?: AbortSignal) =>
+    request<{ incident: Incident }>(`/api/v1/incidents/${incidentId}`, { signal }),
+
+  acknowledge: (incidentId: string, body?: { note?: string }) =>
+    request<{ incident: Incident }>(`/api/v1/incidents/${incidentId}/acknowledge`, { method: 'POST', body: body ?? {} }),
+
+  resolve: (incidentId: string, body?: { resolution?: string }) =>
+    request<{ incident: Incident }>(`/api/v1/incidents/${incidentId}/resolve`, { method: 'POST', body: body ?? {} }),
+
+  reopen: (incidentId: string, body?: { reason?: string }) =>
+    request<{ incident: Incident }>(`/api/v1/incidents/${incidentId}/reopen`, { method: 'POST', body: body ?? {} }),
+
+  assign: (incidentId: string, body: { assigneeId?: string | null; note?: string }) =>
+    request<{ incident: Incident }>(`/api/v1/incidents/${incidentId}/assignment`, { method: 'PATCH', body }),
+
+  timeline: (incidentId: string, signal?: AbortSignal) =>
+    request<{ timeline: IncidentTimelineEvent[]; count: number }>(
+      `/api/v1/incidents/${incidentId}/timeline`, { signal }),
+}
+
 export const signalApi = {
   submit: (tenantId: string, body: unknown) =>
     request(tenantPath(tenantId, '/signals'), { method: 'POST', body }),

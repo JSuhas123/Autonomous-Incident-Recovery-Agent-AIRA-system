@@ -1,4 +1,5 @@
 import { useOnboardingStatus } from '@/api/hooks/useDashboard'
+import { ActiveIncidentsPanel } from '@/components/incidents/ActiveIncidentsPanel'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -176,6 +177,9 @@ export default function DashboardPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Active incidents */}
+      <ActiveIncidentsPanel />
     </motion.div>
   )
 }

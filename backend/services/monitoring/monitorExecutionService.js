@@ -27,6 +27,7 @@ const Monitor    = require("../../models/Monitor");
 const MonitorCheck = require("../../models/MonitorCheck");
 const { record: auditRecord } = require("../identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
+const incidentService = require("../incidents/incidentService");
 
 const MAX_RESPONSE_BYTES  = 512_000;  // 512 KB
 const CHECKER_REGION      = process.env.CHECKER_REGION ?? "default";
@@ -417,8 +418,19 @@ async function recordResult(monitor, result) {
     console.log(
       `[monitor] State transition for ${monitor._id} (${monitor.name}): ${oldStatus} → ${newStatus}`
     );
-    // TODO: queue incident evaluation event when transitioning to "down"
-    // This is where we would push to RabbitMQ/BullMQ in a later phase
+
+    if (newStatus === "down") {
+      // Open or update the incident (fire-and-forget; failures must not break monitoring)
+      incidentService.openOrUpdate({ monitor, check: result, transitionedAt: result.checkedAt })
+        .catch((err) => console.error("[incident] openOrUpdate failed:", err.message));
+    } else if (newStatus === "healthy" && (oldStatus === "down" || oldStatus === "degraded")) {
+      incidentService.resolveForMonitor({ monitor, resolvedAt: result.checkedAt })
+        .catch((err) => console.error("[incident] resolveForMonitor failed:", err.message));
+    }
+  } else if (newStatus === "down") {
+    // Still down — update existing incident occurrence count
+    incidentService.openOrUpdate({ monitor, check: result, transitionedAt: result.checkedAt })
+      .catch((err) => console.error("[incident] openOrUpdate (update) failed:", err.message));
   }
 
   return { oldStatus, newStatus, transitioned };

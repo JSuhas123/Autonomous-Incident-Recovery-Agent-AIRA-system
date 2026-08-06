@@ -27,6 +27,12 @@ const AUTH_EVENT_TYPES = {
   MONITOR_DELETED: "monitor_deleted",
   MONITOR_PAUSED: "monitor_paused",
   MONITOR_RESUMED: "monitor_resumed",
+  INCIDENT_OPENED: "incident_opened",
+  INCIDENT_ACKNOWLEDGED: "incident_acknowledged",
+  INCIDENT_RESOLVED: "incident_resolved",
+  INCIDENT_REOPENED: "incident_reopened",
+  INCIDENT_ASSIGNED: "incident_assigned",
+  INCIDENT_CLOSED: "incident_closed",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);
