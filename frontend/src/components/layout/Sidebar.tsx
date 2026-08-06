@@ -6,29 +6,31 @@ import { useAuthStore } from '@/store/authStore'
 import {
     AlertTriangle,
     BarChart2,
-    CheckSquare,
     FileText,
     LayoutDashboard,
     LogOut,
     Plug,
-    ScrollText,
+    RefreshCw,
     Server,
     Settings,
     Shield,
+    Sparkles,
+    Users,
     Zap
 } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/incidents', icon: AlertTriangle, label: 'Incidents' },
-  { to: '/approvals', icon: CheckSquare, label: 'Approvals' },
-  { to: '/policies', icon: Shield, label: 'Policies' },
-  { to: '/audit', icon: ScrollText, label: 'Audit Logs' },
-  { to: '/analytics', icon: BarChart2, label: 'Analytics' },
-  { to: '/reports', icon: FileText, label: 'Reports' },
+  { to: '/services', icon: Server, label: 'Services' },
+  { to: '/monitoring', icon: BarChart2, label: 'Monitoring' },
   { to: '/integrations', icon: Plug, label: 'Integrations' },
-  { to: '/cluster', icon: Server, label: 'Cluster' },
+  { to: '/incidents', icon: AlertTriangle, label: 'Incidents' },
+  { to: '/insights', icon: Sparkles, label: 'Insights' },
+  { to: '/recovery', icon: RefreshCw, label: 'Recovery' },
+  { to: '/policies', icon: Shield, label: 'Policies' },
+  { to: '/reports', icon: FileText, label: 'Reports' },
+  { to: '/team', icon: Users, label: 'Team' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
@@ -50,7 +52,7 @@ export function Sidebar({ onNavigate }: SidebarProps) {
         <div>
           <div className="text-sm font-semibold text-foreground">AIRA</div>
           <div className="text-[10px] text-muted-foreground truncate max-w-[140px]">
-            {organization?.tenantId ?? 'No tenant'}
+            {organization?.name ?? organization?.tenantId ?? 'No organization'}
           </div>
         </div>
       </div>

@@ -10,6 +10,12 @@ const SignupPage = lazy(() => import('@/pages/SignupPage'))
 
 // Feature pages
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
+const ServicesPage = lazy(() => import('@/pages/ServicesPage'))
+const ServiceDetailPage = lazy(() => import('@/pages/ServiceDetailPage'))
+const MonitoringPage = lazy(() => import('@/pages/MonitoringPage'))
+const InsightsPage = lazy(() => import('@/pages/InsightsPage'))
+const RecoveryPage = lazy(() => import('@/pages/RecoveryPage'))
+const TeamPage = lazy(() => import('@/pages/TeamPage'))
 const IncidentListPage = lazy(() => import('@/pages/IncidentListPage'))
 const IncidentDetailPage = lazy(() => import('@/pages/IncidentDetailPage'))
 const RecoveryTimelinePage = lazy(() => import('@/pages/RecoveryTimelinePage'))
@@ -58,6 +64,30 @@ export const router = createBrowserRouter([
       {
         path: 'dashboard',
         element: suspend(<DashboardPage />),
+      },
+      {
+        path: 'services',
+        element: suspend(<ServicesPage />),
+      },
+      {
+        path: 'services/:serviceId',
+        element: suspend(<ServiceDetailPage />),
+      },
+      {
+        path: 'monitoring',
+        element: suspend(<MonitoringPage />),
+      },
+      {
+        path: 'insights',
+        element: suspend(<InsightsPage />),
+      },
+      {
+        path: 'recovery',
+        element: suspend(<RecoveryPage />),
+      },
+      {
+        path: 'team',
+        element: suspend(<TeamPage />),
       },
       {
         path: 'incidents',

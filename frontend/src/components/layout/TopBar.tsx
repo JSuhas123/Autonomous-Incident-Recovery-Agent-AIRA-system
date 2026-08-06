@@ -1,6 +1,8 @@
 import { Button } from '@/components/ui/button'
+import { useLogout } from '@/hooks/useLogout'
+import { useAuthStore } from '@/store/authStore'
 import { useNotificationsStore } from '@/store/notificationsStore'
-import { Bell, Menu, User } from 'lucide-react'
+import { Bell, LogOut, Menu, User } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 interface TopBarProps {
@@ -10,6 +12,9 @@ interface TopBarProps {
 export function TopBar({ onMenuClick }: TopBarProps) {
   const unreadCount = useNotificationsStore((s) => s.unreadCount)
   const navigate = useNavigate()
+  const logout = useLogout()
+  const user = useAuthStore((s) => s.user)
+  const organization = useAuthStore((s) => s.organization)
 
   return (
     <header className="flex items-center justify-between px-4 h-14 border-b border-border bg-background shrink-0">
@@ -23,9 +28,21 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         <Menu className="w-5 h-5" />
       </Button>
 
-      <div className="hidden lg:block" />
+      {/* Org name — visible on desktop */}
+      <div className="hidden lg:flex items-center gap-2">
+        {organization?.name && (
+          <span className="text-sm font-medium text-foreground">{organization.name}</span>
+        )}
+      </div>
 
       <div className="flex items-center gap-1">
+        {/* User name — visible on medium+ screens */}
+        {user?.fullName && (
+          <span className="hidden md:block text-sm text-muted-foreground mr-2">
+            {user.fullName}
+          </span>
+        )}
+
         {/* Notifications */}
         <Button
           variant="ghost"
@@ -51,7 +68,18 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         >
           <User className="w-5 h-5" />
         </Button>
+
+        {/* Logout */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={logout}
+          aria-label="Sign out"
+        >
+          <LogOut className="w-5 h-5" />
+        </Button>
       </div>
     </header>
   )
 }
+

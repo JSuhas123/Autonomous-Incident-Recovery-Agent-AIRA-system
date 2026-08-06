@@ -13,6 +13,11 @@ const AUTH_EVENT_TYPES = {
   PASSWORD_CHANGED: "password_changed",
   ACCOUNT_LOCKED: "account_locked",
   PERMISSION_DENIED: "permission_denied",
+  SERVICE_CREATED: "service_created",
+  SERVICE_UPDATED: "service_updated",
+  SERVICE_PAUSED: "service_paused",
+  SERVICE_RESTORED: "service_restored",
+  SERVICE_ARCHIVED: "service_archived",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);

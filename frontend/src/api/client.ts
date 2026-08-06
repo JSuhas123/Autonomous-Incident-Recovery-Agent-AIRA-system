@@ -110,6 +110,63 @@ export const authApi = {
 
 // â”€â”€â”€ Public health endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+export interface OnboardingStatus {
+  workspaceCreated: boolean
+  serviceAdded: boolean
+  domainVerified: boolean
+  monitoringConnected: boolean
+  firstEventReceived: boolean
+  firstInsightGenerated: boolean
+  nextRecommendedAction: string
+}
+
+// ─── Service endpoints ───────────────────────────────────────────────────────
+
+import type {
+  CreateServiceBody,
+  Service,
+  ServiceListParams,
+  ServiceListResponse,
+  UpdateServiceBody,
+} from '@/types/service'
+
+export const serviceApi = {
+  list: (params?: ServiceListParams, signal?: AbortSignal) => {
+    const qs = params ? '?' + new URLSearchParams(
+      Object.entries(params)
+        .filter(([, v]) => v != null)
+        .map(([k, v]) => [k, String(v)])
+    ).toString() : ''
+    return request<ServiceListResponse>(`/api/v1/services${qs}`, { signal })
+  },
+
+  get: (id: string, signal?: AbortSignal) =>
+    request<{ success: boolean; data: Service }>(`/api/v1/services/${id}`, { signal }),
+
+  create: (body: CreateServiceBody) =>
+    request<{ success: boolean; data: Service }>('/api/v1/services', { method: 'POST', body }),
+
+  update: (id: string, body: UpdateServiceBody) =>
+    request<{ success: boolean; data: Service }>(`/api/v1/services/${id}`, { method: 'PATCH', body }),
+
+  pause: (id: string) =>
+    request<{ success: boolean; data: Service }>(`/api/v1/services/${id}/pause`, { method: 'POST' }),
+
+  resume: (id: string) =>
+    request<{ success: boolean; data: Service }>(`/api/v1/services/${id}/resume`, { method: 'POST' }),
+
+  archive: (id: string) =>
+    request<{ success: boolean; data: Service }>(`/api/v1/services/${id}`, { method: 'DELETE' }),
+}
+
+// ─── Dashboard endpoints ─────────────────────────────────────────────────────
+
+export const dashboardApi = {
+  onboarding: (signal?: AbortSignal) =>
+    request<{ success: boolean; data: OnboardingStatus }>(
+      '/api/v1/dashboard/onboarding', { signal }),
+}
+
 export const healthApi = {
   check: (signal?: AbortSignal) =>
     request<{ status: string; timestamp: string; components?: Record<string, string> }>(

@@ -22,6 +22,8 @@ const confidenceRoutes = require("./routes/confidenceRoutes");
 const integrationRoutes = require("./routes/integrationRoutes");
 const executionModesRoutes = require("./routes/executionModesRoutes");
 const reportingRoutes = require("./routes/reportingRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const serviceRoutes = require("./routes/serviceRoutes");
 const runbookRoutes = require("./routes/runbookRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
 
@@ -373,6 +375,15 @@ app.use("/api/v1/execution", sessionAuthMiddleware, executionModesRoutes);
  */
 app.use("/api/v1/reports", sessionAuthMiddleware, reportingRoutes);
 
+/**
+ * DASHBOARD API — browser-session (onboarding status)
+ */
+app.use("/api/v1/dashboard", sessionAuthMiddleware, dashboardRoutes);
+
+/**
+ * SERVICE MANAGEMENT API — browser-session
+ */
+app.use("/api/v1/services", sessionAuthMiddleware, serviceRoutes);
 
 /**
  * RUNBOOK MANAGEMENT API — browser-session (dashboard)
