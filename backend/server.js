@@ -78,8 +78,15 @@ const PORT = Number(process.env.PORT) || 5000;
 // ---------------------------------------------------------------------------
 // CORS configuration
 // ---------------------------------------------------------------------------
-const PRODUCTION_FRONTEND = "https://autonomous-incident-recovery-agent-ten.vercel.app";
-const DEFAULT_ORIGINS = `http://localhost:5173,http://localhost:3000,${PRODUCTION_FRONTEND}`;
+const PRODUCTION_FRONTENDS = [
+  "https://autonomous-incident-recovery-agent-ten.vercel.app",
+  "https://autonomous-incident-recovery-agent-aira-system-id1961ym5.vercel.app",
+];
+const DEFAULT_ORIGINS = [
+  "http://localhost:5173",
+  "http://localhost:3000",
+  ...PRODUCTION_FRONTENDS,
+].join(",");
 
 function parseOrigins(raw) {
   if (!raw) return [];
@@ -92,8 +99,11 @@ const allowedOrigins = parseOrigins(process.env.CORS_ORIGINS || DEFAULT_ORIGINS)
 console.log(
   `[server] CORS: ${allowedOrigins.length} allowed origin(s) | env=${process.env.NODE_ENV || "development"} | credentials=true`
 );
-if (process.env.NODE_ENV === "production" && !allowedOrigins.includes(PRODUCTION_FRONTEND)) {
-  console.warn(`[server] ⚠️  CORS: production frontend origin not in CORS_ORIGINS — browser requests will be blocked`);
+if (process.env.NODE_ENV === "production") {
+  const missing = PRODUCTION_FRONTENDS.filter(o => !allowedOrigins.includes(o));
+  if (missing.length) {
+    console.warn(`[server] ⚠️  CORS: missing production origin(s): ${missing.join(", ")}`);
+  }
 }
 
 const corsOptions = {
