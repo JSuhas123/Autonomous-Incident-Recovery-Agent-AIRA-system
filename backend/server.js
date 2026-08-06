@@ -103,6 +103,11 @@ app.get("/", (req, res) => {
   });
 });
 
+// Lightweight liveness probe — always 200 once Express is up
+app.get("/health/live", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
 // Health check for orchestration
 // CRITICAL FIX #3: Reports system health status including Redis availability
 app.get("/health", (req, res) => {
@@ -603,9 +608,9 @@ async function startServer() {
     
     // Pipeline endpoints disabled pending module integration fixes
     
-    serverInstance.listen(PORT, () => {
+    serverInstance.listen(PORT, "0.0.0.0", () => {
       const duration = Date.now() - startTime;
-      console.log(`[server] ✓ Backend running on http://localhost:${PORT} (startup: ${duration}ms)`);
+      console.log(`[server] ✓ Backend running on port ${PORT} (startup: ${duration}ms)`);
       console.log(`[server] Core API available at /api/v1/tenants/:tenantId/*`);
 
       console.log(`[server] Metrics available at /metrics (Prometheus format)`);
