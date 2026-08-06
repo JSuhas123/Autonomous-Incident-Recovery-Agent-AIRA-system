@@ -301,151 +301,88 @@ app.get("/health/multi-instance", internalTokenGuard, async (req, res) => {
   }
 });
 
-// API endpoints require authentication and tenant isolation (browser session OR machine HMAC)
-app.use("/api/v1/tenants/:tenantId", dualAuthMiddleware);
-app.use("/api/v1/tenants/:tenantId", rateLimitingMiddleware('api'));
-app.use("/api/v1/tenants/:tenantId", tenantIsolationMiddleware);
-app.use("/api/v1/tenants/:tenantId", auditDataAccessMiddleware);
+// ---------------------------------------------------------------------------
+// MACHINE INGESTION ROUTES (HMAC required — called by external systems, not browser)
+// POST /tenants/:tenantId/signals       — Prometheus/Datadog/automation push incidents
+// POST /tenants/:tenantId/actions/:id/dry-run — signed dry-run simulation
+// Registered with app.post (exact verb+path) so they never intercept browser GET routes.
+// ---------------------------------------------------------------------------
+const machineIngestionRoutes = require("./routes/machineIngestionRoutes");
+// Bind machine routes directly — avoids polluting the browser tenant prefix
+app.post("/api/v1/tenants/:tenantId/signals",
+  authMiddleware, tenantIsolationMiddleware, rateLimitingMiddleware("api"),
+  (req, res, next) => machineIngestionRoutes(req, res, next));
+app.post("/api/v1/tenants/:tenantId/actions/:id/dry-run",
+  authMiddleware, tenantIsolationMiddleware, rateLimitingMiddleware("api"),
+  (req, res, next) => machineIngestionRoutes(req, res, next));
+
+// ---------------------------------------------------------------------------
+// BROWSER SESSION AUTH — all dashboard read/write routes under :tenantId
+// sessionAuthMiddleware validates cookie, requireOrgAccess() enforces tenant
+// isolation and active membership without touching req.tenant.
+// ---------------------------------------------------------------------------
+const { requireOrgAccess } = require("./middleware/orgAuthMiddleware");
+const browserTenantAuth = [
+  sessionAuthMiddleware,
+  requireOrgAccess(),
+  rateLimitingMiddleware("api"),
+];
 
 /**
- * CORE DECISION ENGINE API (6 endpoints only)
- * 
- * This system acts as a safe automation brain that:
- * - Analyzes signals from external systems
- * - Makes decisions using policies and safety checks
- * - Executes actions with full traceability
- * - Never competes with observability tools
+ * CORE DECISION ENGINE — browser reads
+ * POST /signals and POST /actions/:id/dry-run stay on machine path above.
  */
-app.use("/api/v1/tenants/:tenantId", coreApiRoutes);
+app.use("/api/v1/tenants/:tenantId", browserTenantAuth, coreApiRoutes);
 
 /**
  * APPROVAL WORKFLOW API
- * 
- * Implements human-in-the-loop approval for mid-confidence decisions (0.6-0.85)
- * - GET /approvals - List pending approvals
- * - POST /approvals/:approvalId/approve - Approve and queue for execution
- * - POST /approvals/:approvalId/reject - Reject with reason
- * - GET /approvals/queue/stats - Monitor approval queue
+ * GET /approvals, GET /approvals/queue/stats, POST /approvals/:id/approve|reject
  */
-app.use("/api/v1/tenants/:tenantId/approvals", approvalRoutes);
+app.use("/api/v1/tenants/:tenantId/approvals", browserTenantAuth, approvalRoutes);
 
 /**
- * PHASE 2: POLICY MANAGEMENT API
- * 
- * Schema validation, dry-run, and automatic rollback
- * - POST /policy/validate - Validate policy against schema
- * - POST /policy/dry-run - Simulate action without executing
- * - POST /policy/create-version - Create new policy version
- * - POST /policy/activate-version - Activate specific version
- * - POST /policy/rollback - Manually rollback to previous version
- * - GET /policy/version-history - Retrieve version history
- * - GET /policy/rollback-history - View rollback events
- *
- * Classification: browser-session (dashboard)
+ * PHASE 2: POLICY MANAGEMENT API — browser-session (dashboard)
  */
 app.use("/api/v1/policy", sessionAuthMiddleware, policyManagementRoutes);
 
 /**
- * PHASE 3: ACTION EFFECTIVENESS METRICS API
- * 
- * Track and analyze effectiveness of AIRA actions
- * - POST /effectiveness/record-before - Record pre-action metrics
- * - POST /effectiveness/record-after - Record post-action metrics
- * - GET /effectiveness/:traceId - Get metrics for specific decision
- * - GET /effectiveness/compare/actions - Compare actions by effectiveness
- * - GET /effectiveness/pattern/:pattern - Get pattern-specific effectiveness
- * - GET /effectiveness/trends/:action - Get effectiveness trends over time
- *
- * Classification: browser-session (dashboard reads)
+ * PHASE 3: ACTION EFFECTIVENESS METRICS API — browser-session (dashboard reads)
  */
 app.use("/api/v1/effectiveness", sessionAuthMiddleware, effectivenessRoutes);
 
 /**
- * PHASE 4: ADAPTIVE CONFIDENCE CALIBRATION API
- * 
- * Dynamically adjust confidence weights based on historical accuracy
- * - POST /confidence/record-prediction - Record confidence prediction
- * - POST /confidence/record-outcome - Record actual outcome
- * - GET /confidence/weights - Get current calibration weights
- * - POST /confidence/recalibrate - Recalibrate weights
- * - GET /confidence/accuracy/by-action - Accuracy breakdown by action
- * - GET /confidence/accuracy/by-pattern - Accuracy breakdown by pattern
- * - GET /confidence/trends - Confidence trends over time
- * - POST /confidence/adjust-confidence - Apply weight adjustment
- *
- * Classification: browser-session (dashboard reads)
+ * PHASE 4: ADAPTIVE CONFIDENCE CALIBRATION API — browser-session (dashboard reads)
  */
 app.use("/api/v1/confidence", sessionAuthMiddleware, confidenceRoutes);
 
 /**
  * PHASE 5: INTEGRATIONS API
- * 
- * Slack notifications and webhook ingestion from external monitoring systems
- * - POST /integrations/webhooks/register - Register webhook source
- * - POST /integrations/webhooks/ingest - Receive webhook event (machine ingestion — no auth)
- * - POST /integrations/webhooks/:eventId/decision - Record AIRA decision (no auth)
- * - GET /integrations/webhooks/history - Webhook event history (browser-session)
- * - GET /integrations/webhooks/stats - Webhook statistics (browser-session)
- * - POST /integrations/slack/notify - Send Slack notification (browser-session)
- * - POST /integrations/webhooks/datadog - Datadog webhook endpoint (machine — no auth)
- * - POST /integrations/webhooks/prometheus - Prometheus webhook endpoint (machine — no auth)
- *
- * Session auth is applied per-route in integrationRoutes.js.
+ * Machine ingestion endpoints (ingest, datadog, prometheus) have no auth.
+ * Browser endpoints (history, stats, slack/notify) apply sessionAuthMiddleware
+ * per-route inside integrationRoutes.js.
  */
 app.use("/api/v1/integrations", integrationRoutes);
 
 /**
- * PHASE 8: EXECUTION MODES API
- * 
- * Manage AUTO, APPROVAL, and SUGGEST_ONLY execution modes
- * - POST /execution/config/default-mode - Set default execution mode
- * - POST /execution/config/action-mode - Set mode for specific action
- * - POST /execution/requests - Create execution request
- * - POST /execution/requests/:traceId/approve - Approve request
- * - POST /execution/requests/:traceId/reject - Reject request
- * - POST /execution/requests/:traceId/execute - Start execution
- * - POST /execution/requests/:traceId/complete - Mark as completed
- * - GET /execution/approvals/pending - Get pending approvals
- * - GET /execution/stats - Execution statistics
- *
- * Classification: browser-session (dashboard)
+ * PHASE 8: EXECUTION MODES API — browser-session (dashboard)
  */
 app.use("/api/v1/execution", sessionAuthMiddleware, executionModesRoutes);
 
 /**
- * PHASE 10: REPORTING API
- * 
- * Generate comprehensive reports on effectiveness, failures, and recommendations
- * - POST /reports/effectiveness - Generate effectiveness report
- * - POST /reports/failure-analysis - Generate failure analysis report
- * - POST /reports/confidence-calibration - Generate calibration report
- * - POST /reports/executive-summary - Generate executive summary
- * - GET /reports - List all reports
- * - GET /reports/:reportId - Get specific report
- * - POST /reports/:reportId/archive - Archive report
- *
- * Classification: browser-session (dashboard)
+ * PHASE 10: REPORTING API — browser-session (dashboard)
  */
 app.use("/api/v1/reports", sessionAuthMiddleware, reportingRoutes);
 
-/**
- * RUNBOOK MANAGEMENT API
- *
- * Manage and execute automated runbooks
- * - GET /runbooks - List runbooks (filter by incidentType, enabled)
- * - GET /runbooks/:runbookId - Get specific runbook
- * - POST /runbooks - Create runbook
- * - PUT /runbooks/:runbookId - Update runbook
- */
-app.use("/api/v1/tenants/:tenantId/runbooks", runbookRoutes);
 
 /**
- * ACTION LOG API
- *
- * Retrieve action execution history
- * - GET /action-logs - List recent action logs
+ * RUNBOOK MANAGEMENT API — browser-session (dashboard)
  */
-app.use("/api/v1/tenants/:tenantId/action-logs", actionLogRoutes);
+app.use("/api/v1/tenants/:tenantId/runbooks", browserTenantAuth, runbookRoutes);
+
+/**
+ * ACTION LOG API — browser-session (dashboard)
+ */
+app.use("/api/v1/tenants/:tenantId/action-logs", browserTenantAuth, actionLogRoutes);
 
 // ============================================================================
 // PHASE 1: SAFETY CONTROL ENDPOINTS (Kill Switches & Confidence Thresholds)
