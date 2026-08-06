@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/cn'
 import type { IncidentTimelineEvent } from '@/types/incident'
 import { AlertCircle, CheckCircle2, RefreshCw, User, Wrench } from 'lucide-react'
 

@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils'
+import { cn } from '@/lib/cn'
 import type { IncidentSeverity, IncidentStatus } from '@/types/incident'
 
 const STATUS_STYLES: Record<IncidentStatus, string> = {

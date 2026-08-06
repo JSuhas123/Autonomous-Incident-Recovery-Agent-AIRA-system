@@ -394,6 +394,18 @@ app.use("/api/v1/monitors", sessionAuthMiddleware, monitorTopLevelRoutes);
 app.use("/api/v1/incidents", sessionAuthMiddleware, incidentRoutes);
 
 /**
+ * INTEGRATION CATALOGUE + CONNECTIONS API
+ * /api/v1/integration-definitions — public catalogue (no auth)
+ * /api/v1/integrations            — legacy webhook + new connection CRUD (auth per-route)
+ */
+const integrationRoutes = require("./routes/integrationRoutes");
+app.use("/api/v1/integration-definitions", (req, res, next) => {
+  req.url = "/definitions" + req.url.replace(/^\/?/, "/").replace(/^\/\//,"/");
+  integrationRoutes(req, res, next);
+});
+app.use("/api/v1/integrations", integrationRoutes);
+
+/**
  * RUNBOOK MANAGEMENT API — browser-session (dashboard)
  */
 app.use("/api/v1/tenants/:tenantId/runbooks", browserTenantAuth, runbookRoutes);

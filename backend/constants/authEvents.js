@@ -33,6 +33,14 @@ const AUTH_EVENT_TYPES = {
   INCIDENT_REOPENED: "incident_reopened",
   INCIDENT_ASSIGNED: "incident_assigned",
   INCIDENT_CLOSED: "incident_closed",
+
+  // Phase 6 — Integration connections
+  INTEGRATION_CREATED:        "integration_created",
+  INTEGRATION_UPDATED:        "integration_updated",
+  INTEGRATION_DISABLED:       "integration_disabled",
+  INTEGRATION_DELETED:        "integration_deleted",
+  INTEGRATION_SECRET_ROTATED: "integration_secret_rotated",
+  INTEGRATION_TEST_RUN:       "integration_test_run",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);
