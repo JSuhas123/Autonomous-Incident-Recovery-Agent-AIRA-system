@@ -13,21 +13,11 @@ class SimulationService {
    * Executes full pipeline: analysis → decision → policy → safety
    * Does NOT execute actions
    */
-  async simulateSignal(tenantId, signalData, analysisAgent, decisionAgent, actionRiskService) {
+  async simulateSignal(tenantId, signalData,  actionRiskService) {
     try {
       const simulationId = `sim-${crypto.randomUUID()}`;
       const correlationId = `corr-${crypto.randomUUID()}`;
-
-      // Support both legacy (analyzeSignal) and current (analyzeIssue) API.
-      const analysis = typeof analysisAgent.analyzeSignal === 'function'
-        ? await analysisAgent.analyzeSignal(signalData)
-        : await analysisAgent.analyzeIssue(signalData.logs || [], signalData.metrics || {}, tenantId);
-
-      // Support both legacy (makeDecision) and current (decideAction) API.
-      const decision = typeof decisionAgent.makeDecision === 'function'
-        ? await decisionAgent.makeDecision(analysis, correlationId, tenantId)
-        : await decisionAgent.decideAction(analysis, { state: 'simulation', tenantId });
-
+     
       // Run safety checks (but don't execute)
       const safetyChecks = await this._runSafetyChecks(
         decision,

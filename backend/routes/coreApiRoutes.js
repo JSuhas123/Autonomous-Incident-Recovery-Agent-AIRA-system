@@ -2,11 +2,10 @@ const express = require("express");
 const router = express.Router();
 const { decisionTraceService } = require("../services/core");
 const { memoryService } = require("../services/learning");
-const { circuitBreakerService, decisionExecutionPublisher } = require("../services/execution");
+const { circuitBreakerService } = require("../services/execution");
 const { getQueueService } = require("../services/infrastructure/queueService");
 const { decisionPipelineObservability } = require("../services/observability");
 const { loggingService } = require("../services/infrastructure");
-const DecisionTrace = require("../models/DecisionTrace");
 const { randomUUID } = require("node:crypto");
 
 /**
@@ -25,96 +24,6 @@ const { randomUUID } = require("node:crypto");
 
 /**
  * Build tiered decision based on signal characteristics
- */
-function buildTieredDecision(errorRate, responseTime, affectedServices, severity) {
-  // CASCADE DETECTION FIRST - before checking error rate
-  // Cascade failure: high/critical severity + database/core service failure
-  const hasCoreService = affectedServices.some(svc => 
-    svc.toLowerCase().includes('database') || 
-    svc.toLowerCase().includes('core') ||
-    svc.toLowerCase().includes('backend')
-  );
-  const isCriticalSeverity = severity === 'CRITICAL' || severity === 'HIGH';
-  
-  if (isCriticalSeverity && hasCoreService) {
-    return {
-      patternType: 'CASCADE_FAILURE',
-      recommendedAction: 'ESCALATE',
-      confidence: 0.92,
-      tier: 'escalate'
-    };
-  }
-  
-  if (errorRate > 0.7) {
-    return {
-      patternType: 'SERVICE_CRASH',
-      recommendedAction: 'RESTART',
-      confidence: 0.95,
-      tier: 'execute'
-    };
-  }
-  if (responseTime > 2000 && affectedServices.length > 2) {
-    return {
-      patternType: 'CASCADE_FAILURE',
-      recommendedAction: 'ISOLATE',
-      confidence: 0.78,
-      tier: 'safe_fallback'
-    };
-  }
-  if (responseTime > 1500) {
-    return {
-      patternType: 'DATABASE_LATENCY',
-      recommendedAction: 'SCALE',
-      confidence: 0.82,
-      tier: 'safe_fallback'
-    };
-  }
-  if (affectedServices.length > 1 && responseTime > 500) {
-    return {
-      patternType: 'CASCADE_FAILURE',
-      recommendedAction: 'ESCALATE_TO_OPS',
-      confidence: 0.75,
-      tier: 'safe_fallback'
-    };
-  }
-  if (responseTime > 800) {
-    return {
-      patternType: 'ELEVATED_LATENCY',
-      recommendedAction: 'INCREASE_MONITORING',
-      confidence: 0.62,
-      tier: 'escalate'
-    };
-  }
-  if (responseTime > 300) {
-    return {
-      patternType: 'LATENCY_TREND',
-      recommendedAction: 'ALERT',
-      confidence: 0.55,
-      tier: 'observe'
-    };
-  }
-  return {
-    patternType: 'UNKNOWN',
-    recommendedAction: 'ALERT',
-    confidence: 0.45,
-    tier: 'observe'
-  };
-}
-
-/**
- * Get tier reasoning text
- */
-function getTierReasoning(tier) {
-  const reasons = {
-    execute: 'High confidence - execute direct action',
-    safe_fallback: 'Medium confidence - use safe fallback action',
-    escalate: 'Low confidence - escalate to human review'
-  };
-  return reasons[tier] || 'Very low confidence - monitor only';
-}
-
-/**
- * GET /api/v1/decisions/:id
  * Retrieve full decision trace (primary endpoint for explainability)
  */
 router.get("/decisions/:id", async (req, res, next) => {
@@ -416,4 +325,3 @@ router.get("/circuit-breakers", async (req, res, next) => {
 });
 
 module.exports = router;
-module.exports.buildTieredDecision = buildTieredDecision;

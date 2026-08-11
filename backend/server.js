@@ -57,10 +57,6 @@ const {
   retryHandler
 } = require("./services/infrastructure");
 const MultiInstanceCoordinator = require("./services/infrastructure/multiInstanceCoordinator");
-// DEPRECATED: legacy agents replaced by v2 AgentOrchestrator (start/stop are now no-ops)
-const { startAnalysisAgent, stopAnalysisAgent } = require("./agents/analysisAgent");
-const { startDecisionAgent, stopDecisionAgent } = require("./agents/decisionAgent");
-const { startActionAgent, stopActionAgent } = require("./agents/actionAgent");
 const authMiddleware = require("./middleware/authMiddleware");
 const dualAuthMiddleware = require("./middleware/dualAuthMiddleware");
 const { tenantIsolationMiddleware, auditDataAccessMiddleware } = require("./middleware/tenantIsolationMiddleware");
@@ -527,9 +523,6 @@ async function startServer() {
       console.warn("[server] Database optimization failed (non-fatal):", error.message);
     }
 
-    // 3. (Sample data seeding removed from production startup)
-    // Run `node backend/scripts/seed-dev-data.js` in development/demo environments.
-
     // 4. Initialize queue service (RabbitMQ)
     try {
       queueService = await getQueueService(process.env.RABBITMQ_URL);
@@ -570,22 +563,20 @@ async function startServer() {
     retryProcessorJob.start();
     console.log("[server] ✓ Retry processor job started");
 
-    // 7.5 DISABLED: Batch processing pipeline commented out pending module dependency fixes
-    // TODO: Re-enable once batchProcessingPipeline module is properly integrated
-    // batchProcessingPipeline would go here
-
     // 8. Initialize v2 Agent Intelligence Platform (replaces legacy queue consumers)
-    const { buildAgentOrchestrator } = require('./agents/v2');
+    const { initializeAgentOrchestrator } = require('./agents/v2');
     const { incidentPlaybookService } = require('./services/incidents');
-    // Eagerly build the orchestrator so it's validated at startup.
-    buildAgentOrchestrator({ incidentPlaybookService });
-    console.log('[server] ✓ v2 Agent Intelligence Platform initialized (8-agent orchestrator ready)');
+    const { memoryService } = require('./services/learning');
+    const {kubernetesInvestigationTools} = require("./agents/v2/tools");
 
-    // Legacy agent start calls are now no-ops (deprecated queue consumers).
-    await startAnalysisAgent();
-    await startDecisionAgent();
-    await startActionAgent();
-    console.log('[server] ✓ Legacy agent lifecycle hooks called (deprecated — no-ops)');
+    initializeAgentOrchestrator({
+    incidentPlaybookService,
+    memoryService,
+    kubernetesInvestigationTools,
+
+    });
+
+    console.log('[server] ✓ V2 AgentOrchestrator initialized as authoritative runtime');
 
     // 8.1 Start external monitoring scheduler
     const { MonitorScheduler } = require("./services/monitoring/monitorScheduler");
@@ -700,12 +691,6 @@ async function shutdown() {
     await global.multiInstanceCoordinator.stop();
     console.log("[server] ✓ Multi-instance coordinator stopped");
   }
-
-  // Batch pipeline disabled pending module integration fixes
-
-  stopAnalysisAgent();
-  stopDecisionAgent();
-  stopActionAgent();
 
   // Stop monitor scheduler
   if (global.monitorScheduler) {

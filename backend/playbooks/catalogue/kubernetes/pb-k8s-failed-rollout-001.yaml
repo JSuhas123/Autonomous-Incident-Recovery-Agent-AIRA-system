@@ -1,96 +1,201 @@
 apiVersion: aira.io/v1
 kind: Playbook
-playbookId: PB-K8S-FAILED-ROLLOUT-001
-semver: "1.1.0"
-name: Kubernetes Failed Deployment Rollout
+
+playbookId: PB-K8S-ROLLOUT-001
+semver: 1.0.0
+
+name: Kubernetes Failed Rollout Recovery
+
 description: >
-  Detects a deployment rollout that has stalled or failed and rolls it back
-  to the last known-good revision.
+  Deterministic recovery workflow for Kubernetes Deployments that fail
+  to reach the desired ready replica count after a rollout.
+  AIRA identifies the affected revision, validates rollback eligibility,
+  requires approval, performs a bounded rollback, and verifies recovery.
+
 lifecycle: ACTIVE
 
 owner:
-  type: system
+  ownerType: system
+  name: AIRA Platform
+  team: site-reliability
 
-incidentMatching:
-  incidentType: kubernetes.deployment.rollout_failed
-  severity: [high, critical]
-  environment: [production, staging]
+incident:
+  types:
+    - FailedDeployment
+    - FailedRollout
+    - DeploymentUnavailable
+    - kubernetes.deployment.failed
+    - K8S_FAILED_ROLLOUT
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: Deployment
-      - field: resource.rollout_status
-        operator: equals
-        value: failed
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+
+  providers:
+    - kubernetes
+    - k8s
+
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
-  - deployment_name
+  - resource.namespace
+  - resource.deployment
 
-stages:
-  - stageId: investigate-rollout
-    name: Investigate Rollout Failure
-    type: INVESTIGATION
-    order: 1
-    description: Collect deployment events, replica set status and conditions
-    runbooks:
-      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
-        parameterMappings:
-          resource: "${incident.resource.deployment}"
-          namespace: "${incident.resource.namespace}"
-        required: true
-    failurePolicy: STOP
+conditions:
+  minimumConfidence: 0.8
 
-  - stageId: rollback-deployment
-    name: Rollback Deployment
-    type: RECOVERY
-    order: 2
-    description: Roll back deployment to last stable revision
-    runbooks:
-      - runbookId: RB-K8S-ROLLBACK-DEPLOYMENT
-        parameterMappings:
-          resource: "${incident.resource.deployment}"
-          namespace: "${incident.resource.namespace}"
-        required: true
-    failurePolicy: ESCALATE
+  requiredSignals:
+    - namespace
+    - deployment
 
-  - stageId: verify-rollback
-    name: Verify Rollback Succeeded
-    type: VERIFICATION
-    order: 3
-    description: Confirm deployment is healthy after rollback
-    runbooks:
-      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
-        parameterMappings:
-          resource: "${incident.resource.deployment}"
-          namespace: "${incident.resource.namespace}"
-        required: true
-    failurePolicy: ESCALATE
+triggers:
+  all:
+    - field: incident.type
+      operator: contains
+      value: rollout
 
 risk:
   level: HIGH
   blastRadius: deployment
-  reversible: true
-  rollbackStrategy: NONE
 
 policy:
   required: true
-  approvalGroups: [platform-lead]
 
 approval:
-  mode: CONDITIONAL
-  condition:
-    field: severity
-    operator: equals
-    value: critical
+  mode: REQUIRED
+
+  conditions:
+    requiresApproval: true
+
+stages:
+  - id: investigate-rollout
+    order: 1
+    name: Investigate Failed Rollout
+    type: INVESTIGATION
+
+    description: >
+      Collect deployment state, current revision, ReplicaSets,
+      pod health, container failure reasons, recent rollout events,
+      and service impact.
+
+    failurePolicy: ESCALATE
+
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-ROLLOUT
+        versionConstraint: ">=1.0.0"
+        required: true
+
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: determine-rollback
+    order: 2
+    name: Validate Rollback Target
+    type: VALIDATION
+
+    description: >
+      Determine the last known healthy deployment revision.
+      Rollback is allowed only when a verified previous revision exists.
+
+    failurePolicy: ESCALATE
+
+    runbooks:
+      - runbookId: RB-K8S-RESOLVE-ROLLBACK-TARGET
+        versionConstraint: ">=1.0.0"
+        required: true
+
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: approval
+    order: 3
+    name: Approve Deployment Rollback
+    type: APPROVAL
+
+    description: >
+      Human approval is required before production or staging
+      deployment rollback.
+
+    failurePolicy: ESCALATE
+
+  - id: rollback-deployment
+    order: 4
+    name: Roll Back Failed Deployment
+    type: RECOVERY
+
+    description: >
+      Roll the deployment back only to the validated previous
+      healthy revision.
+
+    failurePolicy: ESCALATE
+
+    runbooks:
+      - runbookId: RB-K8S-ROLLBACK-DEPLOYMENT
+        versionConstraint: ">=1.0.0"
+        required: true
+
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+          revision: "${resolved.rollback_revision}"
+
+  - id: verify-deployment
+    order: 5
+    name: Verify Deployment Recovery
+    type: VERIFICATION
+
+    description: >
+      Verify rollout completion, ready replicas, pod readiness,
+      restart stability, and workload availability.
+
+    failurePolicy: ESCALATE
+
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
+        versionConstraint: ">=1.0.0"
+        required: true
+
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
 
 rollback:
   strategy: NONE
 
 escalation:
-  enabled: true
-  maxAttempts: 2
-  escalateTo: oncall-platform
+  maxRecoveryAttempts: 1
+
+  condition: >
+    rollback_target_missing OR rollback_failed OR
+    verification_failed
+
+  escalateTo: oncall-sre
+
+  notifyChannels:
+    - slack-alerts
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+  successMetrics:
+    - deployment_available
+    - desired_replicas_ready
+    - rollout_complete
+    - pods_ready
+    - error_rate_recovered
+
+tags:
+  - kubernetes
+  - deployment
+  - rollout
+  - rollback
+  - sre
+  - recovery

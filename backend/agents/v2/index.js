@@ -50,8 +50,67 @@ function buildAgentOrchestrator(services = {}, config = {}) {
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Authoritative Runtime Orchestrator
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// buildAgentOrchestrator() remains available for isolated unit/integration tests.
+//
+// Production code MUST use initializeAgentOrchestrator() once at startup and
+// getAgentOrchestratorInstance() afterwards.
+//
+// This prevents routes/services from silently creating independent agent
+// pipelines with different configuration or dependencies.
+
+let runtimeOrchestrator = null;
+
+/**
+ * Initialise the single production AgentOrchestrator instance.
+ *
+ * Safe to call multiple times; only the first call creates the runtime.
+ *
+ * @param {object} services
+ * @param {object} config
+ * @returns {AgentOrchestrator}
+ */
+function initializeAgentOrchestrator(services = {}, config = {}) {
+  if (runtimeOrchestrator) {
+    return runtimeOrchestrator;
+  }
+
+  runtimeOrchestrator = buildAgentOrchestrator(services, config);
+
+  return runtimeOrchestrator;
+}
+
+/**
+ * Return the already-initialised production orchestrator.
+ *
+ * Production callers should NOT construct their own orchestrator.
+ */
+function getAgentOrchestratorInstance() {
+  if (!runtimeOrchestrator) {
+    throw new Error(
+      'AgentOrchestrator has not been initialized. ' +
+      'Call initializeAgentOrchestrator() during application startup.'
+    );
+  }
+
+  return runtimeOrchestrator;
+}
+
+/**
+ * Test-only helper.
+ */
+function resetAgentOrchestratorInstance() {
+  runtimeOrchestrator = null;
+}
+
 module.exports = {
   buildAgentOrchestrator,
+  initializeAgentOrchestrator,
+  getAgentOrchestratorInstance,
+  resetAgentOrchestratorInstance,
   configureReasoningProvider,
   getReasoningProvider,
   SafeReasoningProvider,

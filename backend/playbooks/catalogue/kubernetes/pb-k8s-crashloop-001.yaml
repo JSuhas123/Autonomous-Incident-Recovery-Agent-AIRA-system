@@ -1,12 +1,16 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-K8S-CRASHLOOP-001
-semver: 1.1.0
+semver: 1.2.0
+
 name: Kubernetes CrashLoopBackOff Recovery
+
 description: >
-  Deterministic recovery playbook for Kubernetes pods stuck in CrashLoopBackOff.
-  Uses separate canonical runbooks per stage: investigation, restart, verification.
-  AI DOES NOT EXECUTE INFRASTRUCTURE — agents recommend, V1 engine executes.
+  Deterministic recovery playbook for Kubernetes workloads affected by
+  CrashLoopBackOff. Investigation is performed before any recovery action.
+  Recovery uses only approved canonical runbooks and is followed by
+  mandatory health verification. AI does not directly execute infrastructure.
 
 lifecycle: ACTIVE
 
@@ -20,14 +24,18 @@ incident:
     - CrashLoopBackOff
     - PodCrashLoop
     - kubernetes.pod.crashloop
+    - K8S_CRASH_LOOP_BACKOFF
+
   severities:
     - P1
     - P2
     - critical
     - high
+
   providers:
     - kubernetes
     - k8s
+
   environments:
     - production
     - staging
@@ -38,6 +46,7 @@ requiredEvidence:
 
 conditions:
   minimumConfidence: 0.7
+
   requiredSignals:
     - pod_name
     - namespace
@@ -47,13 +56,16 @@ triggers:
     - field: incident.type
       operator: contains
       value: crashloop
+
   any:
     - field: incident.severity
       operator: equals
       value: P1
+
     - field: incident.severity
       operator: equals
       value: P2
+
     - field: incident.severity
       operator: equals
       value: critical
@@ -67,21 +79,33 @@ policy:
 
 approval:
   mode: CONDITIONAL
+
   conditions:
-    requiresApproval: false  # auto-approve for known crashloop pattern
+    requiresApproval: false
 
 stages:
   - id: investigate-pod
     order: 1
     name: Investigate Pod State
     type: INVESTIGATION
-    description: Read-only collection of pod status, events, and logs before any action
-    failurePolicy: CONTINUE
+
+    description: >
+      Collect read-only Kubernetes evidence before recovery.
+      The investigation must establish container state,
+      restart count, recent termination reason, events,
+      and controller ownership.
+
+    failurePolicy: ESCALATE
+
     runbooks:
       - runbookId: RB-K8S-INVESTIGATE-POD
         versionConstraint: ">=1.0.0"
         required: true
-        description: Collect pod status, events, and logs
+
+        description: >
+          Collect pod status, conditions, recent events,
+          owner references, container state, and bounded logs.
+
         parameterMappings:
           pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
@@ -91,13 +115,22 @@ stages:
     order: 2
     name: Restart Crashed Pod
     type: RECOVERY
-    description: Delete the crashed pod to trigger controller-based recreation
-    failurePolicy: ROLLBACK
+
+    description: >
+      Recreate the unhealthy pod through its Kubernetes controller.
+      This step must not modify the controller specification.
+
+    failurePolicy: ESCALATE
+
     runbooks:
       - runbookId: RB-K8S-RESTART-POD
         versionConstraint: ">=1.0.0"
         required: true
-        description: Restart the crashed pod using the canonical restart runbook
+
+        description: >
+          Restart only the identified unhealthy pod using
+          the canonical restart runbook.
+
         parameterMappings:
           pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
@@ -106,13 +139,18 @@ stages:
     order: 3
     name: Verify Pod Recovery
     type: VERIFICATION
-    description: Confirm the pod is running and healthy after restart
+
+    description: >
+      Verify that the recreated workload reaches Running and Ready
+      state and does not immediately return to CrashLoopBackOff.
+
     failurePolicy: ESCALATE
+
     runbooks:
       - runbookId: RB-K8S-VERIFY-POD
         versionConstraint: ">=1.0.0"
         required: true
-        description: Verify the pod is Running and Ready
+
         parameterMappings:
           pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
@@ -121,9 +159,10 @@ rollback:
   strategy: NONE
 
 escalation:
-  maxRecoveryAttempts: 3
-  condition: "verification_failed OR restart_failed"
+  maxRecoveryAttempts: 1
+  condition: "verification_failed OR restart_failed OR crashloop_persists"
   escalateTo: oncall-sre
+
   notifyChannels:
     - slack-alerts
     - pagerduty
@@ -131,8 +170,11 @@ escalation:
 outcome:
   captureLearning: true
   updateIncidentMemory: true
+
   successMetrics:
     - pod_running
+    - pod_ready
+    - crashloop_cleared
     - restart_count_stable
 
 tags:

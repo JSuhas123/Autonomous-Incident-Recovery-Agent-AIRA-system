@@ -7,6 +7,7 @@ const ADAPTERS = {
   webhook_outgoing:       require("./adapters/webhookOutgoingAdapter"),
   prometheus_alertmanager: require("./adapters/prometheusAlertmanagerAdapter"),
   grafana_alerting:       require("./adapters/grafanaAlertingAdapter"),
+  kubernetes:             require("./adapters/kubernetesAdapter"),
 };
 
 /**
