@@ -1,0 +1,92 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-REPLICATION-LAG-001
+semver: "1.0.0"
+name: Database Replication Lag Recovery
+description: >
+  Detects and responds to excessive replication lag on database replicas.
+  Investigates write volume, network conditions and replica health. Triggers
+  failover only when replica is unrecoverable.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: database.replication_lag
+  severity: [high, critical]
+  environment: [production]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: DatabaseReplica
+
+requiredEvidence:
+  - replica_host
+  - primary_host
+  - lag_seconds
+
+stages:
+  - stageId: investigate-replication-lag
+    name: Investigate Replication Lag
+    type: INVESTIGATION
+    order: 1
+    description: Collect replication metrics and identify root cause
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          replica_host: "${incident.resource.replica_host}"
+          primary_host: "${incident.resource.primary_host}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: mitigate-lag
+    name: Mitigate Replication Lag
+    type: MITIGATION
+    order: 2
+    description: Throttle writes or pause non-critical replication sources
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          replica_host: "${incident.resource.replica_host}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: verify-replication
+    name: Verify Replication Caught Up
+    type: VERIFICATION
+    order: 3
+    description: Confirm lag is below acceptable threshold
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          replica_host: "${incident.resource.replica_host}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: CRITICAL
+  blastRadius: cluster
+  reversible: false
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [dba-team, platform-lead]
+
+approval:
+  mode: MANUAL
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall

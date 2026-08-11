@@ -1,241 +1,227 @@
+'use strict';
+
 /**
- * Runbook Routes (Phase 2 Sprint 3)
- * REST API for runbook management and execution
+ * Runbook Routes — Phase M
+ *
+ * All routes enforce:
+ *   - Tenant isolation: every write scoped to tenantId from req.params
+ *   - RBAC via existing authMiddleware (jwtAuthMiddleware + orgAuthMiddleware)
+ *
+ * Mounted at: /api/tenants/:tenantId/runbooks
  */
 
-const express = require("express");
-const router = express.Router();
-const Runbook = require("../models/Runbook");
-const { runbookExecutionService } = require("../services/execution");
+const express      = require('express');
+const router       = express.Router({ mergeParams: true });
+
+const { getRunbookRegistry, RegistryError } = require('../runbooks/registry/runbookRegistry');
+const { getRunbookExecutionEngine }          = require('../runbooks/execution/runbookExecutionEngine');
+const { getActionHandlerRegistry }           = require('../runbooks/actions/actionHandlerRegistry');
+const { VALIDATION_PURPOSE }                 = require('../runbooks/validators/runbookValidator');
+const RunbookExecution                       = require('../models/RunbookExecution');
+
+function registry() { return getRunbookRegistry(); }
+function engine()   { return getRunbookExecutionEngine(); }
+
+function handleRegistryError(err, res) {
+  if (err instanceof RegistryError) {
+    const httpStatus = {
+      NOT_FOUND:                    404,
+      DUPLICATE_VERSION:            409,
+      IMPORT_VALIDATION_FAILED:     422,
+      ACTIVATION_VALIDATION_FAILED: 422,
+      VALIDATION_FAILED:            422,
+      INVALID_TRANSITION:           409,
+      TRANSITION_CONFLICT:          409,
+      POLICY_DENIED:                403,
+      NOT_EXECUTABLE:               409,
+      TENANT_REQUIRED:              400,
+      INVALID_VERSION:              400,
+    }[err.code] || 400;
+    return res.status(httpStatus).json({
+      error:       err.message,
+      code:        err.code,
+      diagnostics: err.detail?.diagnostics,
+    });
+  }
+  throw err;
+}
 
 /**
  * GET /api/tenants/:tenantId/runbooks
  * List all runbooks for a tenant
  * Query params: incidentType, enabled
  */
-router.get("/", async (req, res, next) => {
+// ── Capabilities ───────────────────────────────────────────────────────────
+router.get('/capabilities', (req, res) => {
+  const report = getActionHandlerRegistry().report();
+  res.json({ capabilities: report, count: report.length });
+});
+
+// ── List ───────────────────────────────────────────────────────────────────
+router.get('/', async (req, res, next) => {
   try {
     const { tenantId } = req.params;
-    const { incidentType, enabled } = req.query;
-
-    const filter = { tenantId };
-    if (incidentType) filter.incidentType = incidentType;
-    if (enabled !== undefined) filter.enabled = enabled === "true";
-
-    const runbooks = await Runbook.find(filter).lean();
-
-    res.json({
-      tenantId,
-      runbookCount: runbooks.length,
-      runbooks,
-    });
-  } catch (error) {
-    next(error);
-  }
+    const { lifecycle, ownerType } = req.query;
+    const runbooks = await registry().list({ lifecycle, ownerType }, tenantId);
+    res.json({ tenantId, count: runbooks.length, runbooks });
+  } catch (err) { next(err); }
 });
 
-/**
- * GET /api/tenants/:tenantId/runbooks/:runbookId
- * Get a specific runbook
- */
-router.get("/:runbookId", async (req, res, next) => {
+// ── Get by ID ──────────────────────────────────────────────────────────────
+router.get('/executions/:executionId', async (req, res, next) => {
+  try {
+    const { tenantId, executionId } = req.params;
+    const execution = await RunbookExecution.findOne({ executionId, tenantId }).lean();
+    if (!execution) return res.status(404).json({ error: 'Execution not found', executionId });
+    res.json({ execution });
+  } catch (err) { next(err); }
+});
+
+router.get('/:runbookId/executions', async (req, res, next) => {
   try {
     const { tenantId, runbookId } = req.params;
-
-    const runbook = await Runbook.findOne({
-      _id: runbookId,
-      tenantId,
-    });
-
-    if (!runbook) {
-      return res.status(404).json({
-        error: "Runbook not found",
-        runbookId,
-      });
-    }
-
-    res.json({
-      tenantId,
-      runbook,
-    });
-  } catch (error) {
-    next(error);
-  }
+    const limit  = Math.min(parseInt(req.query.limit) || 20, 100);
+    const filter = { tenantId, runbookId };
+    if (req.query.status) filter.status = req.query.status;
+    const executions = await RunbookExecution.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    res.json({ tenantId, runbookId, count: executions.length, executions });
+  } catch (err) { next(err); }
 });
 
-/**
- * POST /api/tenants/:tenantId/runbooks
- * Create a new runbook
- * Body: { name, incidentType, steps, rollback, successCriteria, enabled }
- */
-router.post("/", async (req, res, next) => {
+router.get('/:runbookId/:semver', async (req, res, next) => {
+  try {
+    const { tenantId, runbookId, semver } = req.params;
+    try {
+      const runbook = await registry().getVersion(runbookId, semver, tenantId);
+      res.json({ runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
+
+router.get('/:runbookId', async (req, res, next) => {
+  try {
+    const { tenantId, runbookId } = req.params;
+    try {
+      const versions = await registry().getById(runbookId, tenantId);
+      res.json({ runbookId, versions });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
+
+// ── Import / Register ──────────────────────────────────────────────────────
+router.post('/import', async (req, res, next) => {
+  try {
+    const { tenantId }   = req.params;
+    const { definition } = req.body;
+    if (!definition) return res.status(400).json({ error: 'definition is required' });
+    try {
+      const { runbook, validation } = await registry().importDefinition(definition, {
+        tenantId, initiatedBy: req.user?.sub || 'api',
+      });
+      res.status(201).json({ success: true, runbook, validation: { diagnostics: validation.diagnostics } });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
+
+router.post('/register', async (req, res, next) => {
   try {
     const { tenantId } = req.params;
-    const { name, incidentType, steps, rollback, successCriteria, enabled } = req.body;
-
-    if (!name || !incidentType || !steps) {
-      return res.status(400).json({
-        error: "Missing required fields: name, incidentType, steps",
+    try {
+      const runbook = await registry().register(req.body, {
+        tenantId, initiatedBy: req.user?.sub || 'api',
       });
-    }
-
-    const runbook = new Runbook({
-      tenantId,
-      name,
-      incidentType,
-      steps,
-      rollback: rollback || [],
-      successCriteria: successCriteria || [],
-      enabled: enabled !== false,
-      version: 1,
-    });
-
-    await runbook.save();
-
-    res.status(201).json({
-      success: true,
-      message: "Runbook created",
-      runbook,
-    });
-  } catch (error) {
-    next(error);
-  }
+      res.status(201).json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
 });
 
-/**
- * PUT /api/tenants/:tenantId/runbooks/:runbookId
- * Update a runbook
- * Body: { name?, steps?, rollback?, enabled?, ... }
- */
-router.put("/:runbookId", async (req, res, next) => {
+// ── Lifecycle transitions ──────────────────────────────────────────────────
+router.post('/:runbookId/:semver/validate', async (req, res, next) => {
   try {
-    const { tenantId, runbookId } = req.params;
-    const updates = req.body;
-
-    const runbook = await Runbook.findOneAndUpdate(
-      { _id: runbookId, tenantId },
-      { ...updates, version: (updates.version || 0) + 1 },
-      { new: true }
-    );
-
-    if (!runbook) {
-      return res.status(404).json({
-        error: "Runbook not found",
-        runbookId,
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "Runbook updated",
-      runbook,
-    });
-  } catch (error) {
-    next(error);
-  }
+    const { tenantId, runbookId, semver } = req.params;
+    const purpose = req.query.purpose || VALIDATION_PURPOSE.AUTHORING;
+    try {
+      const result = await registry().validate(runbookId, semver, tenantId, purpose);
+      res.json({ valid: result.valid, diagnostics: result.diagnostics });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
 });
 
-/**
- * DELETE /api/tenants/:tenantId/runbooks/:runbookId
- * Delete a runbook
- */
-router.delete("/:runbookId", async (req, res, next) => {
+router.post('/:runbookId/:semver/approve', async (req, res, next) => {
   try {
-    const { tenantId, runbookId } = req.params;
-
-    const result = await Runbook.deleteOne({
-      _id: runbookId,
-      tenantId,
-    });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({
-        error: "Runbook not found",
-        runbookId,
-      });
-    }
-
-    res.json({
-      success: true,
-      message: "Runbook deleted",
-      runbookId,
-    });
-  } catch (error) {
-    next(error);
-  }
+    const { tenantId, runbookId, semver } = req.params;
+    try {
+      const runbook = await registry().approve(runbookId, semver, tenantId, { initiatedBy: req.user?.sub || 'api' });
+      res.json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
 });
 
-/**
- * POST /api/tenants/:tenantId/runbooks/:runbookId/execute
- * Execute a runbook for an incident
- * Body: { correlationId, incidentContext }
- */
-router.post("/:runbookId/execute", async (req, res, next) => {
+router.post('/:runbookId/:semver/activate', async (req, res, next) => {
   try {
-    const { tenantId, runbookId } = req.params;
-    const { correlationId, incidentContext } = req.body;
-
-    if (!correlationId) {
-      return res.status(400).json({
-        error: "correlationId is required",
-      });
-    }
-
-    const runbook = await Runbook.findOne({
-      _id: runbookId,
-      tenantId,
-    });
-
-    if (!runbook) {
-      return res.status(404).json({
-        error: "Runbook not found",
-        runbookId,
-      });
-    }
-
-    const execution = await runbookExecutionService.executeRunbook(
-      tenantId,
-      correlationId,
-      runbook,
-      incidentContext || {}
-    );
-
-    res.json({
-      success: true,
-      message: "Runbook execution started",
-      executionId: execution._id,
-      status: execution.status,
-    });
-  } catch (error) {
-    next(error);
-  }
+    const { tenantId, runbookId, semver } = req.params;
+    try {
+      const runbook = await registry().activate(runbookId, semver, tenantId, { initiatedBy: req.user?.sub || 'api' });
+      res.json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
 });
 
-/**
- * GET /api/tenants/:tenantId/runbooks/:runbookId/executions
- * Get execution history for a runbook
- * Query params: limit
- */
-router.get("/:runbookId/executions", async (req, res, next) => {
+router.post('/:runbookId/:semver/disable', async (req, res, next) => {
   try {
-    const { tenantId, runbookId } = req.params;
-    const { limit = 10 } = req.query;
+    const { tenantId, runbookId, semver } = req.params;
+    try {
+      const runbook = await registry().disable(runbookId, semver, tenantId, { initiatedBy: req.user?.sub || 'api' });
+      res.json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
 
-    const executions = await runbookExecutionService.getExecutionHistory(
-      tenantId,
-      runbookId,
-      parseInt(limit)
-    );
+router.post('/:runbookId/:semver/deprecate', async (req, res, next) => {
+  try {
+    const { tenantId, runbookId, semver } = req.params;
+    try {
+      const runbook = await registry().deprecate(runbookId, semver, tenantId, { initiatedBy: req.user?.sub || 'api' });
+      res.json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
 
-    res.json({
+router.post('/:runbookId/:semver/version', async (req, res, next) => {
+  try {
+    const { tenantId, runbookId, semver } = req.params;
+    const { newSemver, changes }          = req.body;
+    if (!newSemver) return res.status(400).json({ error: 'newSemver is required' });
+    try {
+      const runbook = await registry().createVersion(
+        runbookId, semver, newSemver, changes || {}, tenantId,
+        { initiatedBy: req.user?.sub || 'api' },
+      );
+      res.status(201).json({ success: true, runbook });
+    } catch (err) { return handleRegistryError(err, res); }
+  } catch (err) { next(err); }
+});
+
+// ── Execution ──────────────────────────────────────────────────────────────
+router.post('/:runbookId/:semver/execute', async (req, res, next) => {
+  try {
+    const { tenantId, runbookId, semver } = req.params;
+    const input = req.body || {};
+    let runbookDef;
+    try {
+      runbookDef = await registry().getExecutionDefinition(runbookId, semver, tenantId);
+    } catch (err) { return handleRegistryError(err, res); }
+
+    const execution = await engine().execute(runbookDef, {
+      ...input,
       tenantId,
-      runbookId,
-      executionCount: executions.length,
-      executions,
+      initiatedBy:   req.user?.sub || input.initiatedBy || 'api',
+      initiatorType: req.user ? 'user' : 'api',
     });
-  } catch (error) {
-    next(error);
-  }
+
+    const httpStatus = execution.status === 'WAITING_FOR_APPROVAL' ? 202 : 200;
+    res.status(httpStatus).json({ success: true, execution });
+  } catch (err) { next(err); }
 });
 
 module.exports = router;

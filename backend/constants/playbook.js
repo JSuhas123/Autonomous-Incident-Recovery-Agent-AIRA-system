@@ -1,0 +1,279 @@
+'use strict';
+
+/**
+ * Playbook Platform — Canonical Constants
+ *
+ * Architecture invariant:
+ *   Playbook → Runbook Registry → RunbookExecutionEngine → Action Handler Registry
+ *   Playbooks NEVER execute infrastructure directly.
+ */
+
+// ── Identity ──────────────────────────────────────────────────────────────
+
+const PLAYBOOK_ID_REGEX = /^PB-[A-Z0-9]+(-[A-Z0-9]+)+$/;
+
+const PLAYBOOK_API_VERSION = 'aira.io/v1';
+const PLAYBOOK_KIND        = 'Playbook';
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────
+
+const PLAYBOOK_LIFECYCLE = Object.freeze({
+  DRAFT:      'DRAFT',
+  VALIDATED:  'VALIDATED',
+  APPROVED:   'APPROVED',
+  ACTIVE:     'ACTIVE',
+  DEPRECATED: 'DEPRECATED',
+  DISABLED:   'DISABLED',
+});
+
+const PLAYBOOK_LIFECYCLE_TRANSITIONS = Object.freeze({
+  [PLAYBOOK_LIFECYCLE.DRAFT]:      [PLAYBOOK_LIFECYCLE.VALIDATED,  PLAYBOOK_LIFECYCLE.DISABLED],
+  [PLAYBOOK_LIFECYCLE.VALIDATED]:  [PLAYBOOK_LIFECYCLE.APPROVED,   PLAYBOOK_LIFECYCLE.DRAFT, PLAYBOOK_LIFECYCLE.DISABLED],
+  [PLAYBOOK_LIFECYCLE.APPROVED]:   [PLAYBOOK_LIFECYCLE.ACTIVE,     PLAYBOOK_LIFECYCLE.VALIDATED, PLAYBOOK_LIFECYCLE.DISABLED],
+  [PLAYBOOK_LIFECYCLE.ACTIVE]:     [PLAYBOOK_LIFECYCLE.DEPRECATED, PLAYBOOK_LIFECYCLE.DISABLED],
+  [PLAYBOOK_LIFECYCLE.DEPRECATED]: [PLAYBOOK_LIFECYCLE.DISABLED],
+  [PLAYBOOK_LIFECYCLE.DISABLED]:   [],
+});
+
+const LIFECYCLE_VALUES = Object.values(PLAYBOOK_LIFECYCLE);
+
+// ── Stage types ───────────────────────────────────────────────────────────
+
+const PLAYBOOK_STAGE_TYPE = Object.freeze({
+  INVESTIGATION:     'INVESTIGATION',
+  DIAGNOSIS_SUPPORT: 'DIAGNOSIS_SUPPORT',
+  MITIGATION:        'MITIGATION',
+  RECOVERY:          'RECOVERY',
+  VERIFICATION:      'VERIFICATION',
+  ROLLBACK:          'ROLLBACK',
+  ESCALATION:        'ESCALATION',
+  NOTIFICATION:      'NOTIFICATION',
+});
+
+const STAGE_TYPE_VALUES = Object.values(PLAYBOOK_STAGE_TYPE);
+
+// Stage ordering expectations (higher = later in typical flow)
+const STAGE_TYPE_NATURAL_ORDER = Object.freeze({
+  [PLAYBOOK_STAGE_TYPE.INVESTIGATION]:     1,
+  [PLAYBOOK_STAGE_TYPE.DIAGNOSIS_SUPPORT]: 2,
+  [PLAYBOOK_STAGE_TYPE.MITIGATION]:        3,
+  [PLAYBOOK_STAGE_TYPE.RECOVERY]:          4,
+  [PLAYBOOK_STAGE_TYPE.VERIFICATION]:      5,
+  [PLAYBOOK_STAGE_TYPE.ROLLBACK]:          6,
+  [PLAYBOOK_STAGE_TYPE.ESCALATION]:        7,
+  [PLAYBOOK_STAGE_TYPE.NOTIFICATION]:      8,
+});
+
+// ── Failure policies ──────────────────────────────────────────────────────
+
+const PLAYBOOK_FAILURE_POLICY = Object.freeze({
+  STOP:      'STOP',       // stop execution, report failure
+  CONTINUE:  'CONTINUE',   // continue next stage despite failure
+  ROLLBACK:  'ROLLBACK',   // trigger rollback stages
+  ESCALATE:  'ESCALATE',   // escalate to human
+  SKIP:      'SKIP',       // skip this stage and continue
+});
+
+const FAILURE_POLICY_VALUES = Object.values(PLAYBOOK_FAILURE_POLICY);
+
+// ── Rollback strategies ───────────────────────────────────────────────────
+
+const PLAYBOOK_ROLLBACK_STRATEGY = Object.freeze({
+  STAGE_ROLLBACK:    'STAGE_ROLLBACK',    // run ROLLBACK stages
+  RUNBOOK_ROLLBACK:  'RUNBOOK_ROLLBACK',  // delegate to runbook rollback
+  NONE:              'NONE',
+});
+
+const ROLLBACK_STRATEGY_VALUES = Object.values(PLAYBOOK_ROLLBACK_STRATEGY);
+
+// ── Risk ──────────────────────────────────────────────────────────────────
+
+const PLAYBOOK_RISK_LEVEL = Object.freeze({
+  LOW:      'LOW',
+  MEDIUM:   'MEDIUM',
+  HIGH:     'HIGH',
+  CRITICAL: 'CRITICAL',
+});
+
+const RISK_LEVEL_VALUES      = Object.values(PLAYBOOK_RISK_LEVEL);
+const PLAYBOOK_BLAST_RADIUS  = Object.freeze({
+  NONE:        'none',
+  POD:         'pod',
+  DEPLOYMENT:  'deployment',
+  NAMESPACE:   'namespace',
+  CLUSTER:     'cluster',
+  SERVICE:     'service',
+  DATABASE:    'database',
+  GLOBAL:      'global',
+});
+
+// Risk levels that require policy.required = true
+const POLICY_REQUIRED_RISK_LEVELS = [PLAYBOOK_RISK_LEVEL.HIGH, PLAYBOOK_RISK_LEVEL.CRITICAL];
+
+// ── Approval ──────────────────────────────────────────────────────────────
+
+const PLAYBOOK_APPROVAL_MODE = Object.freeze({
+  AUTOMATIC:   'AUTOMATIC',    // auto-approved if policy passes
+  MANUAL:      'MANUAL',       // always requires human approval
+  CONDITIONAL: 'CONDITIONAL',  // depends on conditions
+  DISABLED:    'DISABLED',     // no approval needed
+});
+
+const APPROVAL_MODE_VALUES = Object.values(PLAYBOOK_APPROVAL_MODE);
+
+// ── Ownership ─────────────────────────────────────────────────────────────
+
+const PLAYBOOK_OWNER_TYPE = Object.freeze({
+  SYSTEM: 'system',
+  TENANT: 'tenant',
+});
+
+const OWNER_TYPE_VALUES = Object.values(PLAYBOOK_OWNER_TYPE);
+
+// ── Execution status ──────────────────────────────────────────────────────
+
+const PLAYBOOK_EXECUTION_STATUS = Object.freeze({
+  CREATED:              'CREATED',
+  EVALUATING:           'EVALUATING',
+  WAITING_FOR_APPROVAL: 'WAITING_FOR_APPROVAL',
+  RUNNING:              'RUNNING',
+  VERIFYING:            'VERIFYING',
+  SUCCEEDED:            'SUCCEEDED',
+  FAILED:               'FAILED',
+  ROLLBACK_PENDING:     'ROLLBACK_PENDING',
+  ROLLING_BACK:         'ROLLING_BACK',
+  ROLLED_BACK:          'ROLLED_BACK',
+  ROLLBACK_FAILED:      'ROLLBACK_FAILED',
+  ESCALATED:            'ESCALATED',
+  CANCELLED:            'CANCELLED',
+});
+
+const EXECUTION_STATUS_VALUES = Object.values(PLAYBOOK_EXECUTION_STATUS);
+
+// ── Stage execution status ────────────────────────────────────────────────
+
+const STAGE_EXECUTION_STATUS = Object.freeze({
+  PENDING:    'PENDING',
+  RUNNING:    'RUNNING',
+  SUCCEEDED:  'SUCCEEDED',
+  FAILED:     'FAILED',
+  SKIPPED:    'SKIPPED',
+  ROLLED_BACK:'ROLLED_BACK',
+  ESCALATED:  'ESCALATED',
+});
+
+const STAGE_EXECUTION_STATUS_VALUES = Object.values(STAGE_EXECUTION_STATUS);
+
+// ── Validation purposes ───────────────────────────────────────────────────
+
+const PLAYBOOK_VALIDATION_PURPOSE = Object.freeze({
+  AUTHORING:  'AUTHORING',
+  IMPORT:     'IMPORT',
+  APPROVAL:   'APPROVAL',
+  ACTIVATION: 'ACTIVATION',
+});
+
+const VALIDATION_PURPOSE_SEVERITY = Object.freeze({
+  AUTHORING:  0,
+  IMPORT:     1,
+  APPROVAL:   2,
+  ACTIVATION: 3,
+});
+
+// ── Known safe incident evidence paths ────────────────────────────────────
+// Used by parameter mapper to validate ${...} expressions
+
+const KNOWN_MAPPING_ROOTS = Object.freeze([
+  'incident',
+  'signal',
+  'context',
+  'evidence',
+  'service',
+  'constants',
+  'stage_output',
+]);
+
+// ── Diagnostics codes ─────────────────────────────────────────────────────
+
+const PLAYBOOK_DIAGNOSTIC_CODES = Object.freeze({
+  // Structural
+  PLAYBOOK_MISSING_API_VERSION:          'PLAYBOOK_MISSING_API_VERSION',
+  PLAYBOOK_INVALID_API_VERSION:          'PLAYBOOK_INVALID_API_VERSION',
+  PLAYBOOK_MISSING_KIND:                 'PLAYBOOK_MISSING_KIND',
+  PLAYBOOK_INVALID_KIND:                 'PLAYBOOK_INVALID_KIND',
+  PLAYBOOK_MISSING_ID:                   'PLAYBOOK_MISSING_ID',
+  PLAYBOOK_INVALID_ID:                   'PLAYBOOK_INVALID_ID',
+  PLAYBOOK_MISSING_SEMVER:               'PLAYBOOK_MISSING_SEMVER',
+  PLAYBOOK_INVALID_SEMVER:               'PLAYBOOK_INVALID_SEMVER',
+  PLAYBOOK_MISSING_NAME:                 'PLAYBOOK_MISSING_NAME',
+  PLAYBOOK_MISSING_LIFECYCLE:            'PLAYBOOK_MISSING_LIFECYCLE',
+  PLAYBOOK_INVALID_LIFECYCLE:            'PLAYBOOK_INVALID_LIFECYCLE',
+  PLAYBOOK_MISSING_OWNER:                'PLAYBOOK_MISSING_OWNER',
+  PLAYBOOK_INVALID_OWNER_TYPE:           'PLAYBOOK_INVALID_OWNER_TYPE',
+  PLAYBOOK_MISSING_STAGES:               'PLAYBOOK_MISSING_STAGES',
+  PLAYBOOK_EMPTY_STAGES:                 'PLAYBOOK_EMPTY_STAGES',
+  PLAYBOOK_INVALID_STAGE:                'PLAYBOOK_INVALID_STAGE',
+  PLAYBOOK_INVALID_STAGE_TYPE:           'PLAYBOOK_INVALID_STAGE_TYPE',
+  PLAYBOOK_DUPLICATE_STAGE_ORDER:        'PLAYBOOK_DUPLICATE_STAGE_ORDER',
+  PLAYBOOK_DUPLICATE_STAGE_ID:           'PLAYBOOK_DUPLICATE_STAGE_ID',
+  PLAYBOOK_INVALID_STAGE_ORDER:          'PLAYBOOK_INVALID_STAGE_ORDER',
+  PLAYBOOK_INVALID_RUNBOOK_REF:          'PLAYBOOK_INVALID_RUNBOOK_REF',
+  PLAYBOOK_INVALID_RISK_LEVEL:           'PLAYBOOK_INVALID_RISK_LEVEL',
+  PLAYBOOK_INVALID_APPROVAL_MODE:        'PLAYBOOK_INVALID_APPROVAL_MODE',
+  PLAYBOOK_INVALID_FAILURE_POLICY:       'PLAYBOOK_INVALID_FAILURE_POLICY',
+  PLAYBOOK_INVALID_ROLLBACK_STRATEGY:    'PLAYBOOK_INVALID_ROLLBACK_STRATEGY',
+  // Semantic
+  PLAYBOOK_RUNBOOK_NOT_FOUND:            'PLAYBOOK_RUNBOOK_NOT_FOUND',
+  PLAYBOOK_RUNBOOK_NOT_ACTIVE:           'PLAYBOOK_RUNBOOK_NOT_ACTIVE',
+  PLAYBOOK_RUNBOOK_NOT_EXECUTABLE:       'PLAYBOOK_RUNBOOK_NOT_EXECUTABLE',
+  PLAYBOOK_UNRESOLVABLE_VERSION:         'PLAYBOOK_UNRESOLVABLE_VERSION',
+  PLAYBOOK_UNMAPPED_REQUIRED_PARAM:      'PLAYBOOK_UNMAPPED_REQUIRED_PARAM',
+  PLAYBOOK_UNRESOLVABLE_STAGE_CONDITION: 'PLAYBOOK_UNRESOLVABLE_STAGE_CONDITION',
+  PLAYBOOK_STAGE_ORDER_GAP:              'PLAYBOOK_STAGE_ORDER_GAP',
+  PLAYBOOK_INVALID_EVIDENCE:             'PLAYBOOK_INVALID_EVIDENCE',
+  PLAYBOOK_MISSING_RECOVERY_STAGE:       'PLAYBOOK_MISSING_RECOVERY_STAGE',
+  PLAYBOOK_VERIFICATION_MISSING:         'PLAYBOOK_VERIFICATION_MISSING',
+  PLAYBOOK_ROLLBACK_STAGE_NOT_FOUND:     'PLAYBOOK_ROLLBACK_STAGE_NOT_FOUND',
+  PLAYBOOK_ESCALATION_INVALID:           'PLAYBOOK_ESCALATION_INVALID',
+  // Security
+  PLAYBOOK_UNSAFE_MAPPING:               'PLAYBOOK_UNSAFE_MAPPING',
+  PLAYBOOK_RAW_SECRET:                   'PLAYBOOK_RAW_SECRET',
+  PLAYBOOK_CROSS_TENANT_REF:             'PLAYBOOK_CROSS_TENANT_REF',
+  PLAYBOOK_BLAST_RADIUS_UNDERSTATED:     'PLAYBOOK_BLAST_RADIUS_UNDERSTATED',
+  PLAYBOOK_MISSING_POLICY:               'PLAYBOOK_MISSING_POLICY',
+  PLAYBOOK_MISSING_APPROVAL:             'PLAYBOOK_MISSING_APPROVAL',
+  PLAYBOOK_DIRECT_EXECUTION:             'PLAYBOOK_DIRECT_EXECUTION',
+  PLAYBOOK_UNKNOWN_MAPPING_ROOT:         'PLAYBOOK_UNKNOWN_MAPPING_ROOT',
+});
+
+module.exports = {
+  PLAYBOOK_ID_REGEX,
+  PLAYBOOK_API_VERSION,
+  PLAYBOOK_KIND,
+  PLAYBOOK_LIFECYCLE,
+  PLAYBOOK_LIFECYCLE_TRANSITIONS,
+  LIFECYCLE_VALUES,
+  PLAYBOOK_STAGE_TYPE,
+  STAGE_TYPE_VALUES,
+  STAGE_TYPE_NATURAL_ORDER,
+  PLAYBOOK_FAILURE_POLICY,
+  FAILURE_POLICY_VALUES,
+  PLAYBOOK_ROLLBACK_STRATEGY,
+  ROLLBACK_STRATEGY_VALUES,
+  PLAYBOOK_RISK_LEVEL,
+  RISK_LEVEL_VALUES,
+  PLAYBOOK_BLAST_RADIUS,
+  POLICY_REQUIRED_RISK_LEVELS,
+  PLAYBOOK_APPROVAL_MODE,
+  APPROVAL_MODE_VALUES,
+  PLAYBOOK_OWNER_TYPE,
+  OWNER_TYPE_VALUES,
+  PLAYBOOK_EXECUTION_STATUS,
+  EXECUTION_STATUS_VALUES,
+  STAGE_EXECUTION_STATUS,
+  STAGE_EXECUTION_STATUS_VALUES,
+  PLAYBOOK_VALIDATION_PURPOSE,
+  VALIDATION_PURPOSE_SEVERITY,
+  KNOWN_MAPPING_ROOTS,
+  PLAYBOOK_DIAGNOSTIC_CODES,
+};

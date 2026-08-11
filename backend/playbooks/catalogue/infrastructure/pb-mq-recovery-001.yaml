@@ -1,0 +1,103 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MQ-RECOVERY-001
+semver: 1.0.0
+name: Message Queue Recovery
+description: >
+  Recovery playbook for message queue incidents: queue buildup, DLQ overflow,
+  broker unavailability, and consumer lag issues.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: platform-reliability
+
+incident:
+  types:
+    - MessageQueueBuildup
+    - DLQOverflow
+    - QueueBrokerUnavailable
+    - mq.consumer.lag
+  severities:
+    - P2
+    - P3
+    - high
+    - medium
+
+requiredEvidence:
+  - resource.queue
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: HIGH
+  blastRadius: service
+
+policy:
+  required: true
+
+approval:
+  mode: CONDITIONAL
+  conditions:
+    requiresApproval: false
+
+stages:
+  - id: diagnose-queue
+    order: 1
+    name: Diagnose Queue State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MQ-RECOVERY
+        required: false
+        parameterMappings:
+          queue: "${incident.resource.queue}"
+          namespace: "${incident.resource.namespace}"
+
+  - id: recover-queue
+    order: 2
+    name: Recover Message Queue
+    type: RECOVERY
+    failurePolicy: ROLLBACK
+    runbooks:
+      - runbookId: RB-MQ-RECOVERY
+        required: false
+        parameterMappings:
+          queue: "${incident.resource.queue}"
+          namespace: "${incident.resource.namespace}"
+          broker: "${incident.resource.broker}"
+
+  - id: verify-queue-health
+    order: 3
+    name: Verify Queue Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MQ-RECOVERY
+        required: false
+        parameterMappings:
+          queue: "${incident.resource.queue}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 2
+  escalateTo: platform-oncall
+  notifyChannels:
+    - slack-platform
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - rabbitmq
+  - kafka
+  - queue
+  - dlq

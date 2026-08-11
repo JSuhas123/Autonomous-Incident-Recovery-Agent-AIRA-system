@@ -1,0 +1,137 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-MQ-RECOVERY
+name: Message Queue Recovery
+description: >
+  Recover a message queue from outage conditions including stuck messages,
+  connectivity failures, and memory pressure. Supports RabbitMQ.
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Platform Team
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - messaging
+    - rabbitmq
+
+risk:
+  level: HIGH
+  blastRadius: service
+  reversible: false
+
+parameters:
+  - name: queue_name
+    type: string
+    required: true
+    description: Name of the RabbitMQ queue to purge or inspect.
+  - name: dlq_name
+    type: string
+    required: false
+    description: Dead-letter queue name for requeue operations.
+  - name: service_host
+    type: string
+    required: false
+    description: Service hostname for DLQ requeue API calls.
+
+# Handler status per step (all MISSING_HANDLER):
+#   step-01  messaging/ping          — MISSING_HANDLER
+#   step-02  messaging/list_queues   — MISSING_HANDLER
+#   step-03  messaging/purge_queue   — MISSING_HANDLER
+#   step-04  messaging/status        — MISSING_HANDLER
+#   step-05  service/restart         — MISSING_HANDLER
+#   step-06  messaging/set_policy    — MISSING_HANDLER
+#   step-07  messaging/requeue_dlq   — MISSING_HANDLER
+#   step-08  messaging/monitor       — MISSING_HANDLER
+steps:
+  - id: step-01
+    name: Check queue connectivity
+    order: 1
+    type: messaging
+    action: ping
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: List stuck messages
+    order: 2
+    type: messaging
+    action: list_queues
+    params:
+      queue: ${queue_name}
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Purge problematic queues
+    order: 3
+    type: messaging
+    action: purge_queue
+    params:
+      queue: ${queue_name}
+    requiresConfirmation: true
+    failurePolicy: CONTINUE
+
+  - id: step-04
+    name: Check memory usage
+    order: 4
+    type: messaging
+    action: status
+    failurePolicy: CONTINUE
+
+  - id: step-05
+    name: Restart message queue service
+    order: 5
+    type: service
+    action: restart
+    requiresConfirmation: true
+    failurePolicy: STOP
+
+  - id: step-06
+    name: Re-enable queue acknowledgments
+    order: 6
+    type: messaging
+    action: set_policy
+    failurePolicy: CONTINUE
+
+  - id: step-07
+    name: Requeue failed messages from DLQ
+    order: 7
+    type: messaging
+    action: requeue_dlq
+    params:
+      dlqName: ${dlq_name}
+      serviceHost: ${service_host}
+    failurePolicy: CONTINUE
+
+  - id: step-08
+    name: Monitor queue depth
+    order: 8
+    type: messaging
+    action: monitor
+    params:
+      queue: ${queue_name}
+    timeoutSeconds: 300
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: service_healthy
+      description: Confirm message queue service is accepting connections
+      params:
+        queue: ${queue_name}
+      timeoutSeconds: 120
+
+auditConfig:
+  redactSensitiveValues: false

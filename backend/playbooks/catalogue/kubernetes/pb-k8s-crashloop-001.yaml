@@ -1,0 +1,151 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-CRASHLOOP-001
+semver: 1.0.0
+name: Kubernetes CrashLoopBackOff Recovery
+description: >
+  Deterministic recovery playbook for Kubernetes pods stuck in CrashLoopBackOff.
+  Orchestrates investigation, log collection, pod restart, and verification
+  by invoking the RB-K8S-POD-RESTART runbook.
+
+# Lifecycle is DRAFT because RB-K8S-POD-RESTART is DRAFT.
+# This playbook must not be ACTIVE until all required runbooks are ACTIVE.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: site-reliability
+
+incident:
+  types:
+    - CrashLoopBackOff
+    - PodCrashLoop
+    - kubernetes.pod.crashloop
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.pod
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.7
+  requiredSignals:
+    - pod_name
+    - namespace
+
+triggers:
+  all:
+    - field: incident.type
+      operator: contains
+      value: crashloop
+  any:
+    - field: incident.severity
+      operator: equals
+      value: P1
+    - field: incident.severity
+      operator: equals
+      value: P2
+    - field: incident.severity
+      operator: equals
+      value: critical
+
+risk:
+  level: HIGH
+  blastRadius: pod
+
+policy:
+  required: true
+
+approval:
+  mode: CONDITIONAL
+  conditions:
+    requiresApproval: false  # auto-approve for known crashloop pattern
+
+stages:
+  - id: investigate-pod
+    order: 1
+    name: Investigate Pod State
+    type: INVESTIGATION
+    description: Collect current pod status, events, and logs before taking action
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        versionConstraint: ">=1.0.0"
+        required: true
+        description: List pods and capture current state
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          podName: "${incident.resource.pod}"
+          # Only run the read-only steps; full runbook used in RECOVERY stage
+          # In a real implementation this would be a separate read-only runbook.
+          # Here we reference RB-K8S-POD-RESTART as the only available K8s runbook.
+
+  - id: recover-pod
+    order: 2
+    name: Restart Crashed Pod
+    type: RECOVERY
+    description: Execute the pod restart runbook to recover from CrashLoopBackOff
+    failurePolicy: ROLLBACK
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        versionConstraint: ">=1.0.0"
+        required: true
+        description: Restart the crashed pod using the canonical restart runbook
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          podName: "${incident.resource.pod}"
+          cluster: "${incident.resource.cluster}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: verify-recovery
+    order: 3
+    name: Verify Pod Recovery
+    type: VERIFICATION
+    description: Confirm the pod is running and healthy after restart
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        versionConstraint: ">=1.0.0"
+        required: true
+        description: Run health checks to verify pod recovery
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          podName: "${incident.resource.pod}"
+
+rollback:
+  strategy: STAGE_ROLLBACK
+  maxAttempts: 1
+  stages: []   # No explicit rollback stages — escalate if verification fails
+
+escalation:
+  maxRecoveryAttempts: 3
+  condition: "verification_failed OR restart_failed"
+  escalateTo: oncall-sre
+  notifyChannels:
+    - slack-alerts
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+  successMetrics:
+    - pod_running
+    - restart_count_stable
+
+tags:
+  - kubernetes
+  - pod
+  - crashloop
+  - sre
+  - recovery

@@ -1,0 +1,98 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-INGRESS-FAILURE-001
+semver: "1.0.0"
+name: Ingress Controller Failure Recovery
+description: >
+  Investigates and restores a failed or degraded ingress controller. Covers
+  nginx-ingress, traefik and cloud-native ALB controllers. Restarts controller
+  pods and validates backend service routing.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: network.ingress_failure
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Ingress
+
+requiredEvidence:
+  - namespace
+  - ingress_name
+  - ingress_class
+
+stages:
+  - stageId: investigate-ingress
+    name: Investigate Ingress Failure
+    type: INVESTIGATION
+    order: 1
+    description: Inspect ingress controller pods and recent error events
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          label_selector: "app.kubernetes.io/name=${incident.evidence.ingress_class}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: restart-ingress-controller
+    name: Restart Ingress Controller
+    type: RECOVERY
+    order: 2
+    description: Rolling restart of ingress controller deployment
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.evidence.ingress_class}"
+        required: true
+    failurePolicy: ESCALATE
+
+  - stageId: verify-ingress-routing
+    name: Verify Ingress Routing
+    type: VERIFICATION
+    order: 3
+    description: Confirm traffic is routed correctly through the ingress
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          ingress_name: "${incident.evidence.ingress_name}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: HIGH
+  blastRadius: cluster
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [network-team]
+
+approval:
+  mode: CONDITIONAL
+  condition:
+    field: severity
+    operator: equals
+    value: critical
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: network-oncall

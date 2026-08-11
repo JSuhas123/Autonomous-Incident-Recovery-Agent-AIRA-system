@@ -1,0 +1,110 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-API-RATELIMIT-001
+semver: 1.0.0
+name: API Rate Limit Incident Response
+description: >
+  Response playbook for API rate limiting incidents: traffic analysis,
+  block offending IPs, adjust rate limits, scale if needed.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: platform-reliability
+
+incident:
+  types:
+    - APIRateLimitExceeded
+    - RateLimitThresholdBreach
+    - api.rate.limit
+  severities:
+    - P2
+    - P3
+    - high
+    - medium
+
+requiredEvidence:
+  - resource.service
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: MEDIUM
+  blastRadius: service
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: analyze-traffic
+    order: 1
+    name: Analyze API Traffic Patterns
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-API-RATE-LIMIT-FIX
+        required: false
+        parameterMappings:
+          service: "${incident.resource.service}"
+          namespace: "${incident.resource.namespace}"
+
+  - id: mitigate-rate-abuse
+    order: 2
+    name: Mitigate Rate Limit Abuse
+    type: MITIGATION
+    description: Block abusive IPs and adjust rate limit thresholds
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-API-RATE-LIMIT-FIX
+        required: false
+        parameterMappings:
+          service: "${incident.resource.service}"
+          namespace: "${incident.resource.namespace}"
+
+  - id: scale-api-service
+    order: 3
+    name: Scale API Service if Needed
+    type: RECOVERY
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-API-RATE-LIMIT-FIX
+        required: false
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: verify-api-health
+    order: 4
+    name: Verify API Health Post-Recovery
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-API-RATE-LIMIT-FIX
+        required: false
+        parameterMappings:
+          service: "${incident.resource.service}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 2
+  escalateTo: platform-oncall
+  notifyChannels:
+    - slack-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - api
+  - rate-limit
+  - traffic
+  - kubernetes

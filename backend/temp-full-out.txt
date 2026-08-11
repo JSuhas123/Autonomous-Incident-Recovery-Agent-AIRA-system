@@ -1,0 +1,130 @@
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Subscribing to incident.detected via durable-analysis-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Subscribing to incident.analyzed via durable-decision-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Subscribing to action.approved via durable-action-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Subscribing to some.topic via queue.some.topic.tmp
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] Subscribing to incident.detected via durable-analysis-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Subscribing to incident.analyzed via durable-decision-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Subscribing to action.approved via durable-action-agent
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:220:15)
+
+  console.log
+    [queue] Connecting to amqp://test...
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:38:15)
+
+  console.log
+    [queue] ✓ Connected to RabbitMQ
+
+      at QueueService.log [as connect] (services/infrastructure/queueService.js:97:15)
+
+  console.log
+    [queue] → incident.detected | eventId=7860d57b-3902-497c-883d-fc29bc2b0a78 | correlationId=9a1c6df4-c119-47be-915d-07523d2a27c6
+
+      at QueueService.log [as publishEvent] (services/infrastructure/queueService.js:158:15)
+
+  console.log
+    [system-health] Deployment mode: SINGLE_INSTANCE
+
+      at new log (services/infrastructure/systemHealthService.js:26:13)
+
+  console.log
+    [lock] 🔒 Lock safety enforced by systemHealthService (dynamic based on deployment mode)
+
+      at new log (services/infrastructure/distributedLockService.js:32:13)
+
+  console.log
+    [system-health] Deployment mode: SINGLE_INSTANCE
+
+      at new log (services/infrastructure/systemHealthService.js:26:13)
+
+  console.log
+    [lock] 🔒 Lock safety enforced by systemHealthService (dynamic based on deployment mode)
+
+      at new log (services/infrastructure/distributedLockService.js:32:13)
+

@@ -1,0 +1,96 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CACHE-INVALIDATION-001
+semver: 1.0.0
+name: Cache Invalidation and Recovery
+description: >
+  Recovery playbook for cache inconsistency and stale data incidents.
+  Analyzes cache state, invalidates affected keys, and restores cache health.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: platform-reliability
+
+incident:
+  types:
+    - CacheInconsistency
+    - StaleCache
+    - cache.invalidation.required
+  severities:
+    - P2
+    - P3
+    - high
+    - medium
+
+requiredEvidence:
+  - resource.cache
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: MEDIUM
+  blastRadius: service
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: analyze-cache-state
+    order: 1
+    name: Analyze Cache State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CACHE-INVALIDATE
+        required: false
+        parameterMappings:
+          cache: "${incident.resource.cache}"
+          namespace: "${incident.resource.namespace}"
+
+  - id: invalidate-stale-cache
+    order: 2
+    name: Invalidate Stale Cache Keys
+    type: RECOVERY
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-CACHE-INVALIDATE
+        required: false
+        parameterMappings:
+          cache: "${incident.resource.cache}"
+          pattern: "${incident.resource.pattern}"
+
+  - id: verify-cache-health
+    order: 3
+    name: Verify Cache Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CACHE-INVALIDATE
+        required: false
+        parameterMappings:
+          cache: "${incident.resource.cache}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 2
+  escalateTo: platform-oncall
+  notifyChannels:
+    - slack-platform
+
+outcome:
+  captureLearning: true
+
+tags:
+  - cache
+  - redis
+  - invalidation
+  - consistency

@@ -6,6 +6,8 @@ import { useAuthStore } from '@/store/authStore'
 import {
     AlertTriangle,
     BarChart2,
+    BookMarked,
+    BookOpen,
     FileText,
     LayoutDashboard,
     LogOut,
@@ -28,6 +30,8 @@ const navItems = [
   { to: '/incidents', icon: AlertTriangle, label: 'Incidents' },
   { to: '/insights', icon: Sparkles, label: 'Insights' },
   { to: '/recovery', icon: RefreshCw, label: 'Recovery' },
+  { to: '/runbooks', icon: BookOpen, label: 'Runbooks' },
+  { to: '/playbooks', icon: BookMarked, label: 'Playbooks' },
   { to: '/policies', icon: Shield, label: 'Policies' },
   { to: '/reports', icon: FileText, label: 'Reports' },
   { to: '/team', icon: Users, label: 'Team' },

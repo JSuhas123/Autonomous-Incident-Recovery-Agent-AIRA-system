@@ -1,0 +1,88 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-IMAGEPULL-001
+semver: 1.0.0
+name: Kubernetes ImagePullBackOff Recovery
+description: >
+  Diagnostic playbook for pods stuck in ImagePullBackOff.
+  Investigates image availability, registry credentials, and deployment config.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: site-reliability
+
+incident:
+  types:
+    - ImagePullBackOff
+    - ErrImagePull
+    - kubernetes.pod.imagepull
+  severities:
+    - P2
+    - P3
+    - high
+    - medium
+  providers:
+    - kubernetes
+
+requiredEvidence:
+  - resource.pod
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: MEDIUM
+  blastRadius: deployment
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: diagnose-image-pull
+    order: 1
+    name: Diagnose ImagePull Failure
+    type: DIAGNOSIS_SUPPORT
+    description: Collect pod events and image pull error details
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: true
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          podName: "${incident.resource.pod}"
+
+  - id: verify-image-availability
+    order: 2
+    name: Verify Image Availability
+    type: INVESTIGATION
+    description: Check if the container image exists and is accessible
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: true
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          podName: "${incident.resource.pod}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: platform-engineering
+  notifyChannels:
+    - slack-platform
+
+outcome:
+  captureLearning: true
+
+tags:
+  - kubernetes
+  - imagepull
+  - registry

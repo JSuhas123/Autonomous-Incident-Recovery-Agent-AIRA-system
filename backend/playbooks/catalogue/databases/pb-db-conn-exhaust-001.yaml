@@ -1,0 +1,99 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-CONN-EXHAUST-001
+semver: 1.0.0
+name: Database Connection Pool Exhaustion Recovery
+description: >
+  Recovery playbook for database connection pool exhaustion incidents.
+  Analyzes connection usage, clears stale connections, and restores service.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: database-reliability
+
+incident:
+  types:
+    - DatabaseConnectionExhaustion
+    - db.connection.pool.exhausted
+    - TooManyConnections
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+
+requiredEvidence:
+  - resource.database
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.7
+
+risk:
+  level: CRITICAL
+  blastRadius: database
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: diagnose-connections
+    order: 1
+    name: Diagnose Connection Pool State
+    type: INVESTIGATION
+    description: Query active connections, identify long-running queries and stale connections
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        required: false
+        parameterMappings:
+          database: "${incident.resource.database}"
+          namespace: "${incident.resource.namespace}"
+
+  - id: clear-stale-connections
+    order: 2
+    name: Clear Stale Database Connections
+    type: MITIGATION
+    description: Terminate idle/stale connections to free up pool capacity
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        required: false
+        parameterMappings:
+          database: "${incident.resource.database}"
+
+  - id: verify-connection-recovery
+    order: 3
+    name: Verify Connection Pool Recovery
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        required: false
+        parameterMappings:
+          database: "${incident.resource.database}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: dba-oncall
+  notifyChannels:
+    - slack-db-alerts
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - database
+  - connections
+  - pool
+  - performance

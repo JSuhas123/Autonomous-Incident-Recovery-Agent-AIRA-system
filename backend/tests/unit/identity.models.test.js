@@ -19,6 +19,12 @@ let mongoServer;
 beforeAll(async () => {
   mongoServer = await MongoMemoryServer.create();
   await mongoose.connect(mongoServer.getUri());
+  // Ensure all unique indexes are fully created before tests run.
+  // Mongoose creates indexes asynchronously; without this, duplicate-key
+  // tests may race against index creation in parallel Jest workers.
+  await Promise.all(
+    mongoose.modelNames().map((name) => mongoose.model(name).ensureIndexes())
+  );
 });
 
 afterAll(async () => {

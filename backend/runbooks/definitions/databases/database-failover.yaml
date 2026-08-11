@@ -1,0 +1,151 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-DB-FAILOVER
+name: Database Failover
+description: >
+  Failover to a replica database when the primary is unavailable.
+  Stops replication on the replica, promotes it to primary, and updates
+  application connection routing.
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Database Team
+
+scope:
+  environments:
+    - production
+  services:
+    - database
+    - mysql
+
+risk:
+  level: CRITICAL
+  blastRadius: cluster
+  reversible: false
+
+parameters:
+  - name: replica_host
+    type: string
+    required: true
+    description: Hostname or IP address of the replica database server.
+  - name: user
+    type: string
+    required: true
+    description: Database administrative username.
+  - name: password
+    type: secret-reference
+    required: true
+    description: >
+      Reference to the database administrative password.
+      Must use a secret-reference scheme (e.g. vault://db/admin-password).
+  - name: zone_id
+    type: string
+    required: true
+    description: AWS Route 53 hosted zone ID for DNS failover record updates.
+
+# Handler status per step (all MISSING_HANDLER — implementation required):
+#   step-01  database/query         — MISSING_HANDLER
+#   step-02  database/query         — MISSING_HANDLER
+#   step-03  database/stop_replication — MISSING_HANDLER
+#   step-04  database/promote_replica  — MISSING_HANDLER
+#   step-05  cloud/update_dns       — MISSING_HANDLER
+#   step-06  api/update_config      — MISSING_HANDLER
+#   step-07  database/query         — MISSING_HANDLER
+steps:
+  - id: step-01
+    name: Verify primary failure
+    order: 1
+    type: database
+    action: query
+    params:
+      host: ${replica_host}
+      query: SELECT 1
+      timeoutSeconds: 5
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Check replica sync status
+    order: 2
+    type: database
+    action: query
+    params:
+      host: ${replica_host}
+      query: SHOW SLAVE STATUS
+    failurePolicy: STOP
+
+  - id: step-03
+    name: Stop replication on replica
+    order: 3
+    type: database
+    action: stop_replication
+    params:
+      host: ${replica_host}
+      user: ${user}
+      passwordRef: ${password}
+    requiresConfirmation: true
+    failurePolicy: STOP
+
+  - id: step-04
+    name: Promote replica to primary
+    order: 4
+    type: database
+    action: promote_replica
+    params:
+      host: ${replica_host}
+      user: ${user}
+      passwordRef: ${password}
+    requiresConfirmation: true
+    failurePolicy: STOP
+
+  - id: step-05
+    name: Update DNS records
+    order: 5
+    type: cloud
+    action: update_dns
+    params:
+      zoneId: ${zone_id}
+      newTarget: ${replica_host}
+    requiresConfirmation: true
+    failurePolicy: STOP
+
+  - id: step-06
+    name: Update application connection strings
+    order: 6
+    type: api
+    action: update_config
+    params:
+      configKey: database.primaryHost
+      configValue: ${replica_host}
+    failurePolicy: STOP
+
+  - id: step-07
+    name: Verify application connectivity
+    order: 7
+    type: database
+    action: query
+    params:
+      host: ${replica_host}
+      query: SELECT 1
+    timeoutSeconds: 300
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: service_healthy
+      description: Confirm application can connect to the promoted primary
+      params:
+        host: ${replica_host}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: true

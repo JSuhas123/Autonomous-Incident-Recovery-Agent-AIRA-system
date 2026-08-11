@@ -1,0 +1,102 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-NODE-NOTREADY-001
+semver: 1.0.0
+name: Kubernetes Node NotReady Recovery
+description: >
+  Recovery playbook for Kubernetes nodes stuck in NotReady state.
+  Investigates node conditions, drains workloads, and triggers node remediation.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: site-reliability
+
+incident:
+  types:
+    - NodeNotReady
+    - kubernetes.node.notready
+    - NodeConditionFailed
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+
+requiredEvidence:
+  - resource.node
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.75
+
+risk:
+  level: CRITICAL
+  blastRadius: cluster
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-node
+    order: 1
+    name: Investigate Node Conditions
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: false
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          node: "${incident.resource.node}"
+
+  - id: drain-node
+    order: 2
+    name: Drain Node Workloads
+    type: MITIGATION
+    description: Safely drain workloads from the NotReady node to restore availability
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: false
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          node: "${incident.resource.node}"
+
+  - id: verify-workload-migration
+    order: 3
+    name: Verify Workload Migration
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: false
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-sre
+  notifyChannels:
+    - slack-alerts
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - kubernetes
+  - node
+  - notready
+  - drain
+  - cluster

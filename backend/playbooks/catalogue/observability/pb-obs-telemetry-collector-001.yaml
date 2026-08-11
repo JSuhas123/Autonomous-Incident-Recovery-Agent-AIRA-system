@@ -1,0 +1,93 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-OBS-TELEMETRY-COLLECTOR-001
+semver: "1.0.0"
+name: Telemetry Collector Failure Recovery
+description: >
+  Recovers a failed telemetry collector (OpenTelemetry Collector, Prometheus
+  agent, Fluentd/Fluent Bit). Restarts the collector, validates pipeline
+  health and confirms metrics/traces/logs are flowing.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: observability.collector_failure
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: DaemonSet
+
+requiredEvidence:
+  - namespace
+  - collector_name
+  - collector_type
+
+stages:
+  - stageId: investigate-collector
+    name: Investigate Collector Failure
+    type: INVESTIGATION
+    order: 1
+    description: Check collector pod status and pipeline errors
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          label_selector: "app=${incident.evidence.collector_name}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: restart-collector
+    name: Restart Telemetry Collector
+    type: RECOVERY
+    order: 2
+    description: Rolling restart of the collector daemonset/deployment
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.evidence.collector_name}"
+        required: true
+    failurePolicy: ESCALATE
+
+  - stageId: verify-telemetry-flow
+    name: Verify Telemetry Flow
+    type: VERIFICATION
+    order: 3
+    description: Confirm telemetry data is ingested downstream
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          collector_name: "${incident.evidence.collector_name}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: HIGH
+  blastRadius: cluster
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: observability-oncall

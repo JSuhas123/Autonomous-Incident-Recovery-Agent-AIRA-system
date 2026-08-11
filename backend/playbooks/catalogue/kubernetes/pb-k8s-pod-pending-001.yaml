@@ -1,0 +1,95 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-POD-PENDING-001
+semver: "1.0.0"
+name: Kubernetes Pod Stuck in Pending
+description: >
+  Diagnoses and resolves pods stuck in Pending state. Covers insufficient
+  resources, missing secrets/configmaps, unschedulable nodes, and taints.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: kubernetes.pod.pending
+  severity: [medium, high]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Pod
+      - field: resource.phase
+        operator: equals
+        value: Pending
+
+requiredEvidence:
+  - namespace
+  - pod_name
+  - node_name
+
+stages:
+  - stageId: investigate-pending-pod
+    name: Investigate Pending Pod
+    type: INVESTIGATION
+    order: 1
+    description: Gather scheduling events and resource quotas
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: diagnose-scheduling
+    name: Diagnose Scheduling Failure
+    type: DIAGNOSIS_SUPPORT
+    order: 2
+    description: Analyse events to determine scheduling block reason
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: verify-scheduling
+    name: Verify Pod Scheduled
+    type: VERIFICATION
+    order: 3
+    description: Confirm pod transitions out of Pending
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: MEDIUM
+  blastRadius: pod
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: oncall-platform

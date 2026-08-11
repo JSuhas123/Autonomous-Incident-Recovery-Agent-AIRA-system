@@ -1,0 +1,161 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-API-RATE-LIMIT-FIX
+name: API Rate Limit Mitigation
+description: >
+  Mitigate API rate limiting events to restore service availability.
+  Identifies rate-limited clients, optionally blocks malicious traffic,
+  scales API instances, and monitors error rate recovery.
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Platform Team
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - api
+    - backend
+
+risk:
+  level: HIGH
+  blastRadius: service
+  reversible: true
+
+parameters:
+  - name: api_host
+    type: string
+    required: true
+    description: Hostname of the API service.
+  - name: new_threshold
+    type: number
+    required: false
+    description: Temporary rate limit threshold (requests per minute).
+  - name: cache_size
+    type: string
+    required: false
+    description: Redis maxmemory value (e.g. 2gb).
+  - name: malicious_ip
+    type: string
+    required: false
+    description: IP address to block when traffic is identified as malicious.
+  - name: deployment_name
+    type: string
+    required: false
+    description: Kubernetes deployment name for horizontal scaling.
+  - name: new_replica_count
+    type: number
+    required: false
+    description: Target number of API deployment replicas for scale-out.
+  - name: namespace
+    type: string
+    required: false
+    description: Kubernetes namespace for the API deployment.
+
+# Handler status per step:
+#   step-01  analytics/query         — MISSING_HANDLER
+#   step-02  analytics/query         — MISSING_HANDLER
+#   step-03  http/admin_post         — MISSING_HANDLER
+#   step-04  cache/configure         — MISSING_HANDLER
+#   step-05  network/block_ip        — MISSING_HANDLER
+#   step-06  kubernetes/scale_deployment — IMPLEMENTED (k8sClient.scaleDeployment)
+#   step-07  metrics/query           — MISSING_HANDLER
+steps:
+  - id: step-01
+    name: Identify rate-limited clients
+    order: 1
+    type: analytics
+    action: query
+    params:
+      host: ${api_host}
+      metric: rate_limit_violations
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Check for malicious traffic
+    order: 2
+    type: analytics
+    action: query
+    params:
+      host: ${api_host}
+      metric: request_anomaly_score
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Increase rate limit threshold temporarily
+    order: 3
+    type: http
+    action: admin_post
+    params:
+      host: ${api_host}
+      path: /admin/rate-limit/threshold
+      body:
+        threshold: ${new_threshold}
+    requiresConfirmation: true
+    failurePolicy: CONTINUE
+
+  - id: step-04
+    name: Enable request caching to reduce load
+    order: 4
+    type: cache
+    action: configure
+    params:
+      maxMemory: ${cache_size}
+    failurePolicy: CONTINUE
+
+  - id: step-05
+    name: Block identified malicious clients
+    order: 5
+    type: network
+    action: block_ip
+    params:
+      ip: ${malicious_ip}
+    condition: traffic_is_malicious == true
+    requiresConfirmation: true
+    failurePolicy: CONTINUE
+
+  - id: step-06
+    name: Scale API instances
+    order: 6
+    type: kubernetes
+    action: scale_deployment
+    params:
+      resource: ${deployment_name}
+      namespace: ${namespace}
+      replicas: ${new_replica_count}
+    failurePolicy: CONTINUE
+
+  - id: step-07
+    name: Verify error rate recovery
+    order: 7
+    type: metrics
+    action: query
+    params:
+      host: ${api_host}
+      metric: error_rate
+    timeoutSeconds: 600
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 600
+  checks:
+    - id: check-01
+      type: error_rate_below
+      description: Confirm API error rate has dropped below threshold post-mitigation
+      params:
+        host: ${api_host}
+        threshold: 0.05
+      timeoutSeconds: 600
+
+auditConfig:
+  redactSensitiveValues: false

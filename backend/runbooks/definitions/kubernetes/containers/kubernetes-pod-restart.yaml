@@ -1,0 +1,125 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-POD-RESTART
+name: Kubernetes Pod Restart
+description: >
+  Restart a failed or unhealthy Kubernetes pod by deleting it and allowing
+  the owning controller (Deployment, ReplicaSet, StatefulSet) to recreate it.
+  Applicable to CrashLoopBackOff, OOMKilled, or otherwise unhealthy pod states.
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+  providers:
+    - kubernetes
+  services:
+    - kubernetes
+
+risk:
+  level: HIGH
+  blastRadius: pod
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Exact name of the Kubernetes pod to restart (not a label selector).
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the target pod.
+  - name: label_selector
+    type: string
+    required: false
+    description: Optional label selector to scope pod discovery (e.g. app=my-service).
+
+# Handler status per step:
+#   step-01  kubernetes/list_pods      — IMPLEMENTED (k8sClient.listPods)
+#   step-02  kubernetes/get_logs       — IMPLEMENTED (k8sClient.getPodLogs)
+#   step-03  kubernetes/restart_pod    — IMPLEMENTED (k8sClient.restartPod + ResilientK8sExecutor)
+#   step-04  wait/poll_condition       — IMPLEMENTED (waitHandlers.pollCondition)
+#   step-05  kubernetes/check_pod_health — IMPLEMENTED (k8sClient.getPodStatus)
+steps:
+  - id: step-01
+    name: Identify affected pods
+    order: 1
+    type: kubernetes
+    action: list_pods
+    params:
+      namespace: ${namespace}
+      labelSelector: ${label_selector}
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Capture pre-restart pod logs
+    order: 2
+    type: kubernetes
+    action: get_logs
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+      tailLines: 100
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Delete pod to trigger restart
+    order: 3
+    type: kubernetes
+    action: restart_pod
+    params:
+      resource: ${pod}
+      namespace: ${namespace}
+    requiresConfirmation: true
+    timeoutSeconds: 60
+    failurePolicy: STOP
+
+  - id: step-04
+    name: Wait for pod recreation
+    order: 4
+    type: wait
+    action: poll_condition
+    params:
+      conditionType: pod_running
+      resource: ${pod}
+      namespace: ${namespace}
+      intervalSeconds: 5
+    timeoutSeconds: 300
+    failurePolicy: STOP
+
+  - id: step-05
+    name: Verify pod health
+    order: 5
+    type: kubernetes
+    action: check_pod_health
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 120
+  checks:
+    - id: check-01
+      type: pod_running
+      description: Confirm the restarted pod is in Running state
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 120
+
+auditConfig:
+  redactSensitiveValues: false

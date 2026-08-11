@@ -26,7 +26,8 @@ const dashboardRoutes = require("./routes/dashboardRoutes");
 const serviceRoutes = require("./routes/serviceRoutes");
 const { topLevelRouter: monitorTopLevelRoutes } = require("./routes/monitorRoutes");
 const incidentRoutes = require("./routes/incidentRoutes");
-const runbookRoutes = require("./routes/runbookRoutes");
+const runbookRoutes  = require("./routes/runbookRoutes");
+const playbookRoutes = require("./routes/playbookRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
 
 
@@ -405,6 +406,11 @@ app.use("/api/v1/integration-definitions", (req, res, next) => {
  * RUNBOOK MANAGEMENT API — browser-session (dashboard)
  */
 app.use("/api/v1/tenants/:tenantId/runbooks", browserTenantAuth, runbookRoutes);
+
+/**
+ * PLAYBOOK MANAGEMENT API — browser-session (dashboard)
+ */
+app.use("/api/v1/tenants/:tenantId/playbooks", browserTenantAuth, playbookRoutes);
 
 /**
  * ACTION LOG API — browser-session (dashboard)

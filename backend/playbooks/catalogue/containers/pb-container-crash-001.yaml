@@ -1,0 +1,95 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-CRASH-001
+semver: "1.0.0"
+name: Container Crash Recovery
+description: >
+  Handles containers that have exited with a non-zero status code. Collects
+  crash logs, identifies exit code patterns and restarts the container with
+  optional resource limit adjustments.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: container.crash
+  severity: [medium, high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Container
+
+requiredEvidence:
+  - namespace
+  - pod_name
+  - container_name
+  - exit_code
+
+stages:
+  - stageId: collect-crash-logs
+    name: Collect Crash Logs
+    type: INVESTIGATION
+    order: 1
+    description: Retrieve previous container logs and exit code
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+          container: "${incident.resource.container}"
+        required: true
+    failurePolicy: CONTINUE
+
+  - stageId: restart-crashed-container
+    name: Restart Crashed Container
+    type: RECOVERY
+    order: 2
+    description: Restart the pod hosting the crashed container
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: verify-container-stable
+    name: Verify Container Stable
+    type: VERIFICATION
+    order: 3
+    description: Confirm container has not crashed again within the window
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: MEDIUM
+  blastRadius: pod
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 3
+  escalateTo: oncall-platform

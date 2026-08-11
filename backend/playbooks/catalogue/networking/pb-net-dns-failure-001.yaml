@@ -1,0 +1,97 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-DNS-FAILURE-001
+semver: "1.0.0"
+name: DNS Resolution Failure Recovery
+description: >
+  Diagnoses DNS resolution failures within a Kubernetes cluster. Checks
+  CoreDNS pod health, ConfigMap configuration and upstream resolver
+  connectivity. Restarts CoreDNS pods if they are unhealthy.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: network.dns_failure
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Service
+
+requiredEvidence:
+  - namespace
+  - failing_hostname
+
+stages:
+  - stageId: investigate-dns
+    name: Investigate DNS Failure
+    type: INVESTIGATION
+    order: 1
+    description: Check CoreDNS pod status and recent events
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "kube-system"
+          label_selector: "k8s-app=kube-dns"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: restart-coredns
+    name: Restart CoreDNS Pods
+    type: RECOVERY
+    order: 2
+    description: Rolling restart of CoreDNS deployment
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "kube-system"
+          deployment_name: "coredns"
+        required: true
+    failurePolicy: ESCALATE
+
+  - stageId: verify-dns-resolution
+    name: Verify DNS Resolution
+    type: VERIFICATION
+    order: 3
+    description: Confirm hostname resolves correctly
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "kube-system"
+          target_hostname: "${incident.evidence.failing_hostname}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: HIGH
+  blastRadius: cluster
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [network-team]
+
+approval:
+  mode: CONDITIONAL
+  condition:
+    field: severity
+    operator: equals
+    value: critical
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: network-oncall

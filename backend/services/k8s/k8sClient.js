@@ -333,6 +333,84 @@ class K8sClient {
   }
 
   /**
+   * List pods in a namespace, optionally filtered by label selector
+   *
+   * @param {string} namespace - Kubernetes namespace
+   * @param {object} options - { labelSelector, fieldSelector }
+   * @returns {Promise<object[]>} - Array of pod summaries
+   */
+  async listPods(namespace = null, options = {}) {
+    const ns = namespace || this.namespace;
+    const { labelSelector, fieldSelector } = options;
+
+    if (!this.isReady || !this.coreApi) {
+      throw new Error('K8s client not initialized');
+    }
+
+    try {
+      const response = await this.coreApi.listNamespacedPod(
+        ns,
+        undefined, // pretty
+        undefined, // allowWatchBookmarks
+        undefined, // _continue
+        fieldSelector,
+        labelSelector,
+      );
+
+      return (response.body.items || []).map(pod => ({
+        name: pod.metadata?.name,
+        namespace: pod.metadata?.namespace,
+        phase: pod.status?.phase,
+        ready: pod.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+        restartCount: pod.status?.containerStatuses?.[0]?.restartCount ?? 0,
+        creationTimestamp: pod.metadata?.creationTimestamp,
+        nodeName: pod.spec?.nodeName,
+        labels: pod.metadata?.labels || {},
+      }));
+    } catch (error) {
+      throw new Error(`Failed to list pods in namespace ${ns}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Get log output for a pod
+   *
+   * @param {string} podName - Pod name
+   * @param {string} namespace - Kubernetes namespace
+   * @param {object} options - { tailLines, sinceSeconds, container, previous }
+   * @returns {Promise<string>} - Log content
+   */
+  async getPodLogs(podName, namespace = null, options = {}) {
+    const ns = namespace || this.namespace;
+    const { tailLines = 100, sinceSeconds, container, previous = false } = options;
+
+    if (!this.isReady || !this.coreApi) {
+      throw new Error('K8s client not initialized');
+    }
+
+    try {
+      const response = await this.coreApi.readNamespacedPodLog(
+        podName,
+        ns,
+        container,
+        undefined, // follow
+        undefined, // insecureSkipTLSVerifyBackend
+        undefined, // limitBytes
+        undefined, // pretty
+        previous,
+        sinceSeconds,
+        tailLines,
+      );
+      return response.body || '';
+    } catch (error) {
+      if (error.statusCode === 404) {
+        throw new Error(`Pod ${podName} not found in namespace ${ns}`);
+      }
+      throw new Error(`Failed to get logs for pod ${podName}: ${error.message}`);
+    }
+  }
+
+  /**
    * Get pod status and information
    * 
    * @param {string} podName - Name of the pod
@@ -537,16 +615,37 @@ class K8sClient {
     switch (actionType) {
       case 'restart_pod':
         return await this.restartPod(resource, namespace, { correlationId });
-      
+
       case 'restart_deployment':
         return await this.restartDeployment(resource, namespace, { correlationId });
-      
+
       case 'scale_deployment':
-        if (!replicas) {
+        if (params.replicas == null) {
           throw new Error('scale_deployment requires "replicas" parameter');
         }
-        return await this.scaleDeployment(resource, replicas, namespace, { correlationId });
-      
+        return await this.scaleDeployment(resource, params.replicas, namespace, { correlationId });
+
+      case 'list_pods':
+        return await this.listPods(namespace, {
+          labelSelector: params.labelSelector,
+          fieldSelector: params.fieldSelector,
+        });
+
+      case 'get_logs':
+        return await this.getPodLogs(resource, namespace, {
+          tailLines: params.tailLines,
+          sinceSeconds: params.sinceSeconds,
+          container: params.container,
+          previous: params.previous,
+        });
+
+      case 'get_pod_status':
+      case 'check_pod_health':
+        return await this.getPodStatus(resource, namespace);
+
+      case 'get_deployment_status':
+        return await this.getDeploymentStatus(resource, namespace);
+
       default:
         throw new Error(`Unknown K8s action type: ${actionType}`);
     }

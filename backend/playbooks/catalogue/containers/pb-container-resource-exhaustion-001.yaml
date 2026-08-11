@@ -1,0 +1,99 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-RESOURCE-EXHAUST-001
+semver: "1.0.0"
+name: Container Resource Exhaustion
+description: >
+  Responds to containers approaching or exceeding CPU or memory limits.
+  Diagnoses the resource spike, scales the workload horizontally and
+  recommends limit adjustments.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: container.resource_exhaustion
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Container
+
+requiredEvidence:
+  - namespace
+  - deployment_name
+  - resource_type
+
+stages:
+  - stageId: diagnose-resource-spike
+    name: Diagnose Resource Spike
+    type: DIAGNOSIS_SUPPORT
+    order: 1
+    description: Identify the resource type and usage trend
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+        required: true
+    failurePolicy: CONTINUE
+
+  - stageId: scale-out-workload
+    name: Scale Out Workload
+    type: MITIGATION
+    order: 2
+    description: Increase replica count to distribute resource pressure
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+          replicas: "${incident.recommended_replicas}"
+        required: true
+    failurePolicy: ESCALATE
+
+  - stageId: verify-resource-stable
+    name: Verify Resource Levels Stable
+    type: VERIFICATION
+    order: 3
+    description: Confirm resource usage has dropped below threshold
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: HIGH
+  blastRadius: deployment
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [platform-lead]
+
+approval:
+  mode: CONDITIONAL
+  condition:
+    field: severity
+    operator: equals
+    value: critical
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: oncall-platform

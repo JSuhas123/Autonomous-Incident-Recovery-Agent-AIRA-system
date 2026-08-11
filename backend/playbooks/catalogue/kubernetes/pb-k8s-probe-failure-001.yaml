@@ -1,0 +1,94 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-PROBE-FAILURE-001
+semver: "1.0.0"
+name: Kubernetes Liveness / Readiness Probe Failure
+description: >
+  Investigates containers failing liveness or readiness probes. Gathers
+  container logs, probe configuration and recent events to determine root
+  cause and recommend remediation.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: kubernetes.pod.probe_failure
+  severity: [medium, high]
+  environment: [production, staging, development]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Pod
+
+requiredEvidence:
+  - namespace
+  - pod_name
+  - container_name
+
+stages:
+  - stageId: collect-probe-context
+    name: Collect Probe Context
+    type: INVESTIGATION
+    order: 1
+    description: Gather logs and events for the failing container
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+          container: "${incident.resource.container}"
+        required: true
+    failurePolicy: CONTINUE
+
+  - stageId: restart-failing-pod
+    name: Restart Failing Pod
+    type: RECOVERY
+    order: 2
+    description: Restart the pod to clear transient probe failures
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: verify-probe-health
+    name: Verify Probe Health
+    type: VERIFICATION
+    order: 3
+    description: Confirm probes pass after restart
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          pod_name: "${incident.resource.pod}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: MEDIUM
+  blastRadius: pod
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: oncall-platform

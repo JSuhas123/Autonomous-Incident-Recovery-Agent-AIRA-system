@@ -1,0 +1,92 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-DISK-PRESSURE-001
+semver: "1.0.0"
+name: Database Disk Pressure Recovery
+description: >
+  Responds to database nodes approaching disk capacity. Identifies growth
+  sources (logs, temp tables, orphaned data), triggers cleanup and alerts
+  when automated cleanup is insufficient.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: database.disk_pressure
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: DatabaseNode
+
+requiredEvidence:
+  - db_host
+  - disk_used_percent
+  - disk_path
+
+stages:
+  - stageId: investigate-disk-usage
+    name: Investigate Disk Usage
+    type: INVESTIGATION
+    order: 1
+    description: Identify largest consumers and growth trends
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          db_host: "${incident.resource.host}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: cleanup-disk
+    name: Clean Up Disk Space
+    type: RECOVERY
+    order: 2
+    description: Remove old logs, vacuum dead tuples, purge temp data
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          db_host: "${incident.resource.host}"
+          disk_path: "${incident.resource.disk_path}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: verify-disk-headroom
+    name: Verify Disk Headroom
+    type: VERIFICATION
+    order: 3
+    description: Confirm disk usage is below critical threshold
+    runbooks:
+      - runbookId: RB-DB-FAILOVER
+        semver: ">=1.0.0"
+        parameterMappings:
+          db_host: "${incident.resource.host}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: CRITICAL
+  blastRadius: cluster
+  reversible: false
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [dba-team]
+
+approval:
+  mode: MANUAL
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall

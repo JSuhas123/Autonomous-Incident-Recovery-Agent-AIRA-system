@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-DEPLOY-UNHEALTHY-001
+semver: 1.0.0
+name: Kubernetes Unhealthy Deployment Recovery
+description: >
+  Recovery playbook for Kubernetes deployments that are unhealthy,
+  with unavailable replicas or stalled rollouts.
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: site-reliability
+
+incident:
+  types:
+    - DeploymentUnhealthy
+    - kubernetes.deployment.unavailable
+    - DeploymentReplicaFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+
+requiredEvidence:
+  - resource.deployment
+  - resource.namespace
+
+conditions:
+  minimumConfidence: 0.7
+
+risk:
+  level: HIGH
+  blastRadius: deployment
+
+policy:
+  required: true
+
+approval:
+  mode: CONDITIONAL
+  conditions:
+    requiresApproval: true
+
+stages:
+  - id: investigate-deployment
+    order: 1
+    name: Investigate Deployment State
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: true
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: scale-deployment
+    order: 2
+    name: Scale Deployment to Recover Replicas
+    type: RECOVERY
+    failurePolicy: ROLLBACK
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: true
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+  - id: verify-deployment-health
+    order: 3
+    name: Verify Deployment Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        required: true
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment: "${incident.resource.deployment}"
+
+rollback:
+  strategy: STAGE_ROLLBACK
+  maxAttempts: 1
+  stages: []
+
+escalation:
+  maxRecoveryAttempts: 2
+  escalateTo: oncall-sre
+  notifyChannels:
+    - slack-alerts
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - kubernetes
+  - deployment
+  - replicas
+  - availability

@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-CACHE-INVALIDATE
+name: Cache Invalidation
+description: >
+  Invalidate application caches to resolve stale data issues.
+  Supports both selective (pattern-based) and full flush modes.
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Backend Team
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - cache
+    - redis
+
+risk:
+  level: MEDIUM
+  blastRadius: service
+  reversible: false
+
+parameters:
+  - name: pattern
+    type: string
+    required: false
+    description: >
+      Redis key pattern for selective cache invalidation (e.g. "user:*").
+      Leave empty to skip selective invalidation.
+  - name: api_host
+    type: string
+    required: true
+    description: Hostname of the API service used for cache warm-up.
+  - name: full_flush_required
+    type: boolean
+    required: false
+    description: >
+      Set to true to perform a full FLUSHALL. Use only when selective
+      invalidation is insufficient.
+
+# Handler status per step (all MISSING_HANDLER):
+#   step-01  cache/analyze           — MISSING_HANDLER
+#   step-02  cache/invalidate_pattern — MISSING_HANDLER
+#   step-03  cache/flush_all         — MISSING_HANDLER
+#   step-04  http/post               — MISSING_HANDLER
+#   step-05  cache/monitor           — MISSING_HANDLER
+steps:
+  - id: step-01
+    name: Identify stale cache keys
+    order: 1
+    type: cache
+    action: analyze
+    params:
+      pattern: ${pattern}
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Selective cache invalidation
+    order: 2
+    type: cache
+    action: invalidate_pattern
+    params:
+      pattern: ${pattern}
+    requiresConfirmation: true
+    condition: pattern_specified == true
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Full cache flush
+    order: 3
+    type: cache
+    action: flush_all
+    requiresConfirmation: true
+    condition: full_flush_required == true
+    failurePolicy: STOP
+
+  - id: step-04
+    name: Refill critical cache entries
+    order: 4
+    type: http
+    action: post
+    params:
+      host: ${api_host}
+      path: /internal/cache/warm
+    failurePolicy: CONTINUE
+
+  - id: step-05
+    name: Monitor cache performance
+    order: 5
+    type: cache
+    action: monitor
+    timeoutSeconds: 300
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+
+auditConfig:
+  redactSensitiveValues: false

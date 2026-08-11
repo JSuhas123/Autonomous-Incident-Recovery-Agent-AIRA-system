@@ -1,0 +1,99 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-FAILED-ROLLOUT-001
+semver: "1.0.0"
+name: Kubernetes Failed Deployment Rollout
+description: >
+  Detects a deployment rollout that has stalled or failed and rolls it back
+  to the last known-good revision.
+lifecycle: DRAFT
+
+owner:
+  type: system
+
+incidentMatching:
+  incidentType: kubernetes.deployment.rollout_failed
+  severity: [high, critical]
+  environment: [production, staging]
+
+triggers:
+  - type: condition
+    conditions:
+      - field: resource.kind
+        operator: equals
+        value: Deployment
+      - field: resource.rollout_status
+        operator: equals
+        value: failed
+
+requiredEvidence:
+  - namespace
+  - deployment_name
+
+stages:
+  - stageId: investigate-rollout
+    name: Investigate Rollout Failure
+    type: INVESTIGATION
+    order: 1
+    description: Collect deployment events, replica set status and pod logs
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+        required: true
+    failurePolicy: STOP
+
+  - stageId: rollback-deployment
+    name: Rollback Deployment
+    type: RECOVERY
+    order: 2
+    description: Roll back deployment to last stable revision
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+        required: true
+    failurePolicy: ESCALATE
+
+  - stageId: verify-rollback
+    name: Verify Rollback Succeeded
+    type: VERIFICATION
+    order: 3
+    description: Confirm deployment is healthy after rollback
+    runbooks:
+      - runbookId: RB-K8S-POD-RESTART
+        semver: ">=1.0.0"
+        parameterMappings:
+          namespace: "${incident.resource.namespace}"
+          deployment_name: "${incident.resource.name}"
+        required: true
+    failurePolicy: ESCALATE
+
+risk:
+  level: HIGH
+  blastRadius: deployment
+  reversible: true
+  rollbackStrategy: NONE
+
+policy:
+  required: true
+  approvalGroups: [platform-lead]
+
+approval:
+  mode: CONDITIONAL
+  condition:
+    field: severity
+    operator: equals
+    value: critical
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 2
+  escalateTo: oncall-platform
