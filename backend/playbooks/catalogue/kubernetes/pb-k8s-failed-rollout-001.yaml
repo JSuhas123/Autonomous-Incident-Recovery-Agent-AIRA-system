@@ -1,12 +1,12 @@
 apiVersion: aira.io/v1
 kind: Playbook
 playbookId: PB-K8S-FAILED-ROLLOUT-001
-semver: "1.0.0"
+semver: "1.1.0"
 name: Kubernetes Failed Deployment Rollout
 description: >
   Detects a deployment rollout that has stalled or failed and rolls it back
   to the last known-good revision.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   type: system
@@ -35,13 +35,12 @@ stages:
     name: Investigate Rollout Failure
     type: INVESTIGATION
     order: 1
-    description: Collect deployment events, replica set status and pod logs
+    description: Collect deployment events, replica set status and conditions
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.resource.name}"
         required: true
     failurePolicy: STOP
 
@@ -51,11 +50,10 @@ stages:
     order: 2
     description: Roll back deployment to last stable revision
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-ROLLBACK-DEPLOYMENT
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.resource.name}"
         required: true
     failurePolicy: ESCALATE
 
@@ -65,11 +63,10 @@ stages:
     order: 3
     description: Confirm deployment is healthy after rollback
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.resource.name}"
         required: true
     failurePolicy: ESCALATE
 

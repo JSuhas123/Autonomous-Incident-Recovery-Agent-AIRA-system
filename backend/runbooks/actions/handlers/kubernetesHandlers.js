@@ -303,6 +303,189 @@ const getDeploymentStatus = {
 
 // ── Exports ────────────────────────────────────────────────────────────────
 
+// ── get_pod ────────────────────────────────────────────────────────────────
+
+const getPod = {
+  type: 'kubernetes',
+  action: 'get_pod',
+  metadata: {
+    automationSafe: true, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: false,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'none',
+    outputMayContainSecrets: false,
+    description: 'Get full pod detail including resource limits, probe config, and container states.',
+  },
+  validate(params) {
+    return { valid: !!(params.pod && params.namespace), errors: (!params.pod ? ['Missing pod'] : []).concat(!params.namespace ? ['Missing namespace'] : []) };
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    const detail = await exec.k8sClient.getPod(params.pod, params.namespace);
+    return { success: true, ...detail };
+  },
+};
+
+// ── get_events ─────────────────────────────────────────────────────────────
+
+const getEvents = {
+  type: 'kubernetes',
+  action: 'get_events',
+  metadata: {
+    automationSafe: true, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: false,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'none',
+    outputMayContainSecrets: false,
+    description: 'Get Kubernetes events for a pod (e.g. OOMKilled, BackOff, Pull errors).',
+  },
+  validate(params) {
+    return { valid: !!(params.pod && params.namespace), errors: (!params.pod ? ['Missing pod'] : []).concat(!params.namespace ? ['Missing namespace'] : []) };
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    const events = await exec.k8sClient.getPodEvents(params.pod, params.namespace);
+    return { success: true, events, count: events.length };
+  },
+};
+
+// ── get_deployment ─────────────────────────────────────────────────────────
+
+const getDeployment = {
+  type: 'kubernetes',
+  action: 'get_deployment',
+  metadata: {
+    automationSafe: true, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: false,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'none',
+    outputMayContainSecrets: false,
+    description: 'Get Kubernetes Deployment detail including replica counts and conditions.',
+  },
+  validate(params) {
+    const errors = requireParams(params, 'resource', 'namespace');
+    return { valid: errors.length === 0, errors };
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    const status = await exec.k8sClient.getDeploymentStatus(params.resource, params.namespace);
+    return { success: true, ...status };
+  },
+};
+
+// ── check_pod_ready ────────────────────────────────────────────────────────
+
+const checkPodReady = {
+  type: 'kubernetes',
+  action: 'check_pod_ready',
+  metadata: {
+    automationSafe: true, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: false,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'none',
+    outputMayContainSecrets: false,
+    description: 'Check if a pod is in Running phase and its Ready condition is true.',
+  },
+  validate(params) {
+    const errors = requireParams(params, 'pod', 'namespace');
+    return { valid: errors.length === 0, errors };
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    const status = await exec.k8sClient.getPodStatus(params.pod, params.namespace);
+    const ready = status.phase === 'Running' && status.ready === true;
+    return { success: ready, ready, phase: status.phase, podStatus: status };
+  },
+};
+
+// ── rollback_deployment ────────────────────────────────────────────────────
+
+const rollbackDeployment = {
+  type: 'kubernetes',
+  action: 'rollback_deployment',
+  metadata: {
+    automationSafe: true, idempotent: false, retrySafe: false, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: true,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'deployment',
+    outputMayContainSecrets: false,
+    description: 'Roll back a Kubernetes Deployment to its previous known-good revision.',
+  },
+  validate(params) {
+    const errors = requireParams(params, 'resource', 'namespace');
+    return { valid: errors.length === 0, errors };
+  },
+  async capturePreState(params, context) {
+    try {
+      const exec = getResilientK8sExecutor();
+      return await exec.k8sClient.getDeploymentStatus(params.resource, params.namespace);
+    } catch { return null; }
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    return exec.k8sClient.rollbackDeployment(params.resource, params.namespace, {
+      revision:      params.revision,
+      correlationId: context.correlationId,
+    });
+  },
+};
+
+// ── cordon_node ────────────────────────────────────────────────────────────
+
+const cordonNode = {
+  type: 'kubernetes',
+  action: 'cordon_node',
+  metadata: {
+    automationSafe: false, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: true,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'cluster',
+    outputMayContainSecrets: false,
+    description: 'Mark a Kubernetes node as unschedulable (cordon). No pods are evicted.',
+  },
+  validate(params) {
+    const errors = requireParams(params, 'node');
+    return { valid: errors.length === 0, errors };
+  },
+  async capturePreState(params, context) {
+    try {
+      const exec = getResilientK8sExecutor();
+      return await exec.k8sClient.getNode(params.node);
+    } catch { return null; }
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    return exec.k8sClient.cordonNode(params.node, true);
+  },
+  async rollback(params, preState, context) {
+    // Uncordon the node to restore scheduling
+    try {
+      const exec = getResilientK8sExecutor();
+      const result = await exec.k8sClient.cordonNode(params.node, false);
+      return { success: result.success };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+};
+
+// ── get_node ───────────────────────────────────────────────────────────────
+
+const getNode = {
+  type: 'kubernetes',
+  action: 'get_node',
+  metadata: {
+    automationSafe: true, idempotent: true, retrySafe: true, destructive: false,
+    reversible: true, builtinRollback: false, requiresConfirmation: false,
+    allowedEnvironments: ['production', 'staging', 'dev'], blastRadius: 'none',
+    outputMayContainSecrets: false,
+    description: 'Get Kubernetes node detail including conditions, capacity, and readiness.',
+  },
+  validate(params) {
+    const errors = requireParams(params, 'node');
+    return { valid: errors.length === 0, errors };
+  },
+  async execute(params, context) {
+    const exec = getResilientK8sExecutor();
+    const node = await exec.k8sClient.getNode(params.node);
+    return { success: true, ...node };
+  },
+};
+
 const handlers = [
   restartPod,
   restartDeployment,
@@ -311,6 +494,13 @@ const handlers = [
   getLogs,
   checkPodHealth,
   getDeploymentStatus,
+  getPod,
+  getEvents,
+  getDeployment,
+  checkPodReady,
+  rollbackDeployment,
+  cordonNode,
+  getNode,
 ];
 
 module.exports = { handlers };

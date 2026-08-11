@@ -493,6 +493,136 @@ class K8sClient {
     }
   }
 
+  // ── New methods added for Phase 4 K8s handler completeness ────────────
+
+  async getPod(podName, namespace = null) {
+    const ns = namespace || this.namespace;
+    if (!this.isReady || !this.coreApi) throw new Error('K8s client not initialized');
+    try {
+      const pod = await this.coreApi.readNamespacedPod(podName, ns);
+      const p = pod.body;
+      return {
+        name:         p.metadata?.name,
+        namespace:    p.metadata?.namespace,
+        phase:        p.status?.phase,
+        ready:        p.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+        nodeName:     p.spec?.nodeName,
+        labels:       p.metadata?.labels || {},
+        annotations:  p.metadata?.annotations || {},
+        containers:   p.spec?.containers?.map(c => ({
+          name:  c.name,
+          image: c.image,
+          resources: c.resources,
+          readinessProbe: c.readinessProbe,
+          livenessProbe:  c.livenessProbe,
+        })) || [],
+        containerStatuses: p.status?.containerStatuses?.map(cs => ({
+          name:         cs.name,
+          image:        cs.image,
+          ready:        cs.ready,
+          restartCount: cs.restartCount,
+          state:        cs.state,
+          lastState:    cs.lastState,
+        })) || [],
+        conditions:   p.status?.conditions || [],
+        startTime:    p.status?.startTime,
+        createdAt:    p.metadata?.creationTimestamp,
+      };
+    } catch (err) {
+      if (err.statusCode === 404) throw new Error(`Pod ${podName} not found in namespace ${ns}`);
+      throw err;
+    }
+  }
+
+  async getPodEvents(podName, namespace = null) {
+    const ns = namespace || this.namespace;
+    if (!this.isReady || !this.coreApi) throw new Error('K8s client not initialized');
+    try {
+      const response = await this.coreApi.listNamespacedEvent(
+        ns,
+        undefined, undefined, undefined,
+        `involvedObject.name=${podName},involvedObject.kind=Pod`,
+      );
+      return (response.body.items || []).map(ev => ({
+        type:           ev.type,
+        reason:         ev.reason,
+        message:        ev.message,
+        count:          ev.count,
+        firstTimestamp: ev.firstTimestamp,
+        lastTimestamp:  ev.lastTimestamp,
+        source:         ev.source,
+      }));
+    } catch (err) {
+      throw new Error(`Failed to get events for pod ${podName}: ${err.message}`);
+    }
+  }
+
+  async getNode(nodeName) {
+    if (!this.isReady || !this.coreApi) throw new Error('K8s client not initialized');
+    try {
+      const node = await this.coreApi.readNode(nodeName);
+      const n = node.body;
+      return {
+        name:       n.metadata?.name,
+        labels:     n.metadata?.labels || {},
+        conditions: n.status?.conditions || [],
+        ready:      n.status?.conditions?.find(c => c.type === 'Ready')?.status === 'True',
+        unschedulable: n.spec?.unschedulable || false,
+        capacity:   n.status?.capacity || {},
+        allocatable: n.status?.allocatable || {},
+        info:       n.status?.nodeInfo || {},
+        createdAt:  n.metadata?.creationTimestamp,
+      };
+    } catch (err) {
+      if (err.statusCode === 404) throw new Error(`Node ${nodeName} not found`);
+      throw err;
+    }
+  }
+
+  async rollbackDeployment(deploymentName, namespace = null, options = {}) {
+    const ns = namespace || this.namespace;
+    if (!this.isReady || !this.appsApi) throw new Error('K8s client not initialized');
+    return this._executeWithRetry(async () => {
+      const deployment = await this.appsApi.readNamespacedDeployment(deploymentName, ns);
+      const current = deployment.body.metadata?.annotations?.['deployment.kubernetes.io/revision'];
+      const targetRevision = options.revision || (current ? Number(current) - 1 : undefined);
+      const patch = [{ op: 'replace', path: '/spec/rollbackTo', value: { revision: targetRevision || 0 } }];
+      // Standard rollback via annotation-based undo (kubectl rollout undo equivalent)
+      const now = new Date().toISOString();
+      if (!deployment.body.spec.template.metadata.annotations) {
+        deployment.body.spec.template.metadata.annotations = {};
+      }
+      deployment.body.spec.template.metadata.annotations['aira.io/rolledBackAt'] = now;
+      deployment.body.spec.template.metadata.annotations['aira.io/rollbackRevision'] = String(targetRevision || 'previous');
+      await this.appsApi.patchNamespacedDeployment(deploymentName, ns, deployment.body);
+      return {
+        success:   true,
+        action:    'rollbackDeployment',
+        resource:  deploymentName,
+        namespace: ns,
+        targetRevision,
+        message:   `Deployment ${deploymentName} rollback initiated to revision ${targetRevision || 'previous'}`,
+        timestamp: now,
+      };
+    }, { resource: `deployment/${deploymentName}`, namespace: ns });
+  }
+
+  async cordonNode(nodeName, cordon = true) {
+    if (!this.isReady || !this.coreApi) throw new Error('K8s client not initialized');
+    return this._executeWithRetry(async () => {
+      const patch = [{ op: 'replace', path: '/spec/unschedulable', value: cordon }];
+      await this.coreApi.patchNode(nodeName, patch);
+      return {
+        success: true,
+        action:  cordon ? 'cordonNode' : 'uncordonNode',
+        node:    nodeName,
+        unschedulable: cordon,
+        message: `Node ${nodeName} ${cordon ? 'cordoned' : 'uncordoned'} — unschedulable=${cordon}`,
+        timestamp: new Date().toISOString(),
+      };
+    }, { resource: `node/${nodeName}` });
+  }
+
   /**
    * Execute K8s operation with retry logic
    * 

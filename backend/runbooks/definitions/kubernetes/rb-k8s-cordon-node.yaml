@@ -1,0 +1,70 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-CORDON-NODE
+name: Kubernetes Node Cordon
+description: >
+  Mark a Kubernetes node as unschedulable (cordon) to prevent new pods from
+  being scheduled on it. Does NOT evict existing pods. Use before draining
+  a node for maintenance or when a node is suspected degraded.
+  Requires approval — affects scheduling across the cluster.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: HIGH
+  blastRadius: cluster
+  reversible: true
+
+parameters:
+  - name: node
+    type: string
+    required: true
+    description: Name of the Kubernetes node to cordon.
+
+steps:
+  - id: step-01
+    name: Cordon node
+    order: 1
+    type: kubernetes
+    action: cordon_node
+    params:
+      node: ${node}
+    requiresConfirmation: true
+    timeoutSeconds: 30
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: EXPLICIT_STEPS
+  steps:
+    - id: rb-step-01
+      type: kubernetes
+      action: uncordon_node
+      params:
+        node: ${node}
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: node_cordoned
+      description: Node is marked unschedulable
+      params:
+        node: ${node}
+      timeoutSeconds: 30
+
+auditConfig:
+  redactSensitiveValues: false

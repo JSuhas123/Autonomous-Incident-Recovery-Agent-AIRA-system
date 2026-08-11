@@ -108,8 +108,12 @@ class RunbookVerificationService {
   // ── Strategy evaluation ───────────────────────────────────────────────
 
   _evaluateStrategy(strategy, results, minSuccessful) {
-    const passed = results.filter(r => r.result === VERIFICATION_CHECK_RESULT.PASSED).length;
-    const total  = results.length;
+    // SKIPPED results (unavailable checks) are excluded from pass/fail counting
+    const active = results.filter(r => r.result !== VERIFICATION_CHECK_RESULT.SKIPPED);
+    const passed = active.filter(r => r.result === VERIFICATION_CHECK_RESULT.PASSED).length;
+    const total  = active.length;
+
+    if (total === 0) return true; // all checks skipped — treat as passed
 
     switch (strategy) {
       case STRATEGY.ALL:    return passed === total;
@@ -139,7 +143,9 @@ class RunbookVerificationService {
 
       return {
         ...base,
-        result:        raw.passed ? VERIFICATION_CHECK_RESULT.PASSED : VERIFICATION_CHECK_RESULT.FAILED,
+        result:        raw.unavailable ? VERIFICATION_CHECK_RESULT.SKIPPED
+                       : raw.passed   ? VERIFICATION_CHECK_RESULT.PASSED
+                                      : VERIFICATION_CHECK_RESULT.FAILED,
         observedValue: raw.observedValue,
         expected:      raw.expected,
         evidence:      raw.evidence || null,
@@ -169,6 +175,8 @@ class RunbookVerificationService {
       case 'latency_below':        return this._checkLatencyBelow(params, context);
       case 'error_rate_below':     return this._checkErrorRateBelow(params, context);
       case 'service_healthy':      return this._checkServiceHealthy(params, context);
+      case 'node_ready':           return this._checkNodeReady(params, context);
+      case 'node_cordoned':        return this._checkNodeCordoned(params, context);
       default:
         throw new Error(`Unsupported verification check type: "${type}"`);
     }
@@ -312,25 +320,53 @@ class RunbookVerificationService {
   }
 
   async _checkErrorRateBelow(params, context) {
-    // Placeholder — real implementation requires Prometheus/monitoring integration
-    // Returns SKIPPED until monitoring integration is wired
+    // Real implementation requires Prometheus integration — returns UNAVAILABLE until wired
+    // Returning passed=false with an explicit unavailable flag so caller can treat as SKIPPED
     return {
-      passed:        true,
-      observedValue: 'N/A',
+      passed:        false,
+      unavailable:   true,
+      observedValue: 'UNAVAILABLE',
       expected:      `< ${params.threshold || 0.05}`,
-      evidence:      { note: 'Monitoring integration not yet wired; check skipped' },
+      evidence:      { reason: 'Prometheus/monitoring integration not wired. Cannot verify error rate.' },
+      error:         'UNAVAILABLE: monitoring integration not configured',
     };
   }
 
   async _checkServiceHealthy(params, context) {
-    // Try HTTP health check if host is known; otherwise return SKIPPED
+    // Try HTTP health check if host/url is specified; otherwise UNAVAILABLE
     if (params.host || params.url) {
       return this._checkHttp2xx(params, context);
     }
     return {
-      passed:        true,
-      observedValue: 'N/A',
-      evidence:      { note: 'No host/url specified; service health check skipped' },
+      passed:        false,
+      unavailable:   true,
+      observedValue: 'UNAVAILABLE',
+      evidence:      { reason: 'No host/url configured for service health check.' },
+      error:         'UNAVAILABLE: no health endpoint configured',
+    };
+  }
+
+  async _checkNodeReady(params, context) {
+    const exec = getResilientK8sExecutor();
+    const node = await exec.k8sClient.getNode(params.node);
+    const passed = node.ready === true;
+    return {
+      passed,
+      observedValue: `ready=${node.ready}`,
+      expected:      'ready=true',
+      evidence:      { conditions: node.conditions },
+    };
+  }
+
+  async _checkNodeCordoned(params, context) {
+    const exec = getResilientK8sExecutor();
+    const node = await exec.k8sClient.getNode(params.node);
+    const expectedCordoned = params.cordoned !== false; // default: expect cordoned=true
+    const passed = node.unschedulable === expectedCordoned;
+    return {
+      passed,
+      observedValue: `unschedulable=${node.unschedulable}`,
+      expected:      `unschedulable=${expectedCordoned}`,
     };
   }
 }

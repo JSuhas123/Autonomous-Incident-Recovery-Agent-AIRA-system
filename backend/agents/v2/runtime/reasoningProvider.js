@@ -162,6 +162,109 @@ class SafeReasoningProvider {
   get version() { return this._inner.version; }
 }
 
+// ── OpenAI Provider ────────────────────────────────────────────────────────────
+
+/**
+ * Real OpenAI reasoning provider using structured JSON output mode.
+ *
+ * Activated when OPENAI_API_KEY is present in environment.
+ * Falls back to MockReasoningProvider in tests (via SafeReasoningProvider).
+ *
+ * SAFETY:
+ * - Always requests JSON mode (response_format: { type: "json_object" })
+ * - Output is schema-validated by SafeReasoningProvider wrapper
+ * - Never passes infra credentials in prompt
+ * - Token usage tracked and returned in modelMetadata
+ */
+class OpenAIReasoningProvider extends BaseReasoningProvider {
+  constructor(config = {}) {
+    super(config);
+    this._apiKey    = config.apiKey    || process.env.OPENAI_API_KEY;
+    this._model     = config.model     || process.env.OPENAI_MODEL || 'gpt-4o-mini';
+    this._baseUrl   = config.baseUrl   || 'https://api.openai.com/v1';
+    this._timeoutMs = config.timeoutMs || 30_000;
+    if (!this._apiKey) {
+      throw new Error('OpenAIReasoningProvider: OPENAI_API_KEY not set');
+    }
+  }
+
+  async reason(request) {
+    const { task, systemInstructions, structuredInput, outputSchema, metadata = {} } = request;
+
+    const systemPrompt = [
+      systemInstructions || 'You are an expert SRE AI assistant.',
+      'IMPORTANT: Respond with valid JSON ONLY. No explanation outside the JSON.',
+      outputSchema
+        ? `Output MUST match this JSON schema:\n${JSON.stringify(outputSchema, null, 2)}`
+        : '',
+    ].filter(Boolean).join('\n\n');
+
+    const userMessage = JSON.stringify(structuredInput, null, 2);
+
+    const body = {
+      model: this._model,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userMessage  },
+      ],
+      temperature: 0,      // deterministic for safety
+      max_tokens:  2048,
+    };
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this._timeoutMs);
+
+    let resp;
+    try {
+      resp = await fetch(`${this._baseUrl}/chat/completions`, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${this._apiKey}`,
+        },
+        body:   JSON.stringify(body),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    if (!resp.ok) {
+      const errBody = await resp.text().catch(() => resp.statusText);
+      throw new Error(`OpenAI API error ${resp.status}: ${errBody}`);
+    }
+
+    const data = await resp.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('OpenAI returned empty content');
+
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch (e) {
+      throw new Error(`OpenAI response was not valid JSON: ${e.message}`);
+    }
+
+    return {
+      output: parsed,
+      modelMetadata: {
+        provider:       'openai',
+        model:          data.model,
+        promptTokens:   data.usage?.prompt_tokens,
+        completionTokens: data.usage?.completion_tokens,
+        totalTokens:    data.usage?.total_tokens,
+        task,
+      },
+      fallbackUsed: false,
+      warnings:     [],
+    };
+  }
+
+  get name()    { return 'openai'; }
+  get version() { return '1.0.0'; }
+}
+
 // ── Singleton Registry ────────────────────────────────────────────────────────
 
 let _provider = null;
@@ -172,8 +275,16 @@ function configureReasoningProvider(provider) {
 
 function getReasoningProvider() {
   if (!_provider) {
-    // Default to mock for safety — production must explicitly configure
-    _provider = new SafeReasoningProvider(new MockReasoningProvider(), null, {});
+    // Auto-wire OpenAI when OPENAI_API_KEY is set; otherwise use mock
+    if (process.env.OPENAI_API_KEY) {
+      const openai = new OpenAIReasoningProvider();
+      const mockFallback = new MockReasoningProvider();
+      _provider = new SafeReasoningProvider(openai, mockFallback, { maxRetries: 2 });
+      console.log('[ReasoningProvider] Using OpenAI provider (model:', process.env.OPENAI_MODEL || 'gpt-4o-mini', ')');
+    } else {
+      _provider = new SafeReasoningProvider(new MockReasoningProvider(), null, {});
+      console.warn('[ReasoningProvider] OPENAI_API_KEY not set — using MockReasoningProvider');
+    }
   }
   return _provider;
 }
@@ -221,6 +332,7 @@ module.exports = {
   BaseReasoningProvider,
   MockReasoningProvider,
   SafeReasoningProvider,
+  OpenAIReasoningProvider,
   configureReasoningProvider,
   getReasoningProvider,
 };

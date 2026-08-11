@@ -1,0 +1,94 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-SCALE-DEPLOYMENT
+name: Kubernetes Deployment Scale
+description: >
+  Scale a Kubernetes Deployment to a target replica count. Used for HPA exhaustion
+  or traffic-spike response. Requires human approval in production due to resource impact.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: MEDIUM
+  blastRadius: deployment
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Name of the Kubernetes Deployment to scale.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the deployment.
+  - name: replicas
+    type: integer
+    required: true
+    description: Target replica count. Must be a non-negative integer.
+
+steps:
+  - id: step-01
+    name: Scale deployment to target replicas
+    order: 1
+    type: kubernetes
+    action: scale_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+      replicas: ${replicas}
+    requiresConfirmation: true
+    timeoutSeconds: 60
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Wait for replicas to become available
+    order: 2
+    type: wait
+    action: poll_condition
+    params:
+      conditionType: deployment_available
+      resource: ${deployment}
+      namespace: ${namespace}
+      intervalSeconds: 10
+    timeoutSeconds: 300
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment is available at new replica count
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+    - id: check-02
+      type: replicas_ready
+      description: All desired replicas are ready
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false

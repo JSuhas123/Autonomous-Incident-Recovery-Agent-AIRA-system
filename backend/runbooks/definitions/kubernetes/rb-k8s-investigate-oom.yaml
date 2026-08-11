@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-INVESTIGATE-OOM
+name: Kubernetes OOMKilled Investigation
+description: >
+  Read-only investigation for pods terminated by OOMKilled. Collects memory
+  resource requests/limits, container OOM events, previous container logs,
+  and node resource usage to support diagnosis and resource patch recommendations.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Exact name of the OOMKilled pod.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the pod.
+  - name: deployment
+    type: string
+    required: false
+    description: Owning deployment name, used to check resource limits.
+
+steps:
+  - id: step-01
+    name: Get pod detail with resource limits
+    order: 1
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Get previous container logs (before OOM)
+    order: 2
+    type: kubernetes
+    action: get_logs
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+      tailLines: 200
+      previous: true
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Get pod events including OOMKilled events
+    order: 3
+    type: kubernetes
+    action: get_events
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+  - id: step-04
+    name: Get deployment resource configuration
+    order: 4
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: pod_exists
+      description: OOM pod still present for analysis
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: true

@@ -97,9 +97,10 @@ class PlaybookExecutionService {
       let lastFailedStage = null;
 
       for (const stage of sortedStages) {
-        // Skip rollback/escalation stages during normal execution
-        if (stage.type === PLAYBOOK_STAGE_TYPE.ROLLBACK && !record._inRollback) continue;
-        if (stage.type === PLAYBOOK_STAGE_TYPE.ESCALATION && !record._inEscalation) continue;
+        // Skip rollback/escalation/verification stages during normal execution
+        if (stage.type === PLAYBOOK_STAGE_TYPE.ROLLBACK     && !record._inRollback)    continue;
+        if (stage.type === PLAYBOOK_STAGE_TYPE.ESCALATION   && !record._inEscalation)  continue;
+        if (stage.type === PLAYBOOK_STAGE_TYPE.VERIFICATION)                           continue;
 
         const stageRecord = _createStageRecord(stage);
         record.stageExecutions.push(stageRecord);
@@ -151,14 +152,32 @@ class PlaybookExecutionService {
         record.status = PLAYBOOK_EXECUTION_STATUS.VERIFYING;
 
         const verifyStages = sortedStages.filter(s => s.type === PLAYBOOK_STAGE_TYPE.VERIFICATION);
+        let verificationPassed = true;
         for (const vs of verifyStages) {
           const vr = _createStageRecord(vs);
           record.stageExecutions.push(vr);
           await this._executeStage(vr, vs, incidentContext, playbookDef, options);
+          if (vr.status === STAGE_EXECUTION_STATUS.FAILED) {
+            verificationPassed = false;
+            const failPolicy = vs.failurePolicy || PLAYBOOK_FAILURE_POLICY.STOP;
+            if (failPolicy === PLAYBOOK_FAILURE_POLICY.ESCALATE) {
+              record.status = PLAYBOOK_EXECUTION_STATUS.ESCALATED;
+              await this._triggerEscalation(record, playbookDef, vs, options);
+            } else {
+              record.status        = PLAYBOOK_EXECUTION_STATUS.FAILED;
+              record.errorCode     = 'VERIFICATION_FAILED';
+              record.errorMessage  = vr.error || `Verification stage '${vs.id}' failed`;
+            }
+            break;
+          }
         }
 
-        record.status = PLAYBOOK_EXECUTION_STATUS.SUCCEEDED;
-        _setOutcome(record, true, Date.now() - startedAt, null);
+        if (verificationPassed) {
+          record.status = PLAYBOOK_EXECUTION_STATUS.SUCCEEDED;
+          _setOutcome(record, true, Date.now() - startedAt, null);
+        } else {
+          _setOutcome(record, false, Date.now() - startedAt, record.errorMessage);
+        }
       }
 
     } catch (err) {
@@ -220,15 +239,16 @@ class PlaybookExecutionService {
 
         // Execute via RunbookExecutionEngine (NEVER call ActionHandlerRegistry directly)
         const rbExecResult = await this._executionEngine.execute(
-          rbId,
-          rbVersion,
-          mapped,
+          rbDef,
           {
-            tenantId:      options.tenantId,
-            correlationId: options.correlationId,
-            initiatedBy:   options.initiatedBy,
-            incidentId:    options.incidentId,
-            dryRun:        options.dryRun,
+            explicitInputs:   mapped,
+            incidentEvidence: incidentContext.evidence || {},
+            alertLabels:      incidentContext.signal?.labels || {},
+            tenantId:         options.tenantId,
+            correlationId:    options.correlationId,
+            initiatedBy:      options.initiatedBy,
+            incidentId:       options.incidentId,
+            dryRun:           options.dryRun,
           },
         );
 

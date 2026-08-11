@@ -1,0 +1,83 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-RESTART-POD
+name: Kubernetes Pod Restart
+description: >
+  Restart a Kubernetes pod by deleting it and allowing the owning controller
+  (Deployment, ReplicaSet, StatefulSet) to recreate it.
+  Applicable to CrashLoopBackOff, OOMKilled, or otherwise unhealthy pod states.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: MEDIUM
+  blastRadius: pod
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Exact name of the Kubernetes pod to restart.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the target pod.
+
+steps:
+  - id: step-01
+    name: Delete pod to trigger restart
+    order: 1
+    type: kubernetes
+    action: restart_pod
+    params:
+      resource: ${pod}
+      namespace: ${namespace}
+    requiresConfirmation: true
+    timeoutSeconds: 60
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Wait for pod recreation
+    order: 2
+    type: wait
+    action: poll_condition
+    params:
+      conditionType: pod_running
+      resource: ${pod}
+      namespace: ${namespace}
+      intervalSeconds: 5
+    timeoutSeconds: 300
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 120
+  checks:
+    - id: check-01
+      type: pod_running
+      description: Confirm the restarted pod is in Running state
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 120
+
+auditConfig:
+  redactSensitiveValues: false

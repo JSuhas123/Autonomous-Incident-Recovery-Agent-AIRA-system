@@ -1,13 +1,13 @@
 apiVersion: aira.io/v1
 kind: Playbook
 playbookId: PB-K8S-PROBE-FAILURE-001
-semver: "1.0.0"
+semver: "1.1.0"
 name: Kubernetes Liveness / Readiness Probe Failure
 description: >
   Investigates containers failing liveness or readiness probes. Gathers
   container logs, probe configuration and recent events to determine root
   cause and recommend remediation.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   type: system
@@ -36,12 +36,10 @@ stages:
     order: 1
     description: Gather logs and events for the failing container
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-INVESTIGATE-POD
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-          container: "${incident.resource.container}"
         required: true
     failurePolicy: CONTINUE
 
@@ -51,11 +49,10 @@ stages:
     order: 2
     description: Restart the pod to clear transient probe failures
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-RESTART-POD
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
         required: true
     failurePolicy: STOP
 
@@ -65,11 +62,10 @@ stages:
     order: 3
     description: Confirm probes pass after restart
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-VERIFY-POD
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
         required: true
     failurePolicy: ESCALATE
 

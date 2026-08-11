@@ -1,0 +1,75 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-VERIFY-DEPLOYMENT
+name: Kubernetes Deployment Verification
+description: >
+  Read-only verification that a Kubernetes Deployment is available, all replicas
+  are ready, and the rollout is complete. Used after deployment restarts or rollbacks.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Name of the Kubernetes Deployment to verify.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the deployment.
+
+steps:
+  - id: step-01
+    name: Get deployment status
+    order: 1
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment available condition is true
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+    - id: check-02
+      type: replicas_ready
+      description: All desired replicas are ready
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false

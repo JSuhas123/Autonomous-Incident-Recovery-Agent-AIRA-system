@@ -1,0 +1,78 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-INVESTIGATE-NODE
+name: Kubernetes Node Investigation
+description: >
+  Read-only investigation of a Kubernetes node. Collects node conditions,
+  resource pressure (CPU/memory/disk/PID), pod count, recent events,
+  and readiness state. Used before cordon/drain decisions.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: node
+    type: string
+    required: true
+    description: Name of the Kubernetes node to investigate.
+  - name: namespace
+    type: string
+    required: false
+    description: Namespace context for listing affected pods.
+    default: default
+
+steps:
+  - id: step-01
+    name: Get node detail
+    order: 1
+    type: kubernetes
+    action: get_node
+    params:
+      node: ${node}
+    failurePolicy: STOP
+
+  - id: step-02
+    name: List pods on the node
+    order: 2
+    type: kubernetes
+    action: list_pods
+    params:
+      namespace: ${namespace}
+      fieldSelector: spec.nodeName=${node}
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: node_ready
+      description: Node readiness state at time of investigation
+      params:
+        node: ${node}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: false

@@ -1,12 +1,12 @@
 apiVersion: aira.io/v1
 kind: Playbook
 playbookId: PB-K8S-OOM-001
-semver: 1.0.0
+semver: 1.1.0
 name: Kubernetes OOMKilled Pod Recovery
 description: >
   Recovery playbook for pods terminated with OOMKilled (Out Of Memory).
   Investigates memory usage, scales deployment if needed, restarts pod.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   ownerType: system
@@ -46,54 +46,42 @@ approval:
 stages:
   - id: investigate-memory
     order: 1
-    name: Investigate Memory Usage
+    name: Investigate OOMKilled Pod
     type: INVESTIGATION
-    description: Collect memory metrics and pod state before taking action
+    description: Collect previous logs, events, and resource limits for OOM analysis
     failurePolicy: CONTINUE
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-INVESTIGATE-OOM
         required: true
         parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          podName: "${incident.resource.pod}"
-
-  - id: scale-deployment
-    order: 2
-    name: Scale Deployment for Memory Relief
-    type: MITIGATION
-    description: Temporarily scale deployment to distribute load
-    failurePolicy: CONTINUE
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        required: false
-        parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
           deployment: "${incident.resource.deployment}"
 
   - id: restart-oom-pod
-    order: 3
+    order: 2
     name: Restart OOMKilled Pod
     type: RECOVERY
-    description: Restart the OOMKilled pod
+    description: Restart the OOMKilled pod to restore service
     failurePolicy: ROLLBACK
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-RESTART-POD
         required: true
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          podName: "${incident.resource.pod}"
 
   - id: verify-pod-health
-    order: 4
+    order: 3
     name: Verify Pod Health After OOM Recovery
     type: VERIFICATION
     failurePolicy: ESCALATE
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-VERIFY-POD
         required: true
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          podName: "${incident.resource.pod}"
 
 rollback:
   strategy: NONE

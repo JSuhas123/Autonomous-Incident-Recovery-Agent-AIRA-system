@@ -1,0 +1,109 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-INVESTIGATE-POD
+name: Kubernetes Pod Investigation
+description: >
+  Read-only investigation of a Kubernetes pod. Collects current state,
+  container statuses, restart counts, last termination reason, events,
+  and recent logs. No mutations. Safe for autonomous execution.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Exact name of the Kubernetes pod to investigate.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the target pod.
+  - name: label_selector
+    type: string
+    required: false
+    description: Optional label selector to scope pod discovery.
+  - name: tail_lines
+    type: integer
+    required: false
+    default: 100
+    description: Number of log tail lines to capture.
+
+steps:
+  - id: step-01
+    name: List pods in namespace
+    order: 1
+    type: kubernetes
+    action: list_pods
+    params:
+      namespace: ${namespace}
+      labelSelector: ${label_selector}
+    failurePolicy: CONTINUE
+
+  - id: step-02
+    name: Get pod detail
+    order: 2
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+  - id: step-03
+    name: Get pod events
+    order: 3
+    type: kubernetes
+    action: get_events
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+  - id: step-04
+    name: Capture recent logs
+    order: 4
+    type: kubernetes
+    action: get_logs
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+      tailLines: ${tail_lines}
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: pod_exists
+      description: Confirm pod is present (investigation sanity check)
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: true

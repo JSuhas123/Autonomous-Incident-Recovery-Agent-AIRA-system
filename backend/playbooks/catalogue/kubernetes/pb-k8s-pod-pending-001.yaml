@@ -1,12 +1,12 @@
 apiVersion: aira.io/v1
 kind: Playbook
 playbookId: PB-K8S-POD-PENDING-001
-semver: "1.0.0"
+semver: "1.1.0"
 name: Kubernetes Pod Stuck in Pending
 description: >
   Diagnoses and resolves pods stuck in Pending state. Covers insufficient
   resources, missing secrets/configmaps, unschedulable nodes, and taints.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   type: system
@@ -36,42 +36,21 @@ stages:
     name: Investigate Pending Pod
     type: INVESTIGATION
     order: 1
-    description: Gather scheduling events and resource quotas
+    description: Gather scheduling events and pod detail
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
+      - runbookId: RB-K8S-INVESTIGATE-POD
         parameterMappings:
+          pod: "${incident.resource.pod}"
           namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
         required: true
     failurePolicy: STOP
 
-  - stageId: diagnose-scheduling
-    name: Diagnose Scheduling Failure
-    type: DIAGNOSIS_SUPPORT
+  - stageId: manual-remediation
+    name: Manual Remediation Required
+    type: MANUAL_REQUIRED
     order: 2
-    description: Analyse events to determine scheduling block reason
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: verify-scheduling
-    name: Verify Pod Scheduled
-    type: VERIFICATION
-    order: 3
-    description: Confirm pod transitions out of Pending
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-        required: true
+    description: Scheduling blocks require human action — check quotas, taints, node capacity
+    runbooks: []
     failurePolicy: ESCALATE
 
 risk:

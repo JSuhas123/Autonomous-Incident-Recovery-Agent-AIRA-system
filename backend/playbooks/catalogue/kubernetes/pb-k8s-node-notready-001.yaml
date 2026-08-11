@@ -6,7 +6,7 @@ name: Kubernetes Node NotReady Recovery
 description: >
   Recovery playbook for Kubernetes nodes stuck in NotReady state.
   Investigates node conditions, drains workloads, and triggers node remediation.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   ownerType: system
@@ -50,35 +50,35 @@ stages:
     type: INVESTIGATION
     failurePolicy: STOP
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        required: false
+      - runbookId: RB-K8S-INVESTIGATE-NODE
+        required: true
         parameterMappings:
-          namespace: "${incident.resource.namespace}"
           node: "${incident.resource.node}"
+          namespace: "${incident.resource.namespace}"
 
-  - id: drain-node
+  - id: cordon-node
     order: 2
-    name: Drain Node Workloads
+    name: Cordon NotReady Node
     type: MITIGATION
-    description: Safely drain workloads from the NotReady node to restore availability
+    description: Prevent new scheduling on the NotReady node to protect workloads
     failurePolicy: ESCALATE
+    requiresApproval: true
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        required: false
+      - runbookId: RB-K8S-CORDON-NODE
+        required: true
         parameterMappings:
-          namespace: "${incident.resource.namespace}"
           node: "${incident.resource.node}"
 
-  - id: verify-workload-migration
+  - id: verify-node-cordoned
     order: 3
-    name: Verify Workload Migration
+    name: Verify Node Cordoned
     type: VERIFICATION
     failurePolicy: ESCALATE
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        required: false
+      - runbookId: RB-K8S-INVESTIGATE-NODE
+        required: true
         parameterMappings:
-          namespace: "${incident.resource.namespace}"
+          node: "${incident.resource.node}"
 
 rollback:
   strategy: NONE

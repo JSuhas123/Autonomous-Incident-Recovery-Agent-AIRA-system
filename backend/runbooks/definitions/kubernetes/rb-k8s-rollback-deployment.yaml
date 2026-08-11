@@ -1,0 +1,94 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-ROLLBACK-DEPLOYMENT
+name: Kubernetes Deployment Rollback
+description: >
+  Roll back a Kubernetes Deployment to its previous known-good revision using
+  the native Kubernetes rollback API. Safe for failed rollouts or bad image deployments.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: MEDIUM
+  blastRadius: deployment
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Name of the Kubernetes Deployment to roll back.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the deployment.
+  - name: revision
+    type: integer
+    required: false
+    description: Specific revision to roll back to. Omit to roll back to previous revision.
+
+steps:
+  - id: step-01
+    name: Roll back deployment to previous revision
+    order: 1
+    type: kubernetes
+    action: rollback_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+      revision: ${revision}
+    requiresConfirmation: true
+    timeoutSeconds: 120
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Wait for rollback rollout to complete
+    order: 2
+    type: wait
+    action: poll_condition
+    params:
+      conditionType: deployment_available
+      resource: ${deployment}
+      namespace: ${namespace}
+      intervalSeconds: 10
+    timeoutSeconds: 600
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: All desired replicas are available after rollback
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+    - id: check-02
+      type: rollout_complete
+      description: Rollout is complete — no stale pods remaining
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false

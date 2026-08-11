@@ -1,0 +1,79 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-INVESTIGATE-IMAGEPULL
+name: Kubernetes ImagePullBackOff Investigation
+description: >
+  Read-only investigation for pods in ImagePullBackOff state. Collects
+  pod events, image reference, and registry details to identify whether
+  the issue is a bad tag, missing pull secret, or registry unavailability.
+  Safe for autonomous execution — no mutations.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Exact name of the pod in ImagePullBackOff.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the pod.
+
+steps:
+  - id: step-01
+    name: Get pod detail including image references
+    order: 1
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Get pod events for pull failure details
+    order: 2
+    type: kubernetes
+    action: get_events
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: pod_exists
+      description: Pod is present for analysis
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+
+auditConfig:
+  redactSensitiveValues: true

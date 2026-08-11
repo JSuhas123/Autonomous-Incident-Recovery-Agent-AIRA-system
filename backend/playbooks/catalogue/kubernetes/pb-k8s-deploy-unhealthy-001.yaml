@@ -6,7 +6,7 @@ name: Kubernetes Unhealthy Deployment Recovery
 description: >
   Recovery playbook for Kubernetes deployments that are unhealthy,
   with unavailable replicas or stalled rollouts.
-lifecycle: DRAFT
+lifecycle: ACTIVE
 
 owner:
   ownerType: system
@@ -52,23 +52,23 @@ stages:
     type: INVESTIGATION
     failurePolicy: STOP
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
         required: true
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment: "${incident.resource.deployment}"
 
-  - id: scale-deployment
+  - id: restart-deployment
     order: 2
-    name: Scale Deployment to Recover Replicas
+    name: Restart Unhealthy Deployment
     type: RECOVERY
     failurePolicy: ROLLBACK
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-RESTART-DEPLOYMENT
         required: true
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment: "${incident.resource.deployment}"
 
   - id: verify-deployment-health
     order: 3
@@ -76,11 +76,11 @@ stages:
     type: VERIFICATION
     failurePolicy: ESCALATE
     runbooks:
-      - runbookId: RB-K8S-POD-RESTART
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
         required: true
         parameterMappings:
+          resource: "${incident.resource.deployment}"
           namespace: "${incident.resource.namespace}"
-          deployment: "${incident.resource.deployment}"
 
 rollback:
   strategy: STAGE_ROLLBACK

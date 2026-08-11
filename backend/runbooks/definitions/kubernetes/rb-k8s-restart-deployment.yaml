@@ -1,0 +1,83 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-RESTART-DEPLOYMENT
+name: Kubernetes Deployment Rollout Restart
+description: >
+  Trigger a rolling restart of all pods in a Kubernetes Deployment by patching
+  the pod template annotations. Existing pods are replaced one-by-one per the
+  deployment's rollout strategy. No traffic loss when PodDisruptionBudgets are respected.
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+
+risk:
+  level: MEDIUM
+  blastRadius: deployment
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Name of the Kubernetes Deployment to restart.
+  - name: namespace
+    type: string
+    required: true
+    description: Kubernetes namespace containing the deployment.
+
+steps:
+  - id: step-01
+    name: Trigger deployment rollout restart
+    order: 1
+    type: kubernetes
+    action: restart_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    requiresConfirmation: true
+    timeoutSeconds: 60
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Wait for rollout to complete
+    order: 2
+    type: wait
+    action: poll_condition
+    params:
+      conditionType: deployment_available
+      resource: ${deployment}
+      namespace: ${namespace}
+      intervalSeconds: 10
+    timeoutSeconds: 600
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: All desired replicas are available
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false
