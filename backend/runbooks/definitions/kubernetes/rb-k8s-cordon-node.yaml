@@ -9,7 +9,7 @@ description: >
   a node for maintenance or when a node is suspected degraded.
   Requires approval — affects scheduling across the cluster.
 semver: 1.0.0
-lifecycle: ACTIVE
+lifecycle: DRAFT
 
 owner:
   ownerType: system
@@ -47,6 +47,7 @@ steps:
     failurePolicy: STOP
 
 rollbackConfig:
+  enabled: true
   strategy: EXPLICIT_STEPS
   steps:
     - id: rb-step-01

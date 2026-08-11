@@ -63,7 +63,7 @@ const verificationChallengeSchema = new mongoose.Schema(
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
+      // TTL index defined below via schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
     },
     verifiedAt: {
       type: Date,

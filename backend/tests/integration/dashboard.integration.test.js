@@ -22,6 +22,7 @@ const TenantConfig             = require("../../models/TenantConfig");
 const UserSession              = require("../../models/UserSession");
 const AuthenticationAuditEvent = require("../../models/AuthenticationAuditEvent");
 const DecisionTrace            = require("../../models/DecisionTrace");
+const Service                  = require("../../models/Service");
 const { getCookieName }        = require("../../services/identity/sessionService");
 
 let replSet;
@@ -103,35 +104,21 @@ describe("GET /api/v1/dashboard/onboarding", () => {
     expect(data.nextRecommendedAction).toBe("ADD_SERVICE");
   });
 
-  test("serviceAdded becomes true when DecisionTraces exist for tenant", async () => {
+  test("serviceAdded becomes true when a Service exists for the organization", async () => {
     const cookie = await registerAndLogin("svc@example.com", "SvcOrg");
 
-    // Find the tenantId just created
     const org = await Organization.findOne({ name: "SvcOrg" });
     expect(org).not.toBeNull();
 
-    await DecisionTrace.create({
-      decisionId: "trace-001",
+    await Service.create({
+      organizationId: org._id,
       tenantId: org.tenantId,
-      correlationId: "corr-001",
-      tier: "execute",
-      confidence: 0.9,
-      recommendedAction: "RESTART",
-      decision: "TIERED_DECISION",
-      inputs: { signals: {}, severity: "HIGH", confidence: 0.9, tier: "execute" },
-      reasoning: {
-        hypothesis: "test",
-        evidenceFor: [],
-        evidenceAgainst: [],
-        confidenceFactors: [],
-        tier_reasoning: "high confidence",
-      },
-      explanation: {
-        decision: "RESTART",
-        reasoning: "test",
-        confidence: { score: 0.9, factors: [] },
-        policiesApplied: [],
-      },
+      name: "payments-api",
+      slug: "payments-api",
+      type: "api",
+      environment: "production",
+      status: "active",
+      createdBy: (await require("../../models/User").findOne({ email: "svc@example.com" }))._id,
     });
 
     const res = await request(app)

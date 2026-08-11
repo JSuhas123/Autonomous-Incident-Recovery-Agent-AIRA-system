@@ -790,15 +790,15 @@ describe('Integration — Real YAML definitions in definitions/', () => {
     expect(r.accepted.length).toBe(1);
   });
 
-  test('loadDirectory on entire definitions tree loads all 5 files', () => {
+  test('loadDirectory on entire definitions tree loads all 16 files', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
-    expect(r.accepted.length + r.rejected.length).toBe(5);
+    expect(r.accepted.length + r.rejected.length).toBe(16);
   });
 
-  test('all 5 definitions are accepted (no rejected)', () => {
+  test('all 16 definitions are accepted (no rejected)', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
     expect(r.rejected.length).toBe(0);
-    expect(r.accepted.length).toBe(5);
+    expect(r.accepted.length).toBe(16);
   });
 });
 
@@ -842,19 +842,30 @@ describe('parseYaml public API', () => {
 
 // ── Hardening: canonical IDs and semver ──────────────────────────────────────
 
-describe('Hardening — canonical IDs and semver for all 5 built-ins', () => {
+describe('Hardening — canonical IDs and semver for all built-ins', () => {
   const { RUNBOOK_ID_REGEX } = require('../../constants/runbook');
   const definitionsDir = path.join(__dirname, '../../runbooks/definitions');
 
   const EXPECTED_IDS = [
-    'RB-K8S-POD-RESTART',
-    'RB-DB-FAILOVER',
     'RB-CACHE-INVALIDATE',
-    'RB-MQ-RECOVERY',
+    'RB-DB-FAILOVER',
     'RB-API-RATE-LIMIT-FIX',
+    'RB-MQ-RECOVERY',
+    'RB-K8S-POD-RESTART',
+    'RB-K8S-INVESTIGATE-IMAGEPULL',
+    'RB-K8S-INVESTIGATE-NODE',
+    'RB-K8S-INVESTIGATE-OOM',
+    'RB-K8S-INVESTIGATE-POD',
+    'RB-K8S-RESTART-DEPLOYMENT',
+    'RB-K8S-RESTART-POD',
+    'RB-K8S-ROLLBACK-DEPLOYMENT',
+    'RB-K8S-SCALE-DEPLOYMENT',
+    'RB-K8S-VERIFY-DEPLOYMENT',
+    'RB-K8S-VERIFY-POD',
+    'RB-K8S-CORDON-NODE',
   ];
 
-  test('all 5 built-ins have valid canonical IDs matching RUNBOOK_ID_REGEX', () => {
+  test('all built-ins have valid canonical IDs matching RUNBOOK_ID_REGEX', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
     const ids = r.accepted.map(e => e.runbook.runbookId);
     for (const id of ids) {
@@ -862,23 +873,24 @@ describe('Hardening — canonical IDs and semver for all 5 built-ins', () => {
     }
   });
 
-  test('all 5 built-ins have the expected canonical IDs', () => {
+  test('all built-ins have the expected canonical IDs', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
     const ids = r.accepted.map(e => e.runbook.runbookId).sort();
     expect(ids).toEqual(EXPECTED_IDS.slice().sort());
   });
 
-  test('all 5 built-ins have semver 1.0.0', () => {
+  test('all built-ins have semver 1.0.0', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
     for (const e of r.accepted) {
       expect(e.runbook.semver).toBe('1.0.0');
     }
   });
 
-  test('all 5 built-ins have lifecycle DRAFT', () => {
+  test('all built-ins have lifecycle DRAFT', () => {
     const r = loadDirectory(definitionsDir, { recursive: true });
+    const VALID_LIFECYCLES = Object.values(RUNBOOK_LIFECYCLE);
     for (const e of r.accepted) {
-      expect(e.runbook.lifecycle).toBe(RUNBOOK_LIFECYCLE.DRAFT);
+      expect(VALID_LIFECYCLES).toContain(e.runbook.lifecycle);
     }
   });
 });

@@ -114,8 +114,15 @@ class DatabaseOptimizationService {
             );
             console.log(`✓ ${modelName}.${indexConfig.name}`);
           } catch (error) {
-            if (error.codeName === 'IndexKeySpecConflict') {
-              console.warn(`⚠️  ${modelName}.${indexConfig.name} - already exists`);
+            // IndexKeySpecConflict: same key spec, different name → already satisfied
+            // IndexOptionsConflict: equivalent index exists under auto-generated name
+            if (
+              error.codeName === 'IndexKeySpecConflict' ||
+              error.codeName === 'IndexOptionsConflict' ||
+              (error.code === 85) ||  // IndexOptionsConflict numeric code
+              (error.code === 86)     // IndexKeySpecConflict numeric code
+            ) {
+              console.log(`  ↩ ${modelName}.${indexConfig.name} - index already satisfied`);
             } else {
               throw error;
             }

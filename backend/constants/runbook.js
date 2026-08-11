@@ -92,6 +92,7 @@ const RUNBOOK_RISK_LEVEL = Object.freeze({
 const RUNBOOK_PARAM_TYPE = Object.freeze({
   STRING: 'string',
   NUMBER: 'number',
+  INTEGER: 'integer',
   BOOLEAN: 'boolean',
   ENUM: 'enum',
   DURATION: 'duration',

@@ -106,8 +106,7 @@ const ApprovalRequestSchema = new mongoose.Schema(
     },
     expiresAt: {
       type: Date,
-      index: true,
-      // Set to current time + approval timeout
+      // TTL index defined below via schema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 })
       default: () => new Date(Date.now() + (parseInt(process.env.APPROVAL_TIMEOUT_MS) || 600000)),
     },
     approvedAt: {

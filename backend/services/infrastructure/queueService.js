@@ -1,6 +1,11 @@
 const amqp = require("amqplib");
 const crypto = require("crypto");
 
+// Remove credentials from connection strings before logging
+function redactUrl(url) {
+  try { const u = new URL(url); if (u.password) u.password = '***'; if (u.username) u.username = '***'; return u.toString(); } catch { return '[redacted]'; }
+}
+
 class QueueService {
   constructor() {
     this.connection = null;
@@ -35,7 +40,7 @@ class QueueService {
    */
   async connect(url = process.env.RABBITMQ_URL || "amqp://localhost") {
     try {
-      console.log(`[queue] Connecting to ${url}...`);
+      console.log(`[queue] Connecting to ${redactUrl(url)}...`);
       
       // Set a timeout for the connection attempt
       const connectionPromise = amqp.connect(url);

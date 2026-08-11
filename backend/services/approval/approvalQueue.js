@@ -20,7 +20,7 @@ class ApprovalQueue {
     this.memoryStore = new Map(); // Fallback in-memory store
     this.timeoutMs = parseInt(process.env.APPROVAL_TIMEOUT_MS || '600000'); // 10 minutes default
     
-    console.log('[ApprovalQueue] Initialized with backend:', this.backedBy);
+    console.log('[ApprovalQueue] Initialized — primary store: MongoDB, in-memory cache:', this.backedBy === 'memory' ? 'enabled' : 'disabled');
   }
 
   /**

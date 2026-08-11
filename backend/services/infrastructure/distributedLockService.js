@@ -21,6 +21,11 @@ const redis = require('redis');
 const crypto = require('crypto');
 const systemHealthService = require('./systemHealthService');
 
+// Remove credentials from connection strings before logging
+function redactUrl(url) {
+  try { const u = new URL(url); if (u.password) u.password = '***'; if (u.username) u.username = '***'; return u.toString(); } catch { return '[redacted]'; }
+}
+
 class DistributedLockService {
   constructor() {
     this.client = null;
@@ -37,7 +42,7 @@ class DistributedLockService {
    */
   async connect(url = process.env.REDIS_URL || 'redis://localhost:6379') {
     try {
-      console.log(`[lock] Connecting to Redis at ${url}...`);
+      console.log(`[lock] Connecting to Redis at ${redactUrl(url)}...`);
 
       this.client = redis.createClient({ url, socket: { reconnectStrategy: () => null } });
 

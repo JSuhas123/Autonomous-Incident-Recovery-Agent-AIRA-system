@@ -36,9 +36,9 @@ const policySchema = Joi.object({
                 min: Joi.number().min(0).optional(),
                 max: Joi.number().min(0).optional(),
               }).optional(),
-            })
+            }).unknown(true)
           )
-          .required(),
+          .optional(),
         
         // Approval requirements
         requiresApproval: Joi.boolean().optional().default(false),
@@ -57,17 +57,15 @@ const policySchema = Joi.object({
       Joi.object({
         name: Joi.string().required(),
         description: Joi.string().required(),
-        riskLevel: Joi.string().valid('low', 'medium', 'high', 'critical').required(),
+        riskLevel: Joi.string().valid('none', 'low', 'medium', 'medium-high', 'high', 'critical').required(),
         reversible: Joi.boolean().optional().default(false),
         dryRunAvailable: Joi.boolean().optional().default(false),
         maxBlastRadius: Joi.number().min(0).max(100).optional(),
         timeout_ms: Joi.number().min(1000).optional(),
-        
-        // Action-specific configs
         parameters: Joi.object()
           .pattern(Joi.string(), Joi.any())
           .optional(),
-      })
+      }).unknown(true) // allow maxRetries, retryBackoff, cooldowns, etc.
     )
     .optional(),
   
@@ -91,10 +89,10 @@ const policySchema = Joi.object({
  * Validate policy against schema
  */
 function validatePolicy(policy) {
-  const { error, value, warning } = policySchema.validate(policy, {
+  // NOTE: Joi 17 does not support warnings in synchronous validate(); use abortEarly:false only
+  const { error, value } = policySchema.validate(policy, {
     abortEarly: false,
     stripUnknown: false,
-    warnings: true,
   });
 
   if (error) {
@@ -112,7 +110,7 @@ function validatePolicy(policy) {
   return {
     valid: true,
     errors: [],
-    warnings: warning ? warning.details.map(w => w.message) : [],
+    warnings: [],
     value,
   };
 }

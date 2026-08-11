@@ -1,5 +1,10 @@
 const mongoose = require("mongoose");
 
+// Remove credentials from connection strings before logging
+function redactUrl(url) {
+  try { const u = new URL(url); if (u.password) u.password = '***'; if (u.username) u.username = '***'; return u.toString(); } catch { return '[redacted]'; }
+}
+
 let memoryServer = null;
 
 async function connectDatabase() {
@@ -8,7 +13,7 @@ async function connectDatabase() {
 
   try {
     await mongoose.connect(configuredUri);
-    console.log(`[db] Connected to MongoDB at ${configuredUri}`);
+    console.log(`[db] Connected to MongoDB at ${redactUrl(configuredUri)}`);
     return {
       uri: configuredUri,
       inMemory: false,
