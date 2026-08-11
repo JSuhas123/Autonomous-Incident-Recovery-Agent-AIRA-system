@@ -6,6 +6,7 @@ const mongoose = require("mongoose");
 
 const { Incident, INCIDENT_STATUSES, INCIDENT_SEVERITIES } = require("../models/Incident");
 const incidentService = require("../services/incidents/incidentService");
+const { getIncidentPlaybookService } = require("../services/incidents/incidentPlaybookService");
 const { record: auditRecord } = require("../services/identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../constants/authEvents");
 
@@ -250,6 +251,45 @@ router.get("/:incidentId/timeline", async (req, res) => {
     }));
 
   return res.json({ timeline, count: timeline.length });
+});
+
+// ─── GET /:incidentId/playbooks — analyse matching playbooks ──────────────────
+
+router.get("/:incidentId/playbooks", async (req, res) => {
+  const incident = await loadIncident(req, res);
+  if (!incident) return;
+
+  try {
+    const tenantId = req.auth?.tenantId || incident.organizationId?.toString();
+    const analysis = await getIncidentPlaybookService().analyseIncident(incident, { tenantId });
+    return res.json(analysis);
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to analyse playbooks", details: err.message });
+  }
+});
+
+// ─── POST /:incidentId/playbooks/execute — execute best matching playbook ────
+
+router.post("/:incidentId/playbooks/execute", async (req, res) => {
+  const incident = await loadIncident(req, res);
+  if (!incident) return;
+
+  try {
+    const tenantId      = req.auth?.tenantId || incident.organizationId?.toString();
+    const { dryRun, correlationId } = req.body || {};
+
+    const result = await getIncidentPlaybookService().executeForIncident(incident, {
+      tenantId,
+      correlationId,
+      initiatedBy: req.auth?.userId,
+      dryRun: !!dryRun,
+    });
+
+    const status = result.executed ? 200 : 202;
+    return res.status(status).json(result);
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to execute playbook", details: err.message });
+  }
 });
 
 module.exports = router;

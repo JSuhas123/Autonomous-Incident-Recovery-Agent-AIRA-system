@@ -145,3 +145,132 @@ npx jest --no-coverage --forceExit
 
 - **Backend**: Railway — set `NODE_ENV=production`, `SESSION_SECRET`, `MONGODB_URI`, `CORS_ORIGINS`
 - **Frontend**: Vercel — set `VITE_API_URL` to Railway backend URL
+
+---
+
+## Playbook + Runbook Platform V1
+
+### Architecture
+
+```
+Observability Signal
+        │
+        ▼
+   Incident Model (MongoDB)
+        │
+        ▼
+ incidentPlaybookService
+  ├── analyseIncident()  →  playbookMatcher.matchPlaybooks()
+  │                         └── resolveMatchOutcome()
+  └── executeForIncident()
+        │
+        ▼
+   PlaybookExecutionEngine
+        │  reads playbookDef → policy → approval mode → stages
+        ▼
+   RunbookExecutionEngine  ──►  Action Handlers (kubernetes/*, wait/*)
+        │
+        ├── Verification steps
+        ├── Rollback (on failure)
+        └── Escalation (on unrecoverable)
+        │
+        ▼
+   DecisionTrace + AuditEvent (MongoDB)
+```
+
+### Playbook Catalogue (21 playbooks, 18 canonical families)
+
+| Family | Playbook ID | Category | Approval |
+|---|---|---|---|
+| K8S CrashLoopBackOff | PB-K8S-CRASHLOOP-001 | kubernetes | CONDITIONAL |
+| K8S OOMKilled | PB-K8S-OOM-001 | kubernetes | CONDITIONAL |
+| K8S Node NotReady | PB-K8S-NODE-NOTREADY-001 | kubernetes | MANUAL |
+| K8S ImagePullBackOff | PB-K8S-IMAGEPULL-001 | kubernetes | MANUAL |
+| K8S PVC Bound | PB-K8S-PVC-001 | kubernetes | MANUAL |
+| K8S HPA Exhausted | PB-K8S-HPA-001 | kubernetes | MANUAL |
+| DB Connection Pool | PB-DB-CONNPOOL-001 | database | CONDITIONAL |
+| DB Replication Lag | PB-DB-REPLICATION-LAG-001 | database | MANUAL |
+| DB Disk Full | PB-DB-DISK-001 | database | MANUAL |
+| DB Slow Queries | PB-DB-SLOW-QUERY-001 | database | AUTOMATIC |
+| API High Latency | PB-API-LATENCY-001 | api | CONDITIONAL |
+| API High Error Rate | PB-API-ERROR-RATE-001 | api | CONDITIONAL |
+| API Rate Limit | PB-API-RATELIMIT-001 | api | AUTOMATIC |
+| Queue Backlog | PB-QUEUE-BACKLOG-001 | queue | CONDITIONAL |
+| Queue DLQ Spike | PB-QUEUE-DLQ-001 | queue | MANUAL |
+| Memory Leak | PB-MEMORY-LEAK-001 | resource | MANUAL |
+| CPU Throttle | PB-CPU-THROTTLE-001 | resource | CONDITIONAL |
+| Disk IO Saturation | PB-DISK-IO-001 | resource | CONDITIONAL |
+| TLS Expiry | PB-CERT-EXPIRY-001 | security | MANUAL |
+| Auth Failure Spike | PB-AUTH-FAILURE-001 | security | MANUAL |
+| Network Packet Loss | PB-NETWORK-LOSS-001 | network | CONDITIONAL |
+
+### Runbook Registry (1 runbook, lifecycle: DRAFT)
+
+| Runbook ID | Name | Semver | Lifecycle | Handlers |
+|---|---|---|---|---|
+| RB-K8S-POD-RESTART | Kubernetes Pod Restart | 1.0.0 | DRAFT | 5 steps, all IMPLEMENTED |
+
+**Lifecycle promotion path**: `DRAFT → VALIDATED → APPROVED → ACTIVE`  
+A runbook reaches ACTIVE only after operator promotion in MongoDB. The PB-K8S-CRASHLOOP-001 golden path is blocked on RB-K8S-POD-RESTART reaching ACTIVE — all action handlers are present and implemented.
+
+### Action Handlers (8 registered)
+
+| Handler | Module |
+|---|---|
+| `kubernetes/restart_pod` | kubernetesHandlers.js |
+| `kubernetes/restart_deployment` | kubernetesHandlers.js |
+| `kubernetes/scale_deployment` | kubernetesHandlers.js |
+| `kubernetes/list_pods` | kubernetesHandlers.js |
+| `kubernetes/get_logs` | kubernetesHandlers.js |
+| `kubernetes/check_pod_health` | kubernetesHandlers.js |
+| `kubernetes/get_deployment_status` | kubernetesHandlers.js |
+| `wait/poll_condition` | waitHandlers.js |
+
+### Execution Outcome Codes (26 total)
+
+`NO_SAFE_PLAYBOOK`, `NO_ACTIVE_PLAYBOOK`, `RUNBOOK_NOT_EXECUTABLE`, `MISSING_ACTION_HANDLER`, `MISSING_EVIDENCE`, `INSUFFICIENT_CONFIDENCE`, `PARAMETER_UNRESOLVED`, `RESOURCE_AMBIGUOUS`, `PRECONDITION_FAILED`, `POLICY_DENIED`, `APPROVAL_REJECTED`, `SUGGEST_ONLY`, `KILL_SWITCH_ACTIVE`, `BLAST_RADIUS_EXCEEDED`, `HIGH_RISK_ACTION`, `DESTRUCTIVE_ACTION`, `NON_REVERSIBLE_ACTION`, `EXECUTION_FAILED`, `RETRY_EXHAUSTED`, `VERIFICATION_FAILED`, `ROLLBACK_UNAVAILABLE`, `ROLLBACK_FAILED`, `INTEGRATION_UNAVAILABLE`, `INFRASTRUCTURE_UNREACHABLE`, `SECURITY_VIOLATION`, `TENANT_BOUNDARY_VIOLATION`
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/v1/playbooks` | List playbooks (filter: lifecycle, category) |
+| GET | `/api/v1/playbooks/:playbookId` | Get playbook definition |
+| POST | `/api/v1/playbooks/match` | Match playbooks to incident (read-only) |
+| POST | `/api/v1/playbooks/:id/:v/execute` | Execute best matching playbook |
+| GET | `/api/v1/incidents/:id/playbooks` | Analyse matching playbooks for incident |
+| POST | `/api/v1/incidents/:id/playbooks/execute` | Execute playbook for incident |
+
+### Test Coverage
+
+| Suite | Tests | Status |
+|---|---|---|
+| Golden Path (PB-K8S-CRASHLOOP-001) | 24 | ✅ All passing |
+| All backend unit tests | 816 | ✅ All passing |
+
+### Frozen Contracts (`backend/services/index.js`)
+
+```js
+getPlaybookMatchingService()   // playbookMatcher
+getRunbookExecutionEngine()    // RunbookExecutionEngine
+getDecisionTraceService()      // DecisionTrace model
+getAuditEventService()         // AuditEvent model
+getActionRegistry()            // ActionRegistry
+getRunbookRegistry()           // RunbookRegistry
+getPlaybookRegistry()          // PlaybookRegistry
+getIncidentPlaybookService()   // incidentPlaybookService
+```
+
+### Future: AI Agent Layer (NOT YET IMPLEMENTED)
+
+The following 8 agents are planned for V2 but are intentionally NOT built in V1:
+1. Signal Ingestion Agent
+2. Incident Classification Agent
+3. Context Enrichment Agent
+4. Risk Assessment Agent
+5. Execution Supervisor Agent
+6. Verification Agent
+7. Escalation Agent
+8. Continuous Learning Agent
+
+---

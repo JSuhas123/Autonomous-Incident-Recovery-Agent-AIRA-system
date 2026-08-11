@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { motion } from 'framer-motion'
 import { BookOpen, CheckCircle, ChevronRight, Clock, Filter, Search, XCircle } from 'lucide-react'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 const MOCK_RUNBOOKS = [
   {
@@ -83,6 +84,7 @@ const LIFECYCLE_ICON: Record<string, React.ReactNode> = {
 export default function RunbooksPage() {
   const [search, setSearch] = useState('')
   const [lifecycleFilter, setLifecycleFilter] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   const filtered = MOCK_RUNBOOKS.filter((rb) => {
     const matchSearch =
@@ -151,7 +153,7 @@ export default function RunbooksPage() {
           </Card>
         )}
         {filtered.map((rb) => (
-          <Card key={rb.id} className="hover:shadow-sm transition-shadow cursor-pointer">
+          <Card key={rb.id} className="hover:shadow-sm transition-shadow cursor-pointer" onClick={() => navigate(`/runbooks/${rb.id}`)}>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

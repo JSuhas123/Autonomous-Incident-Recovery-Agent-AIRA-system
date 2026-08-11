@@ -32,6 +32,8 @@ const ProfilePage = lazy(() => import('@/pages/ProfilePage'))
 const NotificationsPage = lazy(() => import('@/pages/NotificationsPage'))
 const RunbooksPage = lazy(() => import('@/pages/RunbooksPage'))
 const PlaybooksPage = lazy(() => import('@/pages/PlaybooksPage'))
+const RunbookDetailPage = lazy(() => import('@/pages/RunbookDetailPage'))
+const PlaybookDetailPage = lazy(() => import('@/pages/PlaybookDetailPage'))
 
 function suspend(component: React.ReactNode) {
   return <Suspense fallback={<PageLoader />}>{component}</Suspense>
@@ -92,8 +94,16 @@ export const router = createBrowserRouter([
         element: suspend(<RunbooksPage />),
       },
       {
+        path: 'runbooks/:runbookId',
+        element: suspend(<RunbookDetailPage />),
+      },
+      {
         path: 'playbooks',
         element: suspend(<PlaybooksPage />),
+      },
+      {
+        path: 'playbooks/:playbookId',
+        element: suspend(<PlaybookDetailPage />),
       },
       {
         path: 'team',

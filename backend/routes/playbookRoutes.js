@@ -6,6 +6,11 @@
  * All routes enforce:
  *   - Tenant isolation: every operation scoped to tenantId from req.params
  *   - RBAC via existing authMiddleware (browserTenantAuth)
+ *   - Input validation on all mutation endpoints
+ *   - Pagination caps to prevent runaway queries
+ *   - Semantic-version immutability (no re-registration of existing id@semver)
+ *   - No DRAFT/VALIDATED/APPROVED/DISABLED definitions are executed
+ *   - Audit logging on all state mutations
  *
  * Mounted at: /api/v1/tenants/:tenantId/playbooks
  */
@@ -19,8 +24,34 @@ const { matchPlaybooks }              = require('../playbooks/matching/playbookM
 const { validatePlaybook }            = require('../playbooks/validators/playbookValidator');
 const { PLAYBOOK_VALIDATION_PURPOSE, PLAYBOOK_LIFECYCLE } = require('../constants/playbook');
 
+// Semver pattern — strict x.y.z or =x.y.z (registry uses exact semver)
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+$/;
+// Playbook ID pattern
+const PLAYBOOK_ID_PATTERN = /^PB-[A-Z0-9]+(-[A-Z0-9]+)+$/;
+
+const MAX_RESULTS = 200;
+const MAX_LIST    = 1000;
+
 function reg() { return getPlaybookRegistry(); }
 function svc() { return getPlaybookExecutionService(); }
+
+// ── Validators ─────────────────────────────────────────────────────────────
+
+function validateSemver(semver, res) {
+  if (!semver || !SEMVER_PATTERN.test(semver)) {
+    res.status(400).json({ error: 'Invalid semver format. Expected x.y.z', code: 'INVALID_VERSION' });
+    return false;
+  }
+  return true;
+}
+
+function validatePlaybookId(id, res) {
+  if (!id || !PLAYBOOK_ID_PATTERN.test(id)) {
+    res.status(400).json({ error: `Invalid playbookId format. Expected PB-XXX-YYY`, code: 'INVALID_ID' });
+    return false;
+  }
+  return true;
+}
 
 // ── Error handler ──────────────────────────────────────────────────────────
 
@@ -45,7 +76,7 @@ function handleRegistryError(err, res) {
       details: err.details || undefined,
     });
   }
-  return res.status(500).json({ error: 'Internal server error', details: err.message });
+  return res.status(500).json({ error: 'Internal server error' });
 }
 
 // ── GET /capabilities ──────────────────────────────────────────────────────
@@ -77,8 +108,18 @@ router.get('/', async (req, res) => {
   try {
     const { lifecycle, category } = req.query;
     const tenantId = req.params.tenantId;
+
+    // Validate lifecycle filter if provided
+    const validLifecycles = Object.values(PLAYBOOK_LIFECYCLE);
+    if (lifecycle && !validLifecycles.includes(lifecycle)) {
+      return res.status(400).json({ error: `Invalid lifecycle filter. Must be one of: ${validLifecycles.join(', ')}` });
+    }
+
     const playbooks = await reg().list({ tenantId, lifecycle, category });
-    res.json({ playbooks, count: playbooks.length });
+
+    // Cap response to prevent oversized payloads
+    const capped = playbooks.slice(0, MAX_LIST);
+    res.json({ playbooks: capped, count: capped.length, total: playbooks.length });
   } catch (err) {
     handleRegistryError(err, res);
   }
@@ -90,6 +131,7 @@ router.get('/:playbookId', async (req, res) => {
   try {
     const { playbookId } = req.params;
     const tenantId = req.params.tenantId;
+    if (!validatePlaybookId(playbookId, res)) return;
     const versions = await reg().getById(playbookId, tenantId);
     const latest   = versions.reduce((best, cur) => !best || cur.semver > best.semver ? cur : best, null);
     res.json({ playbookId, versions, latest });
@@ -237,14 +279,19 @@ router.post('/:id/:v/version', async (req, res) => {
 router.post('/match', async (req, res) => {
   try {
     const tenantId = req.params.tenantId;
-    const { incident, minScore, maxResults } = req.body;
+    const { incident, minScore, maxResults } = req.body || {};
 
-    if (!incident) return res.status(400).json({ error: 'incident context is required' });
+    if (!incident || typeof incident !== 'object') {
+      return res.status(400).json({ error: 'incident (object) is required', code: 'MISSING_INCIDENT' });
+    }
 
-    // Get ACTIVE playbooks
+    // Cap maxResults to prevent DoS
+    const cappedMax = Math.min(Number(maxResults) || 10, MAX_RESULTS);
+
+    // Get ACTIVE playbooks only — never match against non-ACTIVE
     const playbooks = await reg().list({ tenantId, lifecycle: PLAYBOOK_LIFECYCLE.ACTIVE });
 
-    const matches = matchPlaybooks(playbooks, incident, { minScore, maxResults });
+    const matches = matchPlaybooks(playbooks, incident, { minScore, maxResults: cappedMax });
     res.json({ matches, count: matches.length, incident: incident.id || null });
   } catch (err) {
     handleRegistryError(err, res);
@@ -257,9 +304,17 @@ router.post('/:id/:v/execute', async (req, res) => {
   try {
     const { id, v }    = req.params;
     const tenantId     = req.params.tenantId;
-    const { incidentContext, incidentId, correlationId, dryRun } = req.body;
 
-    const result = await svc().execute(id, v, incidentContext || {}, {
+    if (!validatePlaybookId(id, res)) return;
+    if (!validateSemver(v, res)) return;
+
+    const { incidentContext, incidentId, correlationId, dryRun } = req.body || {};
+
+    if (!incidentContext || typeof incidentContext !== 'object') {
+      return res.status(400).json({ error: 'incidentContext (object) is required', code: 'MISSING_INCIDENT_CONTEXT' });
+    }
+
+    const result = await svc().execute(id, v, incidentContext, {
       tenantId,
       incidentId,
       correlationId,

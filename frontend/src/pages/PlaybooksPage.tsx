@@ -14,6 +14,7 @@ import {
     XCircle,
 } from 'lucide-react'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 const MOCK_PLAYBOOKS = [
   {
@@ -116,6 +117,7 @@ export default function PlaybooksPage() {
   const [search, setSearch] = useState('')
   const [lifecycleFilter, setLifecycleFilter] = useState<string | null>(null)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
+  const navigate = useNavigate()
 
   const categories = [...new Set(MOCK_PLAYBOOKS.map((pb) => pb.category))]
 
@@ -209,7 +211,7 @@ export default function PlaybooksPage() {
           </Card>
         )}
         {filtered.map((pb) => (
-          <Card key={pb.id} className="hover:shadow-sm transition-shadow cursor-pointer">
+          <Card key={pb.id} className="hover:shadow-sm transition-shadow cursor-pointer" onClick={() => navigate(`/playbooks/${pb.id}`)}>
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

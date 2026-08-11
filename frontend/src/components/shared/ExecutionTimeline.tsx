@@ -13,7 +13,7 @@ import {
 
 export interface TimelineEvent {
   id: string
-  type: 'stage' | 'approval' | 'rollback' | 'escalation' | 'outcome'
+  type: 'incident' | 'playbook' | 'stage' | 'runbook' | 'approval' | 'rollback' | 'escalation' | 'verification' | 'outcome'
   label: string
   status: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'SKIPPED' | 'ROLLED_BACK' | 'ESCALATED' | 'WAITING'
   startedAt?: string
