@@ -57,6 +57,7 @@ const {
   retryHandler
 } = require("./services/infrastructure");
 const MultiInstanceCoordinator = require("./services/infrastructure/multiInstanceCoordinator");
+// DEPRECATED: legacy agents replaced by v2 AgentOrchestrator (start/stop are now no-ops)
 const { startAnalysisAgent, stopAnalysisAgent } = require("./agents/analysisAgent");
 const { startDecisionAgent, stopDecisionAgent } = require("./agents/decisionAgent");
 const { startActionAgent, stopActionAgent } = require("./agents/actionAgent");
@@ -395,6 +396,12 @@ app.use("/api/v1/monitors", sessionAuthMiddleware, monitorTopLevelRoutes);
 app.use("/api/v1/incidents", sessionAuthMiddleware, incidentRoutes);
 
 /**
+ * AGENT INTELLIGENCE PLATFORM — 8-agent AI pipeline
+ */
+const agentIntelligenceRoutes = require("./routes/agentIntelligenceRoutes");
+app.use("/api/v1/incidents", sessionAuthMiddleware, agentIntelligenceRoutes);
+
+/**
  * INTEGRATION CATALOGUE — public endpoint (no auth)
  */
 app.use("/api/v1/integration-definitions", (req, res, next) => {
@@ -567,11 +574,18 @@ async function startServer() {
     // TODO: Re-enable once batchProcessingPipeline module is properly integrated
     // batchProcessingPipeline would go here
 
-    // 8. Start event processing agents (core decision loop)
+    // 8. Initialize v2 Agent Intelligence Platform (replaces legacy queue consumers)
+    const { buildAgentOrchestrator } = require('./agents/v2');
+    const { incidentPlaybookService } = require('./services/incidents');
+    // Eagerly build the orchestrator so it's validated at startup.
+    buildAgentOrchestrator({ incidentPlaybookService });
+    console.log('[server] ✓ v2 Agent Intelligence Platform initialized (8-agent orchestrator ready)');
+
+    // Legacy agent start calls are now no-ops (deprecated queue consumers).
     await startAnalysisAgent();
     await startDecisionAgent();
     await startActionAgent();
-    console.log("[server] ✓ Core agents started (analysis, decision, action)");
+    console.log('[server] ✓ Legacy agent lifecycle hooks called (deprecated — no-ops)');
 
     // 8.1 Start external monitoring scheduler
     const { MonitorScheduler } = require("./services/monitoring/monitorScheduler");

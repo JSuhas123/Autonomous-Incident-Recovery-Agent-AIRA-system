@@ -3,7 +3,7 @@ module.exports = {
   testEnvironmentOptions: {},
   setupFiles: ['<rootDir>/tests/setup-test-env.js'],
   // Explicit roots prevents jest-haste-map from missing files in large trees
-  roots: ['<rootDir>/tests', '<rootDir>/services', '<rootDir>/middleware', '<rootDir>/models'],
+  roots: ['<rootDir>/tests', '<rootDir>/services', '<rootDir>/middleware', '<rootDir>/models', '<rootDir>/agents'],
   // Disable watchman to force a full filesystem crawl on every run
   watchman: false,
   coverageDirectory: 'coverage',

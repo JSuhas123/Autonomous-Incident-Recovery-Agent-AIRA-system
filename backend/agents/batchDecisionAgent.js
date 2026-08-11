@@ -1,15 +1,11 @@
 /**
- * Enhanced Batch Decision Agent
- * 
- * Processes aggregated event batches instead of individual signals
- * Integrates cascade detection, caching, and confidence scoring
- * 
- * FIXES:
- * - Scenario 3: Cascade detection with root cause identification
- * - Scenario 4: Batch processing + worker pool for throughput
- * 
- * NOTE: Dead code files removed (cascadeDetectionEngine, decisionCache, confidenceEscalationScorer)
- * This agent is currently not used in the active decision pipeline
+ * DEPRECATED — BatchDecisionAgent
+ *
+ * This class is NOT used in the active decision pipeline.
+ * Batch incident processing is now handled by bounded concurrent calls
+ * to the v2 AgentOrchestrator (backend/agents/v2/runtime/agentOrchestrator.js).
+ *
+ * Retained for reference only. Do not instantiate or add logic here.
  */
 
 class BatchDecisionAgent {

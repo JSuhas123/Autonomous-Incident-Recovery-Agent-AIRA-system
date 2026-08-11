@@ -122,6 +122,25 @@ const MANUAL_REASON = Object.freeze({
 
   INFRASTRUCTURE_UNREACHABLE: "INFRASTRUCTURE_UNREACHABLE",
   // Target infrastructure is unreachable (network partition, cluster down).
+
+  // ── Agent Intelligence (v2) ───────────────────────────────────────────────
+  AGENT_UNAVAILABLE: "AGENT_UNAVAILABLE",
+  // The v2 agent runtime is not available or failed to initialize.
+
+  AGENT_OUTPUT_INVALID: "AGENT_OUTPUT_INVALID",
+  // Agent produced output that failed schema/contract validation.
+
+  AGENT_CONFIDENCE_TOO_LOW: "AGENT_CONFIDENCE_TOO_LOW",
+  // All confidence dimensions are below configured minimum thresholds.
+
+  EVIDENCE_INSUFFICIENT: "EVIDENCE_INSUFFICIENT",
+  // Investigation agent could not collect sufficient evidence to proceed.
+
+  AGENT_TIMEOUT: "AGENT_TIMEOUT",
+  // Agent or orchestrator exceeded its configured timeout budget.
+
+  LEGACY_PATH_BLOCKED: "LEGACY_PATH_BLOCKED",
+  // Request arrived via deprecated legacy agent path; routed to manual review.
 });
 
 /**

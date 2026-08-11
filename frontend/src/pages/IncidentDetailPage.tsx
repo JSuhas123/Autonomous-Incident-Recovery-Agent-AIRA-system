@@ -1,4 +1,5 @@
 import { useAcknowledgeIncident, useIncident, useIncidentTimeline, useReopenIncident, useResolveIncident } from '@/api/hooks/useIncidents'
+import { AgentIntelligencePanel } from '@/components/incidents/AgentIntelligencePanel'
 import { IncidentSeverityBadge, IncidentStatusBadge } from '@/components/incidents/IncidentBadges'
 import { IncidentTimeline } from '@/components/incidents/IncidentTimeline'
 import { Button } from '@/components/ui/button'
@@ -227,6 +228,9 @@ export default function IncidentDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Agent Intelligence */}
+      <AgentIntelligencePanel incidentId={incidentId} />
 
       {/* Timeline */}
       <Card>

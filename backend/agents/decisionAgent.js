@@ -143,6 +143,7 @@ const { getQueueService } = require("../services/infrastructure/queueService");
 const { policyEngine } = require("../services/core");
 const { auditService, getActionAuditService, getStructuredLoggingService, getPrometheusMetricsService } = require("../services/observability");
 
+// DEPRECATED — replaced by v2 DiagnosisAgent + PlaybookSelectionAgent + PolicyEngine
 let isConsumingDecisions = false;
 
 async function processDecisionEvent(message) {
@@ -482,37 +483,13 @@ async function processDecisionEvent(message) {
   }
 }
 
+// DEPRECATED: legacy queue consumer not started. v2 PlaybookSelectionAgent handles this.
 async function startDecisionAgent() {
-  if (isConsumingDecisions) {
-    console.log("[decision-agent] Already running");
-    return;
-  }
-
-  try {
-    const queue = await getQueueService();
-    isConsumingDecisions = true;
-
-    console.log("[decision-agent] Starting consumption of incident.analyzed events (parallel mode)...");
-
-    // CRITICAL FIX #1: Enable parallel processing
-    const parallelism = parseInt(process.env.DECISION_AGENT_PARALLELISM || '10');
-    console.log(`[decision-agent] Parallelism level: ${parallelism} concurrent decisions`);
-
-    await queue.consumeEvents(
-      queue.topics.INCIDENT_ANALYZED,
-      "durable-decision-agent",
-      processDecisionEvent,
-      { prefetch: parallelism }
-    );
-  } catch (error) {
-    console.error("[decision-agent] Failed to start:", error.message);
-    isConsumingDecisions = false;
-  }
+  console.warn('[decision-agent] DEPRECATED: legacy queue consumer not started. Use v2 AgentOrchestrator.');
 }
 
 async function stopDecisionAgent() {
   isConsumingDecisions = false;
-  console.log("[decision-agent] Stopped");
 }
 
 module.exports = {

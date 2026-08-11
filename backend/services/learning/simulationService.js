@@ -18,11 +18,15 @@ class SimulationService {
       const simulationId = `sim-${crypto.randomUUID()}`;
       const correlationId = `corr-${crypto.randomUUID()}`;
 
-      // Run analysis
-      const analysis = await analysisAgent.analyzeSignal(signalData);
+      // Support both legacy (analyzeSignal) and current (analyzeIssue) API.
+      const analysis = typeof analysisAgent.analyzeSignal === 'function'
+        ? await analysisAgent.analyzeSignal(signalData)
+        : await analysisAgent.analyzeIssue(signalData.logs || [], signalData.metrics || {}, tenantId);
 
-      // Run decision
-      const decision = await decisionAgent.makeDecision(analysis, correlationId, tenantId);
+      // Support both legacy (makeDecision) and current (decideAction) API.
+      const decision = typeof decisionAgent.makeDecision === 'function'
+        ? await decisionAgent.makeDecision(analysis, correlationId, tenantId)
+        : await decisionAgent.decideAction(analysis, { state: 'simulation', tenantId });
 
       // Run safety checks (but don't execute)
       const safetyChecks = await this._runSafetyChecks(

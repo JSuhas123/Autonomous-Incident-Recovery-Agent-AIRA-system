@@ -488,27 +488,20 @@ async function processActionEvent(message) {
 }
 
 async function performAction(action, context) {
-  // Execute action (stub for simulation - replace with actual runbook execution)
-  let outcome = "Action executed";
-
-  switch (action) {
-    case "restart":
-      console.log("[action-agent] Executing service restart");
-      outcome = "Service restart executed successfully";
-      break;
-    case "scale-replicas":
-      console.log("[action-agent] Executing scale replicas");
-      outcome = "Service replicas scaled successfully";
-      break;
-    case "cache-invalidation":
-      console.log("[action-agent] Executing cache invalidation");
-      outcome = "Cache invalidated successfully";
-      break;
-    default:
-      outcome = "Action executed";
-  }
-
-  return outcome;
+  // DEPRECATED: All execution must flow through frozen V1 PlaybookExecutionService.
+  // This stub records the request and returns MANUAL_REQUIRED for any action
+  // that arrives via the legacy queue path.
+  const { MANUAL_REASON } = require('../constants/executionOutcomes');
+  console.warn(
+    `[action-agent] DEPRECATED performAction called for '${action}'. ` +
+    'Legacy action path is blocked — route through v2 AgentOrchestrator and frozen V1 instead.'
+  );
+  return {
+    outcome: 'BLOCKED_LEGACY_PATH',
+    reason: MANUAL_REASON.LEGACY_PATH_BLOCKED,
+    action,
+    blockedAt: new Date().toISOString(),
+  };
 }
 
 async function performDryRun(action, context) {
@@ -517,37 +510,13 @@ async function performDryRun(action, context) {
   return { success: true, simulation: true };
 }
 
+// DEPRECATED: actionAgent queue consumer not started. All execution routes through v2 AgentOrchestrator.
 async function startActionAgent() {
-  if (isConsumingActions) {
-    console.log("[action-agent] Already running");
-    return;
-  }
-
-  try {
-    const queue = await getQueueService();
-    isConsumingActions = true;
-
-    console.log("[action-agent] Starting consumption of action.approved events (parallel mode)...");
-
-    // CRITICAL FIX #1: Enable parallel processing
-    const parallelism = parseInt(process.env.ACTION_AGENT_PARALLELISM || '5');
-    console.log(`[action-agent] Parallelism level: ${parallelism} concurrent actions`);
-
-    await queue.consumeEvents(
-      queue.topics.ACTION_APPROVED,
-      "durable-action-agent",
-      processActionEvent,
-      { prefetch: parallelism }
-    );
-  } catch (error) {
-    console.error("[action-agent] Failed to start:", error.message);
-    isConsumingActions = false;
-  }
+  console.warn('[action-agent] DEPRECATED: legacy queue consumer not started. All execution routes through v2 AgentOrchestrator + frozen V1 PlaybookExecutionService.');
 }
 
 async function stopActionAgent() {
   isConsumingActions = false;
-  console.log("[action-agent] Stopped");
 }
 
 module.exports = {

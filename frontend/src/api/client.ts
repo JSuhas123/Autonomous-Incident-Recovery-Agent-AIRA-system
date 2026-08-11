@@ -268,6 +268,7 @@ function tenantPath(tenantId: string, suffix: string) {
 
 // ─── Incident endpoints ──────────────────────────────────────────────────────
 
+import type { AgentIntelligence, AgentTraceEntry } from '@/types/agentIntelligence'
 import type { Incident, IncidentListParams, IncidentTimelineEvent } from '@/types/incident'
 
 export const incidentApi = {
@@ -300,6 +301,27 @@ export const incidentApi = {
   timeline: (incidentId: string, signal?: AbortSignal) =>
     request<{ timeline: IncidentTimelineEvent[]; count: number }>(
       `/api/v1/incidents/${incidentId}/timeline`, { signal }),
+
+  // ── Agent Intelligence (v2) ───────────────────────────────────────────
+  analyze: (incidentId: string) =>
+    request<{ runId: string; state: string; message?: string }>(
+      `/api/v1/incidents/${incidentId}/analyze`, { method: 'POST', body: {} }),
+
+  retryAnalysis: (incidentId: string) =>
+    request<{ runId: string; state: string }>(
+      `/api/v1/incidents/${incidentId}/retry-analysis`, { method: 'POST', body: {} }),
+
+  intelligence: (incidentId: string, signal?: AbortSignal) =>
+    request<AgentIntelligence>(`/api/v1/incidents/${incidentId}/intelligence`, { signal }),
+
+  agentEvidence: (incidentId: string, signal?: AbortSignal) =>
+    request<{ evidencePackage: unknown }>(`/api/v1/incidents/${incidentId}/evidence`, { signal }),
+
+  agentDiagnosis: (incidentId: string, signal?: AbortSignal) =>
+    request<{ diagnosis: unknown }>(`/api/v1/incidents/${incidentId}/diagnosis`, { signal }),
+
+  agentTrace: (incidentId: string, signal?: AbortSignal) =>
+    request<{ agentTrace: AgentTraceEntry[] }>(`/api/v1/incidents/${incidentId}/agent-trace`, { signal }),
 }
 
 export const signalApi = {

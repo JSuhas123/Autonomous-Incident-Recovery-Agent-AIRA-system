@@ -355,40 +355,15 @@ async function processAnalysisEvent(message) {
   }
 }
 
+// DEPRECATED: analysisAgent queue consumer is no longer started.
+// Incident analysis is now handled by the v2 AgentOrchestrator
+// (POST /api/v1/incidents/:id/analyze).
 async function startAnalysisAgent() {
-  if (isConsumingAnalysis) {
-    console.log("[analysis-agent] Already running");
-    return;
-  }
-
-  try {
-    const queue = await getQueueService();
-    isConsumingAnalysis = true;
-
-    console.log("[analysis-agent] Starting consumption of incident.detected events (parallel mode)...");
-    
-    // CRITICAL FIX #1: Enable parallel processing instead of serial
-    // Process up to 10 signals concurrently instead of one at a time
-    // This was causing the 98.3% rejection rate in Scenario 4
-    const parallelism = parseInt(process.env.ANALYSIS_AGENT_PARALLELISM || '10');
-    
-    console.log(`[analysis-agent] Parallelism level: ${parallelism} concurrent signals`);
-    
-    await queue.consumeEvents(
-      queue.topics.INCIDENT_DETECTED,
-      "durable-analysis-agent",
-      processAnalysisEvent,
-      { prefetch: parallelism } // Set RabbitMQ prefetch to enable parallel consumption
-    );
-  } catch (error) {
-    console.error("[analysis-agent] Failed to start:", error.message);
-    isConsumingAnalysis = false;
-  }
+  console.warn('[analysis-agent] DEPRECATED: legacy queue consumer not started. Use v2 AgentOrchestrator.');
 }
 
 async function stopAnalysisAgent() {
   isConsumingAnalysis = false;
-  console.log("[analysis-agent] Stopped");
 }
 
 module.exports = {

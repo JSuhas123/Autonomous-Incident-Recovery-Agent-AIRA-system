@@ -9,8 +9,136 @@
 
 AIRA is a policy-driven incident recovery platform. It sits between your observability stack (Prometheus, Datadog) and your infrastructure, making safe, explainable, auditable decisions with human-in-the-loop approval gates.
 
+> **AI DOES NOT DIRECTLY EXECUTE INFRASTRUCTURE.** The 8-agent intelligence pipeline produces playbook recommendations and parameters. All infrastructure mutations are performed exclusively by the deterministic V1 Playbook/Runbook Engine, subject to human approval gates and policy enforcement.
+
+---
+
+## Agent Intelligence Platform (v2)
+
+### Architecture
+
 ```
-Observability Alert → Analysis Agent → Decision Agent → Approval Gate → Action Agent → Audit Trail
+Observability Signal
+        │
+        ▼
+POST /api/v1/incidents/:id/analyze
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    AgentOrchestrator (v2)                           │
+│                                                                     │
+│  1. CorrelationAgent      — groups signals into a single incident   │
+│  2. InvestigationAgent    — collects k8s/DB/log evidence (reduced)  │
+│  3. DiagnosisAgent        — infers root cause + confidence dims     │
+│  4. PlaybookSelectionAgent— recommends playbook from V1 catalogue   │
+│  5. ParameterResolutionAgent — resolves playbook parameters safely  │
+│       │                                                             │
+│       ▼  handoff to DETERMINISTIC V1 engine                         │
+│  6. RecoveryMonitoringAgent — monitors V1 execution outcome         │
+│  7. ExplanationAgent      — produces human-readable audit narrative │
+│  8. LearningAgent         — proposes improvements (human-approved)  │
+└─────────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+  AgentIntelligenceRun (MongoDB) — full trace + confidence + audit
+        │
+        ▼
+  Frontend AgentIntelligencePanel — live-polling UI (4s interval)
+```
+
+### Agent Summary
+
+| Agent | Input | Output | Failure Mode |
+|---|---|---|---|
+| CorrelationAgent | signals[] | incidentGroup, evidenceIds[] | MANUAL_REQUIRED |
+| InvestigationAgent | incidentGroup | evidencePackage[] (reduced) | MANUAL_REQUIRED |
+| DiagnosisAgent | evidencePackage | hypotheses[], rootCause, confidence | MANUAL_REQUIRED |
+| PlaybookSelectionAgent | diagnosis | selectedPlaybook, rationale | NO_SAFE_PLAYBOOK |
+| ParameterResolutionAgent | selectedPlaybook | candidates[], readyForExecution | MANUAL_REQUIRED |
+| RecoveryMonitoringAgent | executionResult | status, recommendation, rollback | ESCALATE |
+| ExplanationAgent | full context | narrative, timeline, audienceLevel | degrades gracefully |
+| LearningAgent | outcome | recommendations (requiresHumanApproval) | MANUAL_REQUIRED |
+
+### Safety Boundaries
+
+- **No infrastructure execution** — agents never call `kubectl`, `aws`, or any infra API directly
+- **Hallucination guards** — evidence IDs and playbook IDs are validated against real data; fabricated references are stripped
+- **Prompt injection defense** — signal messages are treated as untrusted data; structural attacks cannot alter agent decisions
+- **Secret redaction** — parameters tagged `secret: true` are masked before being written to audit logs
+- **Learning approval gate** — `LearningAgent` always sets `requiresHumanApproval: true`; no automated policy mutation
+- **Evidence reduction** — log arrays truncated to 100 lines × 512 chars; evidence items limited to 50; total bytes budgeted
+
+### Cost Controls
+
+All limits are configurable via `AIRA_BUDGET_<KEY>` environment variables (see `backend/agents/v2/config/agentBudgets.js`):
+
+| Budget Key | Default | Description |
+|---|---|---|
+| `maxModelCallsPerIncident` | 20 | Hard cap on LLM calls per incident analysis |
+| `agentTimeoutMs` | 15000 | Per-agent execution timeout |
+| `orchestratorTimeoutMs` | 120000 | Total orchestrator timeout |
+| `maxLogLines` | 100 | Max log lines per evidence item |
+| `maxLogLineChars` | 512 | Max chars per log line |
+| `maxContextChars` | 8000 | Max chars of context sent to LLM |
+| `maxEvidenceItems` | 50 | Max evidence items per package |
+| `maxEvidenceItemBytes` | 4096 | Max bytes per evidence item |
+
+### Manual Escalation Codes
+
+When agents cannot safely proceed, they produce a `manualReason`:
+
+| Code | Meaning |
+|---|---|
+| `AGENT_UNAVAILABLE` | Reasoning provider unreachable |
+| `AGENT_OUTPUT_INVALID` | LLM response failed contract validation |
+| `AGENT_CONFIDENCE_TOO_LOW` | Confidence below threshold for autonomous action |
+| `EVIDENCE_INSUFFICIENT` | Not enough evidence to form a safe diagnosis |
+| `AGENT_TIMEOUT` | Agent exceeded time budget |
+| `LEGACY_PATH_BLOCKED` | Attempted to use deprecated legacy execution path |
+
+### API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/v1/incidents/:id/analyze` | Trigger agent analysis |
+| `POST` | `/api/v1/incidents/:id/analyze/retry` | Retry failed analysis |
+| `GET` | `/api/v1/incidents/:id/intelligence` | Latest AgentIntelligenceRun |
+| `GET` | `/api/v1/incidents/:id/agent-evidence` | Evidence package |
+| `GET` | `/api/v1/incidents/:id/agent-diagnosis` | Diagnosis output |
+| `GET` | `/api/v1/incidents/:id/agent-trace` | Full agent execution trace |
+
+---
+
+## Playbook + Runbook Platform V1 (Frozen)
+
+> V1 is the authoritative execution layer. It is **never modified** by agent outputs. Agents recommend; V1 executes — after human approval where required.
+
+### Architecture
+
+```
+Observability Signal
+        │
+        ▼
+   Incident Model (MongoDB)
+        │
+        ▼
+ incidentPlaybookService
+  ├── analyseIncident()  →  playbookMatcher.matchPlaybooks()
+  │                         └── resolveMatchOutcome()
+  └── executeForIncident()
+        │
+        ▼
+   PlaybookExecutionEngine
+        │  reads playbookDef → policy → approval mode → stages
+        ▼
+   RunbookExecutionEngine  ──►  Action Handlers (kubernetes/*, wait/*)
+        │
+        ├── Verification steps
+        ├── Rollback (on failure)
+        └── Escalation (on unrecoverable)
+        │
+        ▼
+   DecisionTrace + AuditEvent (MongoDB)
 ```
 
 ---
@@ -85,31 +213,44 @@ NODE_ENV=development
 
 ```
 backend/
-  models/          # Mongoose models (User, Organization, UserSession, …)
-  routes/          # Express routers (authRoutes, integrationRoutes, …)
-  middleware/      # sessionAuthMiddleware, csrfMiddleware, orgAuthMiddleware, authMiddleware (HMAC)
+  agents/
+    v2/                    # 8-agent intelligence platform (authoritative)
+      agents/              # correlationAgent, investigationAgent, diagnosisAgent,
+                           # playbookSelectionAgent, parameterResolutionAgent,
+                           # recoveryMonitoringAgent, explanationAgent, learningAgent
+      runtime/             # agentOrchestrator, baseAgent, reasoningProvider
+      contracts/           # agentContracts, confidenceModel
+      config/              # agentBudgets (cost controls + env overrides)
+      tests/               # 12 test suites, 72+ tests
+      index.js             # public API: buildAgentOrchestrator + all exports
+    analysisAgent.js       # DEPRECATED — no-op start/stop
+    decisionAgent.js       # DEPRECATED — no-op start/stop
+    actionAgent.js         # DEPRECATED — performAction returns LEGACY_PATH_BLOCKED
+    batchDecisionAgent.js  # DEPRECATED — class retained for import compat only
+  models/                  # Mongoose models (User, Organization, AgentIntelligenceRun, …)
+  routes/                  # Express routers (authRoutes, agentIntelligenceRoutes, …)
+  middleware/              # sessionAuthMiddleware, csrfMiddleware, killSwitchMiddleware, …
   services/
-    identity/      # authService, sessionService, passwordService, csrfHelper
+    identity/              # authService, sessionService, passwordService, csrfHelper
   tests/
-    unit/          # identity.models.test.js  (33 tests)
-    integration/   # auth.integration.test.js (31 tests)
-    middleware/    # authMiddleware.test.js    (machine HMAC tests)
+    unit/                  # playbookValidator, playbookGoldenPath, runbookSchema, …
+    integration/           # auth, incident, approvals, services, monitor, …
 
 frontend/
   src/
     api/
-      client.ts    # cookie-based fetch wrapper; sends X-CSRF-Token on mutations
-      hooks/       # React Query hooks (tenantId from organization.tenantId)
-    store/
-      authStore.ts # Zustand store — no persist middleware, no secrets
-    hooks/
-      useSessionBootstrap.ts  # calls GET /auth/session on mount
-      useLogout.ts            # POST /auth/logout → clear state → navigate /login
+      client.ts            # cookie-based fetch wrapper + agent intelligence methods
+      hooks/
+        useAgentIntelligence.ts  # polling hooks for agent analysis (4s, terminal-state aware)
+    components/
+      incidents/
+        AgentIntelligencePanel.tsx  # full agent intelligence UI panel
+    types/
+      agentIntelligence.ts         # TypeScript types for all agent API responses
     pages/
-      LoginPage.tsx   # email + password only
-      SignupPage.tsx  # registration form (fullName, workEmail, password, org)
-    router/
-      ProtectedRoute.tsx  # shows loader while status='loading', redirects if unauthenticated
+      IncidentDetailPage.tsx       # renders AgentIntelligencePanel
+    store/
+      authStore.ts         # Zustand store — no persist middleware, no secrets
 ```
 
 ---
@@ -119,13 +260,19 @@ frontend/
 ```bash
 cd backend
 
-# Identity model unit tests (33 tests)
-npx jest --testPathPattern="identity.models" --no-coverage --forceExit
+# V2 agent intelligence platform (72 tests, 12 suites)
+npx jest --testPathPattern="agents/v2/tests" --no-coverage --forceExit
 
-# Auth integration tests (31 tests)
-npx jest --testPathPattern="auth.integration" --no-coverage --forceExit
+# Legacy agent migration + prompt injection (integration)
+npx jest --testPathPattern="agentIntegration" --no-coverage --forceExit
 
-# All tests
+# Cost controls + evidence reduction
+npx jest --testPathPattern="costControls" --no-coverage --forceExit
+
+# V1 Playbook/Runbook unit tests
+npx jest --testPathPattern="unit" --no-coverage --forceExit
+
+# All tests (743 passing, 27 suites; integration tests require MongoDB)
 npx jest --no-coverage --forceExit
 ```
 
