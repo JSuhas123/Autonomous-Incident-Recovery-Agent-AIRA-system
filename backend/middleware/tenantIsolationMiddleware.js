@@ -282,42 +282,113 @@ function tenantIsolationMiddleware(
       };
 
     /*
-     * If canonical req.context has already been built,
-     * verify consistency rather than overwriting it.
-     */
-    if (req.context) {
-      if (
-        req.context.tenantId &&
-        req.context.tenantId !==
-          tenantIdFromAuth
-      ) {
-        return res
-          .status(403)
-          .json({
-            error:
-              "Tenant context invalid",
+ * ----------------------------------------------------------------
+ * CANONICAL REQUEST CONTEXT
+ * ----------------------------------------------------------------
+ *
+ * Phase 1 routes expect req.context to always exist after
+ * tenant isolation.
+ *
+ * Authentication proves tenant + organization ownership.
+ * Environment middleware may already have attached the active
+ * environment; if so, preserve it.
+ */
 
-            code:
-              "REQUEST_CONTEXT_MISMATCH",
-          });
-      }
+if (req.context) {
+  if (
+    req.context.tenantId &&
+    req.context.tenantId !==
+      tenantIdFromAuth
+  ) {
+    return res
+      .status(403)
+      .json({
+        error:
+          "Tenant context invalid",
 
-      if (
-        req.context.organizationId &&
-        req.context.organizationId !==
-          organizationId.toString()
-      ) {
-        return res
-          .status(403)
-          .json({
-            error:
-              "Organization context invalid",
+        code:
+          "REQUEST_CONTEXT_MISMATCH",
+      });
+  }
 
-            code:
-              "REQUEST_CONTEXT_MISMATCH",
-          });
-      }
-    }
+  if (
+    req.context.organizationId &&
+    req.context.organizationId.toString() !==
+      organizationId.toString()
+  ) {
+    return res
+      .status(403)
+      .json({
+        error:
+          "Organization context invalid",
+
+        code:
+          "REQUEST_CONTEXT_MISMATCH",
+      });
+  }
+
+  /*
+   * Ensure canonical fields are populated even if an earlier
+   * middleware only partially constructed req.context.
+   */
+  req.context = {
+    ...req.context,
+
+    tenantId:
+      tenantIdFromAuth,
+
+    organizationId:
+      organizationId.toString(),
+
+    userId:
+      req.auth?.userId ||
+      req.context.userId ||
+      null,
+  };
+} else {
+  /*
+   * Build the base canonical context.
+   *
+   * Environment-specific middleware may enrich this later with:
+   *
+   *   environmentId
+   *   environment
+   */
+  req.context = {
+    tenantId:
+      tenantIdFromAuth,
+
+    organizationId:
+      organizationId.toString(),
+
+    userId:
+      req.auth?.userId ||
+      null,
+
+    environmentId:
+      req.auth?.environmentId ||
+      req.environmentId ||
+      req.environment?._id?.toString?.() ||
+      req.environment?.id ||
+      null,
+
+    environment:
+      req.environment ||
+      null,
+  };
+}
+
+/*
+ * Keep req.auth synchronized when environment middleware has
+ * already resolved an active environment.
+ */
+if (
+  req.context.environmentId &&
+  !req.auth.environmentId
+) {
+  req.auth.environmentId =
+    req.context.environmentId;
+}
 
     console.log(
       `[tenant-isolation] ✓ tenant=${tenantIdFromAuth} | org=${organizationId} | ${req.method} ${req.path}`

@@ -14,19 +14,16 @@ const {
   IntegrationConnection,
 } = require("../models/IntegrationConnection");
 
+const Service = require("../models/Service");
+
 const {
   encryptSecret,
   decryptSecret,
-  maskSecret,
 } = require("../services/integrations/secretStorage");
 
 const {
   getAdapter,
 } = require("../services/integrations/adapterRegistry");
-
-const {
-  UnsupportedOperationError,
-} = require("../services/integrations/adapterInterface");
 
 const {
   record: auditRecord,
@@ -38,8 +35,8 @@ const {
 } = require("../constants/authEvents");
 
 const {
-  sessionAuthMiddleware,
-} = require("../middleware/sessionAuthMiddleware");
+  browserEnvironmentContext,
+} = require("../middleware/contextMiddleware");
 
 const kubernetesDiscoveryService =
   require("../services/discovery/kubernetesDiscoveryService");
@@ -47,8 +44,9 @@ const kubernetesDiscoveryService =
 const kubernetesInventoryService =
   require("../services/discovery/kubernetesInventoryService");
 
-  const kubernetesRelationshipService =
+const kubernetesRelationshipService =
   require("../services/discovery/kubernetesRelationshipService");
+
 // Keep legacy webhook ingestion service for backwards compatibility.
 const webhookIngestionService =
   require("../services/integrations/webhookIngestionService");
@@ -61,10 +59,17 @@ const router = express.Router();
 
 function safeConnection(doc) {
   return {
-    id: doc._id,
+    id:
+      doc._id?.toString?.() ??
+      doc._id,
 
     organizationId:
+      doc.organizationId?.toString?.() ??
       doc.organizationId,
+
+    environmentId:
+      doc.environmentId?.toString?.() ??
+      null,
 
     tenantId:
       doc.tenantId,
@@ -76,7 +81,11 @@ function safeConnection(doc) {
       doc.name,
 
     serviceIds:
-      doc.serviceIds,
+      (doc.serviceIds ?? []).map(
+        (id) =>
+          id?.toString?.() ??
+          id
+      ),
 
     status:
       doc.status,
@@ -106,6 +115,7 @@ function safeConnection(doc) {
       doc.errorSummary,
 
     createdBy:
+      doc.createdBy?.toString?.() ??
       doc.createdBy,
 
     createdAt:
@@ -120,58 +130,169 @@ function safeConnection(doc) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Load + organisation isolation helper
+// Connection isolation helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function loadConnection(
-  req,
-  res
-) {
+async function loadConnection(req, res) {
   const {
     integrationId,
   } = req.params;
 
-  let conn;
-
-  try {
-    conn =
-      await IntegrationConnection
-        .findById(
-          integrationId
-        );
-  } catch {
-    res.status(400).json({
-      error:
-        "Invalid integration ID",
-    });
-
-    return null;
-  }
-
-  if (!conn) {
+  if (
+    !mongoose.Types.ObjectId.isValid(
+      integrationId
+    )
+  ) {
     res.status(404).json({
       error:
         "Integration not found",
+      code:
+        "INTEGRATION_NOT_FOUND",
     });
 
     return null;
   }
+
+  const organizationId =
+    req.context?.organizationId ||
+    req.auth?.organizationId;
+
+  const environmentId =
+    req.context?.environmentId;
 
   if (
-    conn.organizationId
-      .toString() !==
-    req.auth.organizationId
-      .toString()
+    !organizationId ||
+    !environmentId
   ) {
-    res.status(403).json({
+    res.status(400).json({
       error:
-        "Forbidden",
+        "Environment context is required",
+      code:
+        "ENVIRONMENT_REQUIRED",
     });
 
     return null;
   }
 
-  return conn;
+  const connection =
+    await IntegrationConnection.findOne({
+      _id:
+        integrationId,
+      organizationId,
+      environmentId,
+    });
+
+  if (!connection) {
+    // Do not reveal whether an integration exists
+    // in another tenant/environment.
+    res.status(404).json({
+      error:
+        "Integration not found",
+      code:
+        "INTEGRATION_NOT_FOUND",
+    });
+
+    return null;
+  }
+
+  return connection;
+}
+
+async function validateScopedServiceIds(
+  req,
+  res,
+  rawServiceIds = []
+) {
+  if (
+    !Array.isArray(rawServiceIds) ||
+    rawServiceIds.length === 0
+  ) {
+    return [];
+  }
+
+  const uniqueIds = [
+    ...new Set(
+      rawServiceIds.map(String)
+    ),
+  ];
+
+  const invalidId =
+    uniqueIds.find(
+      (id) =>
+        !mongoose.Types.ObjectId.isValid(
+          id
+        )
+    );
+
+  if (invalidId) {
+    res.status(422).json({
+      error:
+        "One or more service IDs are invalid",
+      code:
+        "INVALID_SERVICE_ID",
+    });
+
+    return null;
+  }
+
+  const organizationId =
+    req.context?.organizationId ||
+    req.auth?.organizationId;
+
+  const environmentId =
+    req.context?.environmentId;
+
+  if (
+    !organizationId ||
+    !environmentId
+  ) {
+    res.status(400).json({
+      error:
+        "Environment context is required",
+      code:
+        "ENVIRONMENT_REQUIRED",
+    });
+
+    return null;
+  }
+
+  const services =
+    await Service.find({
+      _id: {
+        $in:
+          uniqueIds,
+      },
+
+      organizationId,
+
+      environmentId,
+
+      status: {
+        $ne:
+          "archived",
+      },
+    })
+      .select("_id")
+      .lean();
+
+  if (
+    services.length !==
+    uniqueIds.length
+  ) {
+    res.status(422).json({
+      error:
+        "One or more services are unavailable in the selected environment",
+      code:
+        "SERVICE_SCOPE_MISMATCH",
+    });
+
+    return null;
+  }
+
+  return services.map(
+    (service) =>
+      service._id
+  );
 }
 
 /**
@@ -180,11 +301,9 @@ async function loadConnection(
  * IMPORTANT:
  * - In-memory only.
  * - Never persisted.
- * - Callers should clear _decryptedSecret after use.
+ * - Must be cleared after use.
  */
-function withDecryptedSecret(
-  conn
-) {
+function withDecryptedSecret(conn) {
   if (
     conn.encryptedSecretReference
   ) {
@@ -209,34 +328,29 @@ function withDecryptedSecret(
 const createSchema =
   Joi.object({
     provider:
-      Joi
-        .string()
+      Joi.string()
         .max(64)
         .required(),
 
     name:
-      Joi
-        .string()
+      Joi.string()
         .max(128)
         .required(),
 
     serviceIds:
-      Joi
-        .array()
+      Joi.array()
         .items(
           Joi.string()
         )
         .default([]),
 
     nonSecretConfig:
-      Joi
-        .object()
+      Joi.object()
         .unknown(true)
         .default({}),
 
     secret:
-      Joi
-        .string()
+      Joi.string()
         .max(65536)
         .allow("")
         .optional(),
@@ -245,22 +359,19 @@ const createSchema =
 const updateSchema =
   Joi.object({
     name:
-      Joi
-        .string()
+      Joi.string()
         .max(128)
         .optional(),
 
     serviceIds:
-      Joi
-        .array()
+      Joi.array()
         .items(
           Joi.string()
         )
         .optional(),
 
     nonSecretConfig:
-      Joi
-        .object()
+      Joi.object()
         .unknown(true)
         .optional(),
   });
@@ -268,8 +379,7 @@ const updateSchema =
 const rotateSecretSchema =
   Joi.object({
     secret:
-      Joi
-        .string()
+      Joi.string()
         .max(65536)
         .allow("")
         .required(),
@@ -279,19 +389,9 @@ const rotateSecretSchema =
 // CATALOGUE ENDPOINTS
 // ═════════════════════════════════════════════════════════════════════════════
 
-/**
- * GET /integration-definitions
- *
- * Public catalogue of all providers.
- *
- * Mounted through server.js.
- */
 router.get(
   "/definitions",
-  async (
-    _req,
-    res
-  ) => {
+  async (_req, res) => {
     return res.json({
       definitions:
         CATALOGUE,
@@ -301,12 +401,23 @@ router.get(
 
 // ═════════════════════════════════════════════════════════════════════════════
 // CONNECTION CRUD
-// Session auth required.
+//
+// Every browser connection request requires:
+//
+// session
+//   ↓
+// organization
+//   ↓
+// environment
+//   ↓
+// integration
+//
+// browserEnvironmentContext establishes this context.
 // ═════════════════════════════════════════════════════════════════════════════
 
 router.use(
   "/connections",
-  sessionAuthMiddleware
+  ...browserEnvironmentContext
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,16 +426,15 @@ router.use(
 
 router.get(
   "/connections",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     const connections =
       await IntegrationConnection
         .find({
           organizationId:
-            req.auth
-              .organizationId,
+            req.context.organizationId,
+
+          environmentId:
+            req.context.environmentId,
         })
         .sort({
           createdAt:
@@ -350,10 +460,7 @@ router.get(
 
 router.post(
   "/connections",
-  async (
-    req,
-    res
-  ) => {
+  async (req, res) => {
     const {
       error,
       value,
@@ -369,6 +476,8 @@ router.post(
           error:
             error.details[0]
               .message,
+          code:
+            "VALIDATION_ERROR",
         });
     }
 
@@ -383,6 +492,8 @@ router.post(
         .json({
           error:
             `Unknown provider: ${value.provider}`,
+          code:
+            "UNKNOWN_PROVIDER",
         });
     }
 
@@ -404,10 +515,12 @@ router.post(
 
           availabilityStatus:
             def.availabilityStatus,
+
+          code:
+            "PROVIDER_UNAVAILABLE",
         });
     }
 
-    // Validate provider-specific configuration.
     const adapter =
       getAdapter(
         value.provider
@@ -428,19 +541,35 @@ router.post(
 
           details:
             validation.errors,
+
+          code:
+            "INVALID_CONFIGURATION",
         });
     }
 
-    const conn =
+    const scopedServiceIds =
+      await validateScopedServiceIds(
+        req,
+        res,
+        value.serviceIds
+      );
+
+    if (!scopedServiceIds) {
+      return;
+    }
+
+    const connection =
       await IntegrationConnection
         .create({
           organizationId:
-            req.auth
-              .organizationId,
+            req.context.organizationId,
+
+          environmentId:
+            req.context.environmentId,
 
           tenantId:
-            req.auth
-              .tenantId,
+            req.context.tenantId ||
+            req.auth.tenantId,
 
           provider:
             value.provider,
@@ -449,7 +578,7 @@ router.post(
             value.name,
 
           serviceIds:
-            value.serviceIds,
+            scopedServiceIds,
 
           capabilities:
             def.capabilities,
@@ -483,15 +612,19 @@ router.post(
           req.auth.userId,
 
         organizationId:
-          req.auth
+          req.context
             .organizationId,
 
         tenantId:
+          req.context.tenantId ||
           req.auth.tenantId,
 
         metadata: {
           integrationId:
-            conn._id,
+            connection._id,
+
+          environmentId:
+            connection.environmentId,
 
           provider:
             value.provider,
@@ -507,7 +640,7 @@ router.post(
       .json({
         integration:
           safeConnection(
-            conn
+            connection
           ),
       });
   }
@@ -519,29 +652,26 @@ router.post(
 
 router.get(
   "/connections/:integrationId",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
     const def =
       findDefinition(
-        conn.provider
+        connection.provider
       );
 
     return res.json({
       integration: {
         ...safeConnection(
-          conn
+          connection
         ),
 
         definition:
@@ -557,17 +687,14 @@ router.get(
 
 router.patch(
   "/connections/:integrationId",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
@@ -586,21 +713,35 @@ router.patch(
           error:
             error.details[0]
               .message,
+
+          code:
+            "VALIDATION_ERROR",
         });
     }
 
     if (
       value.name != null
     ) {
-      conn.name =
+      connection.name =
         value.name;
     }
 
     if (
       value.serviceIds != null
     ) {
-      conn.serviceIds =
-        value.serviceIds;
+      const scopedServiceIds =
+        await validateScopedServiceIds(
+          req,
+          res,
+          value.serviceIds
+        );
+
+      if (!scopedServiceIds) {
+        return;
+      }
+
+      connection.serviceIds =
+        scopedServiceIds;
     }
 
     if (
@@ -609,7 +750,7 @@ router.patch(
     ) {
       const adapter =
         getAdapter(
-          conn.provider
+          connection.provider
         );
 
       const validation =
@@ -627,14 +768,17 @@ router.patch(
 
             details:
               validation.errors,
+
+            code:
+              "INVALID_CONFIGURATION",
           });
       }
 
-      conn.nonSecretConfig =
+      connection.nonSecretConfig =
         value.nonSecretConfig;
     }
 
-    await conn.save();
+    await connection.save();
 
     auditRecord(
       AUTH_EVENT_TYPES
@@ -648,15 +792,17 @@ router.patch(
           req.auth.userId,
 
         organizationId:
-          req.auth
-            .organizationId,
+          connection.organizationId,
 
         tenantId:
-          req.auth.tenantId,
+          connection.tenantId,
 
         metadata: {
           integrationId:
-            conn._id,
+            connection._id,
+
+          environmentId:
+            connection.environmentId,
         },
       }
     ).catch(() => {});
@@ -664,7 +810,7 @@ router.patch(
     return res.json({
       integration:
         safeConnection(
-          conn
+          connection
         ),
     });
   }
@@ -676,17 +822,14 @@ router.patch(
 
 router.post(
   "/connections/:integrationId/test",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
@@ -695,7 +838,7 @@ router.post(
     try {
       adapter =
         getAdapter(
-          conn.provider
+          connection.provider
         );
     } catch (err) {
       return res
@@ -709,20 +852,32 @@ router.post(
     }
 
     try {
-      const connection =
+      const runtimeConnection =
         withDecryptedSecret(
-          conn
+          connection
         );
 
       const result =
         await adapter
           .testConnection(
-            connection
+            runtimeConnection
           );
 
+      const now =
+        new Date();
+
       await IntegrationConnection
-        .findByIdAndUpdate(
-          conn._id,
+        .findOneAndUpdate(
+          {
+            _id:
+              connection._id,
+
+            organizationId:
+              connection.organizationId,
+
+            environmentId:
+              connection.environmentId,
+          },
           {
             $set: {
               healthStatus:
@@ -740,13 +895,13 @@ router.post(
 
               lastEventAt:
                 result.success
-                  ? new Date()
-                  : conn.lastEventAt,
+                  ? now
+                  : connection.lastEventAt,
 
               lastSuccessfulEventAt:
                 result.success
-                  ? new Date()
-                  : conn
+                  ? now
+                  : connection
                       .lastSuccessfulEventAt,
             },
           }
@@ -773,7 +928,7 @@ router.post(
             err.message,
         });
     } finally {
-      conn._decryptedSecret =
+      connection._decryptedSecret =
         undefined;
     }
   }
@@ -785,22 +940,19 @@ router.post(
 
 router.post(
   "/connections/:integrationId/disable",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
     if (
-      conn.status ===
+      connection.status ===
       "disabled"
     ) {
       return res
@@ -808,16 +960,18 @@ router.post(
         .json({
           error:
             "Already disabled",
+          code:
+            "INTEGRATION_ALREADY_DISABLED",
         });
     }
 
-    conn.status =
+    connection.status =
       "disabled";
 
-    conn.disabledAt =
+    connection.disabledAt =
       new Date();
 
-    await conn.save();
+    await connection.save();
 
     auditRecord(
       AUTH_EVENT_TYPES
@@ -831,15 +985,17 @@ router.post(
           req.auth.userId,
 
         organizationId:
-          req.auth
-            .organizationId,
+          connection.organizationId,
 
         tenantId:
-          req.auth.tenantId,
+          connection.tenantId,
 
         metadata: {
           integrationId:
-            conn._id,
+            connection._id,
+
+          environmentId:
+            connection.environmentId,
         },
       }
     ).catch(() => {});
@@ -847,7 +1003,7 @@ router.post(
     return res.json({
       integration:
         safeConnection(
-          conn
+          connection
         ),
     });
   }
@@ -859,17 +1015,14 @@ router.post(
 
 router.post(
   "/connections/:integrationId/rotate-secret",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
@@ -877,10 +1030,9 @@ router.post(
       error,
       value,
     } =
-      rotateSecretSchema
-        .validate(
-          req.body
-        );
+      rotateSecretSchema.validate(
+        req.body
+      );
 
     if (error) {
       return res
@@ -889,17 +1041,21 @@ router.post(
           error:
             error.details[0]
               .message,
+
+          code:
+            "VALIDATION_ERROR",
         });
     }
 
-    conn.encryptedSecretReference =
+    connection
+      .encryptedSecretReference =
       value.secret
         ? encryptSecret(
             value.secret
           )
         : null;
 
-    await conn.save();
+    await connection.save();
 
     auditRecord(
       AUTH_EVENT_TYPES
@@ -913,15 +1069,17 @@ router.post(
           req.auth.userId,
 
         organizationId:
-          req.auth
-            .organizationId,
+          connection.organizationId,
 
         tenantId:
-          req.auth.tenantId,
+          connection.tenantId,
 
         metadata: {
           integrationId:
-            conn._id,
+            connection._id,
+
+          environmentId:
+            connection.environmentId,
         },
       }
     ).catch(() => {});
@@ -936,33 +1094,24 @@ router.post(
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /connections/:integrationId/discovery
 //
-// Kubernetes-only Phase 2B/2C discovery.
-//
-// This route:
-// - decrypts the kubeconfig in memory
-// - queries the live cluster
-// - persists resource inventory
-// - returns discovery + persisted inventory metadata
+// Kubernetes discovery is scoped to the integration's environment.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
   "/connections/:integrationId/discovery",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
     if (
-      conn.provider !==
+      connection.provider !==
       "kubernetes"
     ) {
       return res
@@ -970,11 +1119,14 @@ router.get(
         .json({
           error:
             "Discovery is currently supported only for Kubernetes integrations",
+
+          code:
+            "DISCOVERY_NOT_SUPPORTED",
         });
     }
 
     if (
-      conn.status ===
+      connection.status ===
       "disabled"
     ) {
       return res
@@ -982,19 +1134,22 @@ router.get(
         .json({
           error:
             "Integration is disabled",
+
+          code:
+            "INTEGRATION_DISABLED",
         });
     }
 
     try {
-      const connection =
+      const runtimeConnection =
         withDecryptedSecret(
-          conn
+          connection
         );
 
       if (
-        !connection
+        !runtimeConnection
           ._decryptedSecret &&
-        connection
+        runtimeConnection
           .nonSecretConfig
           ?.authMode !==
           "in_cluster"
@@ -1004,6 +1159,9 @@ router.get(
           .json({
             error:
               "Kubernetes credentials are unavailable",
+
+            code:
+              "KUBERNETES_CREDENTIALS_UNAVAILABLE",
           });
       }
 
@@ -1013,14 +1171,14 @@ router.get(
       const discovery =
         await kubernetesDiscoveryService
           .discoverCluster(
-            connection
+            runtimeConnection
           );
 
       const tenantId =
-        conn.tenantId ||
+        connection.tenantId ||
+        req.context?.tenantId ||
         req.auth.tenantId ||
-        req.auth
-          .organizationId;
+        req.auth.organizationId;
 
       const persisted =
         await kubernetesInventoryService
@@ -1028,10 +1186,13 @@ router.get(
             tenantId,
 
             organizationId:
-              conn.organizationId,
+              connection.organizationId,
+
+            environmentId:
+              connection.environmentId,
 
             integrationId:
-              conn._id,
+              connection._id,
 
             discovery,
 
@@ -1039,21 +1200,37 @@ router.get(
               Date.now() -
               startedAt,
           });
+
       const relationships =
         await kubernetesRelationshipService
           .rebuildRelationships({
             tenantId,
 
             organizationId:
-              conn.organizationId,
+              connection.organizationId,
+
+            environmentId:
+              connection.environmentId,
 
             integrationId:
-              conn._id,
+              connection._id,
           });
 
+      const now =
+        new Date();
+
       await IntegrationConnection
-        .findByIdAndUpdate(
-          conn._id,
+        .findOneAndUpdate(
+          {
+            _id:
+              connection._id,
+
+            organizationId:
+              connection.organizationId,
+
+            environmentId:
+              connection.environmentId,
+          },
           {
             $set: {
               healthStatus:
@@ -1063,31 +1240,34 @@ router.get(
                 null,
 
               lastEventAt:
-                new Date(),
+                now,
 
               lastSuccessfulEventAt:
-                new Date(),
+                now,
             },
           }
         );
 
       return res.json({
         integrationId:
-          conn._id,
+          connection._id,
+
+        environmentId:
+          connection.environmentId,
 
         provider:
-          conn.provider,
+          connection.provider,
 
         name:
-          conn.name,
+          connection.name,
 
         healthStatus:
           "healthy",
 
         inventory:
           persisted,
-          
-          relationships,
+
+        relationships,
 
         ...discovery,
       });
@@ -1096,12 +1276,15 @@ router.get(
         "[integrationRoutes] Kubernetes discovery failed:",
         {
           integrationId:
-            conn._id
+            connection._id
               ?.toString(),
 
           organizationId:
-            req.auth
-              .organizationId
+            connection.organizationId
+              ?.toString(),
+
+          environmentId:
+            connection.environmentId
               ?.toString(),
 
           error:
@@ -1110,8 +1293,17 @@ router.get(
       );
 
       await IntegrationConnection
-        .findByIdAndUpdate(
-          conn._id,
+        .findOneAndUpdate(
+          {
+            _id:
+              connection._id,
+
+            organizationId:
+              connection.organizationId,
+
+            environmentId:
+              connection.environmentId,
+          },
           {
             $set: {
               healthStatus:
@@ -1132,10 +1324,12 @@ router.get(
 
           details:
             error.message,
+
+          code:
+            "KUBERNETES_DISCOVERY_FAILED",
         });
     } finally {
-      // Ensure decrypted credentials are not retained in memory longer than needed.
-      conn._decryptedSecret =
+      connection._decryptedSecret =
         undefined;
     }
   }
@@ -1147,17 +1341,14 @@ router.get(
 
 router.delete(
   "/connections/:integrationId",
-  async (
-    req,
-    res
-  ) => {
-    const conn =
+  async (req, res) => {
+    const connection =
       await loadConnection(
         req,
         res
       );
 
-    if (!conn) {
+    if (!connection) {
       return;
     }
 
@@ -1166,7 +1357,7 @@ router.delete(
     try {
       adapter =
         getAdapter(
-          conn.provider
+          connection.provider
         );
     } catch {
       adapter =
@@ -1181,7 +1372,7 @@ router.delete(
       try {
         await adapter.revoke(
           withDecryptedSecret(
-            conn
+            connection
           )
         );
       } catch (error) {
@@ -1189,18 +1380,22 @@ router.delete(
           "[integrationRoutes] Integration revoke failed:",
           {
             integrationId:
-              conn._id
+              connection._id
+                ?.toString(),
+
+            environmentId:
+              connection.environmentId
                 ?.toString(),
 
             provider:
-              conn.provider,
+              connection.provider,
 
             error:
               error.message,
           }
         );
       } finally {
-        conn._decryptedSecret =
+        connection._decryptedSecret =
           undefined;
       }
     }
@@ -1208,7 +1403,13 @@ router.delete(
     await IntegrationConnection
       .deleteOne({
         _id:
-          conn._id,
+          connection._id,
+
+        organizationId:
+          connection.organizationId,
+
+        environmentId:
+          connection.environmentId,
       });
 
     auditRecord(
@@ -1223,18 +1424,20 @@ router.delete(
           req.auth.userId,
 
         organizationId:
-          req.auth
-            .organizationId,
+          connection.organizationId,
 
         tenantId:
-          req.auth.tenantId,
+          connection.tenantId,
 
         metadata: {
           integrationId:
-            conn._id,
+            connection._id,
+
+          environmentId:
+            connection.environmentId,
 
           provider:
-            conn.provider,
+            connection.provider,
         },
       }
     ).catch(() => {});
@@ -1246,13 +1449,116 @@ router.delete(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
-// LEGACY WEBHOOK INGESTION ROUTES
+// WEBHOOK INGESTION ROUTES
 //
-// Kept unchanged for backwards compatibility.
+// Browser management routes:
+//   session -> organization -> environment
+//
+// External ingestion route:
+//   sourceId + webhook API key
+//       -> registered source
+//       -> organization/environment resolved internally
+//
+// IMPORTANT:
+// External senders are never allowed to choose organizationId,
+// tenantId, or environmentId in the payload.
 // ═════════════════════════════════════════════════════════════════════════════
+
+function webhookEnvironmentContext(req) {
+  return {
+    organizationId:
+      req.context?.organizationId ||
+      req.auth?.organizationId,
+
+    environmentId:
+      req.context?.environmentId,
+
+    tenantId:
+      req.context?.tenantId ||
+      req.auth?.tenantId,
+  };
+}
+
+/**
+ * Extract machine webhook credentials.
+ *
+ * Preferred:
+ *
+ * X-AIRA-Webhook-Source: whsrc_...
+ * X-AIRA-Webhook-Key: aira_wh_...
+ *
+ * Credentials are intentionally not taken from query params
+ * because URLs are commonly logged by proxies/load balancers.
+ */
+function extractWebhookCredentials(req) {
+  const sourceId =
+    req.headers[
+      "x-aira-webhook-source"
+    ];
+
+  const apiKey =
+    req.headers[
+      "x-aira-webhook-key"
+    ];
+
+  return {
+    sourceId:
+      typeof sourceId ===
+      "string"
+        ? sourceId.trim()
+        : null,
+
+    apiKey:
+      typeof apiKey ===
+      "string"
+        ? apiKey.trim()
+        : null,
+  };
+}
+
+function webhookErrorResponse(
+  res,
+  error,
+  fallbackMessage
+) {
+  const status =
+    error.status ||
+    error.statusCode ||
+    500;
+
+  return res
+    .status(status)
+    .json({
+      success:
+        false,
+
+      error:
+        status >= 500
+          ? fallbackMessage
+          : error.message,
+
+      code:
+        error.code ||
+        (
+          status >= 500
+            ? "WEBHOOK_INTERNAL_ERROR"
+            : "WEBHOOK_REQUEST_ERROR"
+        ),
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /webhooks/register
+//
+// Browser-authenticated registration.
+//
+// The selected AIRA environment becomes the permanent ownership
+// environment for this webhook source.
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.post(
   "/webhooks/register",
+  ...browserEnvironmentContext,
   async (
     req,
     res,
@@ -1260,14 +1566,31 @@ router.post(
   ) => {
     try {
       const {
-        tenantId =
-          "default",
-
         sourceConfig,
-      } = req.body;
+      } =
+        req.body || {};
 
       if (
-        !sourceConfig?.name
+        !sourceConfig ||
+        typeof sourceConfig !==
+          "object"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Missing sourceConfig",
+
+            code:
+              "SOURCE_CONFIG_REQUIRED",
+          });
+      }
+
+      if (
+        !sourceConfig.name
       ) {
         return res
           .status(400)
@@ -1277,30 +1600,81 @@ router.post(
 
             error:
               "Missing sourceConfig.name",
+
+            code:
+              "SOURCE_NAME_REQUIRED",
+          });
+      }
+
+      if (
+        !sourceConfig.type
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Missing sourceConfig.type",
+
+            code:
+              "SOURCE_TYPE_REQUIRED",
           });
       }
 
       const result =
         await webhookIngestionService
           .registerWebhookSource(
-            tenantId,
+            webhookEnvironmentContext(
+              req
+            ),
             sourceConfig
           );
 
-      return res.json({
-        success:
-          true,
+      /**
+       * apiKey is intentionally returned only by registration.
+       * The service persists only its hash.
+       */
+      return res
+        .status(201)
+        .json({
+          success:
+            true,
 
-        data:
-          result,
-      });
+          data:
+            result,
+        });
     } catch (error) {
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return webhookErrorResponse(
+          res,
+          error,
+          "Failed to register webhook source"
+        );
+      }
+
       return next(
         error
       );
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /webhooks/ingest
+//
+// PUBLIC MACHINE ENDPOINT.
+//
+// Authentication is performed using the registered webhook source:
+//   X-AIRA-Webhook-Source
+//   X-AIRA-Webhook-Key
+//
+// No browser session/environment is required.
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.post(
   "/webhooks/ingest",
@@ -1311,17 +1685,39 @@ router.post(
   ) => {
     try {
       const {
-        tenantId =
-          "default",
-
-        source,
-
-        payload,
-      } = req.body;
+        sourceId,
+        apiKey,
+      } =
+        extractWebhookCredentials(
+          req
+        );
 
       if (
-        !source ||
-        !payload
+        !sourceId ||
+        !apiKey
+      ) {
+        return res
+          .status(401)
+          .json({
+            success:
+              false,
+
+            error:
+              "Webhook authentication required",
+
+            code:
+              "WEBHOOK_AUTH_REQUIRED",
+          });
+      }
+
+      const payload =
+        req.body;
+
+      if (
+        !payload ||
+        typeof payload !==
+          "object" ||
+        Array.isArray(payload)
       ) {
         return res
           .status(400)
@@ -1330,16 +1726,135 @@ router.post(
               false,
 
             error:
-              "Missing source or payload",
+              "Webhook payload is required",
+
+            code:
+              "WEBHOOK_PAYLOAD_REQUIRED",
+          });
+      }
+
+      /**
+       * Critical enterprise invariant:
+       *
+       * We do NOT pass:
+       *
+       * organizationId
+       * environmentId
+       * tenantId
+       *
+       * from the request.
+       *
+       * ingestEvent() derives them from sourceId + API key.
+       */
+      const event =
+        await webhookIngestionService
+          .ingestEvent(
+            sourceId,
+            apiKey,
+            payload
+          );
+
+      return res
+        .status(202)
+        .json({
+          success:
+            true,
+
+          eventId:
+            event.eventId,
+
+          status:
+            event.status,
+
+          receivedAt:
+            event.timestamp,
+        });
+    } catch (error) {
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return webhookErrorResponse(
+          res,
+          error,
+          "Failed to ingest webhook event"
+        );
+      }
+
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /webhooks/:eventId/decision
+//
+// Environment-scoped authenticated operation.
+//
+// This currently represents the legacy path for associating an AIRA
+// decision with an ingested webhook event.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.post(
+  "/webhooks/:eventId/decision",
+  ...browserEnvironmentContext,
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const {
+        decision,
+      } =
+        req.body || {};
+
+      if (
+        !decision ||
+        typeof decision !==
+          "object"
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Missing decision",
+
+            code:
+              "DECISION_REQUIRED",
+          });
+      }
+
+      if (
+        !decision.action
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            error:
+              "Missing decision.action",
+
+            code:
+              "DECISION_ACTION_REQUIRED",
           });
       }
 
       const event =
         await webhookIngestionService
-          .ingestEvent(
-            tenantId,
-            source,
-            payload
+          .recordAiiraDecision(
+            req.params.eventId,
+            decision,
+            webhookEnvironmentContext(
+              req
+            )
           );
 
       return res.json({
@@ -1349,74 +1864,41 @@ router.post(
         eventId:
           event.eventId,
 
+        action:
+          event.aiiraDecision
+            ?.action,
+
         status:
           event.status,
       });
     } catch (error) {
-      return next(
-        error
-      );
-    }
-  }
-);
-
-router.post(
-  "/webhooks/:eventId/decision",
-  async (
-    req,
-    res,
-    next
-  ) => {
-    try {
-      const {
-        decision,
-      } = req.body;
-
-      if (!decision) {
-        return res
-          .status(400)
-          .json({
-            success:
-              false,
-
-            error:
-              "Missing decision",
-          });
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return webhookErrorResponse(
+          res,
+          error,
+          "Failed to record webhook decision"
+        );
       }
 
-      const event =
-        await webhookIngestionService
-          .recordAiiraDecision(
-            req.params
-              .eventId,
-
-            decision
-          );
-
-      return res.json({
-        success:
-          true,
-
-        eventId:
-          req.params
-            .eventId,
-
-        action:
-          event
-            .aiiraDecision
-            .action,
-      });
-    } catch (error) {
       return next(
         error
       );
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /webhooks/history
+//
+// Browser authenticated and environment scoped.
+// ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
   "/webhooks/history",
-  sessionAuthMiddleware,
+  ...browserEnvironmentContext,
   async (
     req,
     res,
@@ -1424,31 +1906,43 @@ router.get(
   ) => {
     try {
       const {
-        tenantId =
-          "default",
-
-        source,
+        sourceId =
+          null,
 
         limit =
           50,
-      } = req.query;
+      } =
+        req.query;
 
       const events =
         await webhookIngestionService
           .getEventHistory(
-            tenantId,
-            source,
-            parseInt(
-              limit,
-              10
-            )
+            webhookEnvironmentContext(
+              req
+            ),
+
+            sourceId,
+
+            limit
           );
 
       return res.json({
         success:
           true,
 
-        tenantId,
+        organizationId:
+          req.context
+            .organizationId,
+
+        environmentId:
+          req.context
+            .environmentId,
+
+        tenantId:
+          req.context
+            .tenantId ||
+          req.auth
+            .tenantId,
 
         eventsCount:
           events.length,
@@ -1456,6 +1950,17 @@ router.get(
         events,
       });
     } catch (error) {
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return webhookErrorResponse(
+          res,
+          error,
+          "Failed to load webhook history"
+        );
+      }
+
       return next(
         error
       );
@@ -1463,24 +1968,27 @@ router.get(
   }
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /webhooks/stats
+//
+// Browser authenticated and environment scoped.
+// ─────────────────────────────────────────────────────────────────────────────
+
 router.get(
   "/webhooks/stats",
-  sessionAuthMiddleware,
+  ...browserEnvironmentContext,
   async (
     req,
     res,
     next
   ) => {
     try {
-      const {
-        tenantId =
-          "default",
-      } = req.query;
-
       const stats =
         await webhookIngestionService
           .getStatistics(
-            tenantId
+            webhookEnvironmentContext(
+              req
+            )
           );
 
       const total =
@@ -1490,7 +1998,10 @@ router.get(
             item
           ) =>
             accumulator +
-            item.total,
+            (
+              item.total ||
+              0
+            ),
           0
         );
 
@@ -1501,7 +2012,24 @@ router.get(
             item
           ) =>
             accumulator +
-            item.processed,
+            (
+              item.processed ||
+              0
+            ),
+          0
+        );
+
+      const failed =
+        stats.reduce(
+          (
+            accumulator,
+            item
+          ) =>
+            accumulator +
+            (
+              item.failed ||
+              0
+            ),
           0
         );
 
@@ -1509,17 +2037,41 @@ router.get(
         success:
           true,
 
-        tenantId,
+        organizationId:
+          req.context
+            .organizationId,
+
+        environmentId:
+          req.context
+            .environmentId,
+
+        tenantId:
+          req.context
+            .tenantId ||
+          req.auth
+            .tenantId,
 
         summary: {
           total,
           processed,
+          failed,
         },
 
         bySource:
           stats,
       });
     } catch (error) {
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return webhookErrorResponse(
+          res,
+          error,
+          "Failed to load webhook statistics"
+        );
+      }
+
       return next(
         error
       );

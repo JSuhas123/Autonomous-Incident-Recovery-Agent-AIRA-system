@@ -256,6 +256,7 @@ async function executeCheck(monitor) {
     monitorId:     monitor._id,
     serviceId:     monitor.serviceId,
     organizationId: monitor.organizationId,
+    environmentId:  monitor.environmentId,
     tenantId:      monitor.tenantId,
     checkedAt,
     status:        "unknown",
@@ -397,21 +398,78 @@ async function recordResult(monitor, result) {
   }
   // If not enough data yet to confirm up or down, keep current status
 
-  const nextCheckAt = new Date(Date.now() + monitor.intervalSeconds * 1000);
+  const nextCheckAt =
+  new Date(
+    Date.now() +
+      monitor.intervalSeconds * 1000
+  );
 
-  await Monitor.findByIdAndUpdate(monitor._id, {
-    $set: {
-      lastStatus:           newStatus,
-      lastCheckedAt:        result.checkedAt,
-      lastStatusCode:       result.statusCode,
-      lastResponseTimeMs:   result.responseTimeMs,
-      consecutiveFailures,
-      consecutiveSuccesses,
-      nextCheckAt,
-      lockedAt: null,
-      lockedBy: null,
+/**
+ * Update the monitor only if its complete ownership
+ * context still matches the monitor claimed by the worker.
+ *
+ * This protects against stale workers updating a monitor
+ * that has been moved, replaced, or otherwise changed.
+ */
+const updatedMonitor =
+  await Monitor.findOneAndUpdate(
+    {
+      _id:
+        monitor._id,
+
+      organizationId:
+        monitor.organizationId,
+
+      environmentId:
+        monitor.environmentId,
+
+      serviceId:
+        monitor.serviceId,
     },
-  });
+
+    {
+      $set: {
+        lastStatus:
+          newStatus,
+
+        lastCheckedAt:
+          result.checkedAt,
+
+        lastStatusCode:
+          result.statusCode,
+
+        lastResponseTimeMs:
+          result.responseTimeMs,
+
+        consecutiveFailures,
+        consecutiveSuccesses,
+
+        nextCheckAt,
+
+        lockedAt:
+          null,
+
+        lockedBy:
+          null,
+      },
+    },
+
+    {
+      new: true,
+    }
+  );
+
+if (!updatedMonitor) {
+  const error =
+    new Error(
+      "Monitor ownership changed or monitor no longer exists"
+    );
+
+  error.code =
+    "MONITOR_OWNERSHIP_MISMATCH";
+
+  throw error;
+}
 
   const transitioned = oldStatus !== newStatus;
   if (transitioned) {

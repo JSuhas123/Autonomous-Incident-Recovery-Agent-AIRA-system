@@ -13,7 +13,6 @@ const mongoose = require("mongoose");
 
 // CRITICAL: Initialize and validate feature flags before any other system starts
 const featureFlags = require("./config/featureFlags");
-
 const coreApiRoutes = require("./routes/coreApiRoutes");
 const approvalRoutes = require("./routes/approvalRoutes");
 const policyManagementRoutes = require("./routes/policyManagementRoutes");
@@ -29,10 +28,10 @@ const incidentRoutes = require("./routes/incidentRoutes");
 const runbookRoutes  = require("./routes/runbookRoutes");
 const playbookRoutes = require("./routes/playbookRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
-
-
+const environmentRoutes = require("./routes/environmentRoutes");
+const developmentRoutes = require("./routes/developmentRoutes");
 const { errorHandler } = require("./middleware/errorHandler");
-
+const {MonitorScheduler,} = require("./services/monitoring/monitorScheduler");
 // PHASE 1 SAFETY: Import kill switch and sanitization middleware
 const { sanitizationMiddleware, testXSSPayloads } = require("./middleware/sanitizationMiddleware");
 const { 
@@ -68,7 +67,7 @@ const {requestContextMiddleware,} = require("./middleware/requestContextMiddlewa
 const {environmentContextMiddleware,} = require("./middleware/environmentContextMiddleware");
 const { rateLimitingMiddleware } = require("./middleware/rateLimitingMiddleware");
 const { validateInput } = require("./middleware/inputValidationMiddleware");
-
+const {browserEnvironmentContext,} = require("./middleware/contextMiddleware");
 const { connectDatabase, disconnectDatabase } = dbService;
 const { getQueueService } = require("./services/infrastructure/queueService");
 const { getIdempotencyService } = require("./services/infrastructure/idempotencyService");
@@ -162,7 +161,17 @@ app.use(correlationIdMiddleware);
 
 // Human auth routes mount before sanitization so passwords are not XSS-stripped
 app.use("/api/v1/auth", authRoutes);
-
+app.use("/api/v1/environments",environmentRoutes);
+/*
+ * LOCAL/DEVELOPMENT tooling.
+ *
+ * The router independently refuses all access when
+ * NODE_ENV === "production".
+ */
+app.use(
+  "/api/v1/dev",
+  developmentRoutes
+);
 // PHASE 1 SAFETY: Apply sanitization and kill switch enforcement
 // These must be applied early, before any handlers
 app.use(sanitizationMiddleware(null, { allowRichText: false })); // Sanitize ALL string fields
@@ -416,19 +425,19 @@ app.use("/api/v1/dashboard", sessionAuthMiddleware, dashboardRoutes);
 /**
  * SERVICE MANAGEMENT API — browser-session
  */
-app.use("/api/v1/services", sessionAuthMiddleware, serviceRoutes);
+app.use("/api/v1/services", sessionAuthMiddleware, browserEnvironmentContext, serviceRoutes);
 
 /**
  * MONITOR API — browser-session (cross-service monitor list + per-monitor operations)
  */
 app.use("/api/v1/monitors", sessionAuthMiddleware, monitorTopLevelRoutes);
-app.use("/api/v1/incidents", sessionAuthMiddleware, incidentRoutes);
+app.use("/api/v1/incidents", sessionAuthMiddleware, browserEnvironmentContext, incidentRoutes);
 
 /**
  * AGENT INTELLIGENCE PLATFORM — 8-agent AI pipeline
  */
 const agentIntelligenceRoutes = require("./routes/agentIntelligenceRoutes");
-app.use("/api/v1/incidents", sessionAuthMiddleware, agentIntelligenceRoutes);
+app.use("/api/v1/agent-intelligence", sessionAuthMiddleware,  agentIntelligenceRoutes);
 
 /**
  * INTEGRATION CATALOGUE — public endpoint (no auth)
@@ -695,21 +704,99 @@ async function startServer() {
       console.log("[server]    Kubernetes operations will not be available");
     }
 
-    // 9. Start HTTP server (REST API only)
-    serverInstance = require("http").createServer(app);
-    
-    // Pipeline endpoints disabled pending module integration fixes
-    
-    serverInstance.listen(PORT, "0.0.0.0", () => {
-      const duration = Date.now() - startTime;
-      console.log(`[server] ✓ Backend running on port ${PORT} (startup: ${duration}ms)`);
-      console.log(`[server] Core API available at /api/v1/tenants/:tenantId/*`);
+    // ---------------------------------------------------------------------------
+// 9. Start autonomous monitor scheduler
+// ---------------------------------------------------------------------------
+//
+// MongoDB and core services are already initialized at this point.
+//
+// The scheduler only claims monitors that have a complete
+// organization + environment + service ownership context.
+//
+try {
+  global.monitorScheduler =
+    new MonitorScheduler({
+      pollIntervalMs:
+        Number(
+          process.env.MONITOR_POLL_INTERVAL_MS
+        ) || 5000,
 
-      console.log(`[server] Metrics available at /metrics (Prometheus format)`);
-      console.log(`[server] Health endpoint at /health/detailed`);
-      console.log(`[server] ✓ Decision Engine initialized`);
-      console.log("[server] Ready to accept requests");
+      lockTimeoutMs:
+        Number(
+          process.env.MONITOR_LOCK_TIMEOUT_MS
+        ) || 120000,
+
+      maxConcurrency:
+        Number(
+          process.env.MONITOR_MAX_CONCURRENCY
+        ) || 5,
     });
+
+  await global.monitorScheduler.start();
+
+  console.log(
+    "[server] ✓ Monitor scheduler started"
+  );
+} catch (error) {
+  /**
+   * Monitoring scheduler failure should be visible,
+   * but should not prevent the API from starting.
+   *
+   * AIRA remains usable for configuration/API operations
+   * while autonomous monitoring is unavailable.
+   */
+  console.error(
+    "[server] Monitor scheduler failed to start:",
+    error.message
+  );
+
+  global.monitorScheduler =
+    null;
+}
+
+// ---------------------------------------------------------------------------
+// 10. Start HTTP server
+// ---------------------------------------------------------------------------
+
+serverInstance =
+  require("http")
+    .createServer(app);
+
+// Pipeline endpoints disabled pending module integration fixes
+
+serverInstance.listen(
+  PORT,
+  "0.0.0.0",
+  () => {
+    const duration =
+      Date.now() -
+      startTime;
+
+    console.log(
+      `[server] ✓ Backend running on port ${PORT} (startup: ${duration}ms)`
+    );
+
+    console.log(
+      `[server] Core API available at /api/v1/tenants/:tenantId/*`
+    );
+
+    console.log(
+      `[server] Metrics available at /metrics (Prometheus format)`
+    );
+
+    console.log(
+      `[server] Health endpoint at /health/detailed`
+    );
+
+    console.log(
+      `[server] ✓ Decision Engine initialized`
+    );
+
+    console.log(
+      "[server] Ready to accept requests"
+    );
+  }
+);
   } catch (error) {
     console.error("[server] Failed to start backend:", error);
     process.exit(1);

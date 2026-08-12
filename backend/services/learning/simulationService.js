@@ -1,201 +1,651 @@
-const crypto = require("crypto");
-const SimulationResult = require("../../models/SimulationResult");
+'use strict';
+
+const crypto = require('crypto');
+const SimulationResult = require('../../models/SimulationResult');
 
 /**
  * Simulation Service
- * Runs full decision pipeline without executing actions
- * Useful for testing, training, and what-if analysis
+ *
+ * Runs the decision pipeline without executing infrastructure actions.
+ *
+ * Canonical simulation ownership:
+ *
+ * tenantId
+ * + organizationId
+ * + environmentId
+ *
+ * A simulation from one environment must never be compared against or
+ * retrieved from another environment.
  */
 
 class SimulationService {
   /**
-   * Run simulation of a signal
-   * Executes full pipeline: analysis → decision → policy → safety
-   * Does NOT execute actions
+   * Run simulation of a signal.
+   *
+   * Preferred signature:
+   *
+   * simulateSignal(
+   *   {
+   *     tenantId,
+   *     organizationId,
+   *     environmentId
+   *   },
+   *   signalData,
+   *   actionRiskService
+   * )
+   *
+   * Legacy compatibility:
+   *
+   * simulateSignal(
+   *   tenantId,
+   *   signalData,
+   *   actionRiskService
+   * )
    */
-  async simulateSignal(tenantId, signalData,  actionRiskService) {
+  async simulateSignal(
+    scopeInput,
+    signalData,
+    actionRiskService
+  ) {
     try {
-      const simulationId = `sim-${crypto.randomUUID()}`;
-      const correlationId = `corr-${crypto.randomUUID()}`;
-     
-      // Run safety checks (but don't execute)
-      const safetyChecks = await this._runSafetyChecks(
-        decision,
-        actionRiskService,
-        tenantId
-      );
+      const scope =
+        this._normalizeScope(
+          scopeInput,
+          signalData
+        );
 
-      const wouldExecute = safetyChecks.allChecksPassed;
+      this._assertScope(scope);
 
-      // Build full trace (same as real decision)
+      const simulationId =
+        `sim-${crypto.randomUUID()}`;
+
+      const correlationId =
+        `corr-${crypto.randomUUID()}`;
+
+      /**
+       * IMPORTANT:
+       *
+       * The original file referenced `decision` here without defining it.
+       *
+       * For compatibility, this service now expects the caller to provide
+       * the already-computed decision through signalData.decision.
+       */
+      const decision =
+        signalData?.decision;
+
+      if (!decision) {
+        const error =
+          new Error(
+            'Simulation requires signalData.decision'
+          );
+
+        error.code =
+          'SIMULATION_DECISION_REQUIRED';
+
+        error.status =
+          400;
+
+        throw error;
+      }
+
+      const safetyChecks =
+        await this._runSafetyChecks(
+          decision,
+          actionRiskService,
+          scope
+        );
+
+      const wouldExecute =
+        safetyChecks.allChecksPassed;
+
       const simulationTrace = {
         simulationId,
-        tenantId,
+
+        tenantId:
+          scope.tenantId,
+
+        organizationId:
+          scope.organizationId,
+
+        environmentId:
+          scope.environmentId,
+
         correlationId,
-        timestamp: new Date(),
-        inputs: signalData,
-        reasoning: decision.reasoning,
-        recommendedAction: decision.recommendedAction,
-        confidence: decision.confidence,
-        policyCheck: decision.policyCheck,
+
+        timestamp:
+          new Date(),
+
+        inputs:
+          signalData,
+
+        reasoning:
+          decision.reasoning,
+
+        recommendedAction:
+          decision.recommendedAction,
+
+        confidence:
+          decision.confidence,
+
+        policyCheck:
+          decision.policyCheck,
+
         safetyChecks,
-        simulation: true,
+
+        simulation:
+          true,
+
         wouldExecute,
-        executionNote: this._buildExecutionNote(safetyChecks),
+
+        executionNote:
+          this._buildExecutionNote(
+            safetyChecks
+          ),
       };
 
-      // Store simulation result
-      const simulationResult = new SimulationResult({
-        simulationId,
-        tenantId,
-        correlationId,
-        input: {
-          signals: signalData.signals,
-          severity: signalData.severity,
-        },
-        decisionTrace: simulationTrace,
-        simulation: true,
-        wouldExecute,
-        executionNote: simulationTrace.executionNote,
-      });
+      const simulationResult =
+        new SimulationResult({
+          simulationId,
+
+          tenantId:
+            scope.tenantId,
+
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          correlationId,
+
+          input: {
+            signals:
+              signalData.signals,
+
+            severity:
+              signalData.severity,
+          },
+
+          decisionTrace:
+            simulationTrace,
+
+          simulation:
+            true,
+
+          wouldExecute,
+
+          executionNote:
+            simulationTrace.executionNote,
+        });
 
       await simulationResult.save();
 
       return simulationTrace;
     } catch (error) {
-      console.error("[SimulationService] Simulation failed:", error);
+      console.error(
+        '[SimulationService] Simulation failed:',
+        error
+      );
+
       throw error;
     }
   }
 
   /**
-   * Run safety checks without executing
+   * Run safety checks without executing.
    */
-  async _runSafetyChecks(decision, actionRiskService, tenantId) {
+  async _runSafetyChecks(
+    decision,
+    actionRiskService,
+    scope
+  ) {
     try {
-      const riskScore = await actionRiskService.assessRisk(
-        decision.recommendedAction,
-        decision.confidence,
-        decision.inputs?.severity
+      const riskScore =
+        await actionRiskService.assessRisk(
+          decision.recommendedAction,
+          decision.confidence,
+          decision.inputs?.severity,
+          {
+            tenantId:
+              scope.tenantId,
+
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+          }
+        );
+
+      return {
+        policyPassed:
+          decision.policyCheck?.passed ||
+          false,
+
+        riskAssessment: {
+          score:
+            riskScore,
+
+          acceptable:
+            riskScore <=
+            5.0,
+        },
+
+        allChecksPassed:
+          (
+            decision.policyCheck?.passed ||
+            false
+          ) &&
+          riskScore <=
+            5.0,
+      };
+    } catch (error) {
+      console.error(
+        '[SimulationService] Safety check failed:',
+        error
       );
 
       return {
-        policyPassed: decision.policyCheck?.passed || false,
+        policyPassed:
+          false,
+
         riskAssessment: {
-          score: riskScore,
-          acceptable: riskScore <= 5.0,
+          score:
+            10,
+
+          acceptable:
+            false,
         },
+
         allChecksPassed:
-          (decision.policyCheck?.passed || false) && riskScore <= 5.0,
-      };
-    } catch (error) {
-      console.error("[SimulationService] Safety check failed:", error);
-      return {
-        policyPassed: false,
-        riskAssessment: { score: 10, acceptable: false },
-        allChecksPassed: false,
+          false,
       };
     }
   }
 
   /**
-   * Build human-readable execution note
+   * Build human-readable execution note.
    */
-  _buildExecutionNote(safetyChecks) {
-    const reasons = [];
+  _buildExecutionNote(
+    safetyChecks
+  ) {
+    const reasons =
+      [];
 
-    if (!safetyChecks.policyPassed) {
-      reasons.push("Policy evaluation failed - action disallowed");
-    }
-    if (!safetyChecks.riskAssessment.acceptable) {
-      reasons.push(`Risk score too high: ${safetyChecks.riskAssessment.score}/5.0`);
+    if (
+      !safetyChecks.policyPassed
+    ) {
+      reasons.push(
+        'Policy evaluation failed - action disallowed'
+      );
     }
 
-    if (reasons.length === 0) {
-      return "All checks passed - would execute";
+    if (
+      !safetyChecks
+        .riskAssessment
+        .acceptable
+    ) {
+      reasons.push(
+        `Risk score too high: ${safetyChecks.riskAssessment.score}/5.0`
+      );
     }
-    return `Would NOT execute: ${reasons.join("; ")}`;
+
+    if (
+      reasons.length ===
+      0
+    ) {
+      return (
+        'All checks passed - would execute'
+      );
+    }
+
+    return (
+      `Would NOT execute: ${reasons.join('; ')}`
+    );
   }
 
   /**
-   * Get simulation history
+   * Get simulation history.
+   *
+   * Preferred:
+   *
+   * getSimulationHistory(scope, limit)
    */
-  async getSimulationHistory(tenantId, limit = 100) {
+  async getSimulationHistory(
+    scopeInput,
+    limit = 100
+  ) {
     try {
-      const simulations = await SimulationResult.find({ tenantId })
-        .sort({ timestamp: -1 })
-        .limit(limit)
-        .lean();
+      const scope =
+        this._normalizeScope(
+          scopeInput
+        );
+
+      this._assertScope(scope);
+
+      const query = {
+        tenantId:
+          scope.tenantId,
+
+        organizationId:
+          scope.organizationId,
+
+        environmentId:
+          scope.environmentId,
+      };
+
+      const simulations =
+        await SimulationResult
+          .find(query)
+          .sort({
+            timestamp:
+              -1,
+          })
+          .limit(limit)
+          .lean();
 
       return simulations;
     } catch (error) {
-      console.error("[SimulationService] Failed to fetch history:", error);
+      console.error(
+        '[SimulationService] Failed to fetch history:',
+        error
+      );
+
       throw error;
     }
   }
 
   /**
-   * Compare simulation with actual decision
+   * Compare simulation with actual decision.
+   *
+   * Preferred:
+   *
+   * compareWithActualDecision(
+   *   simulationId,
+   *   actualDecisionId,
+   *   decisionTraceService,
+   *   scope
+   * )
    */
-  async compareWithActualDecision(simulationId, actualDecisionId, decisionTraceService) {
+  async compareWithActualDecision(
+    simulationId,
+    actualDecisionId,
+    decisionTraceService,
+    scopeInput
+  ) {
     try {
-      const simulation = await SimulationResult.findOne({ simulationId }).lean();
+      const scope =
+        this._normalizeScope(
+          scopeInput
+        );
+
+      this._assertScope(scope);
+
+      const simulation =
+        await SimulationResult
+          .findOne({
+            simulationId,
+
+            tenantId:
+              scope.tenantId,
+
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+          })
+          .lean();
+
       if (!simulation) {
-        throw new Error(`Simulation ${simulationId} not found`);
+        const error =
+          new Error(
+            `Simulation ${simulationId} not found`
+          );
+
+        error.code =
+          'SIMULATION_NOT_FOUND';
+
+        error.status =
+          404;
+
+        throw error;
       }
 
-      const actualDecision = await decisionTraceService.getTrace(actualDecisionId);
+      /**
+       * CRITICAL FIX:
+       *
+       * Old:
+       *
+       * decisionTraceService.getTrace(actualDecisionId)
+       *
+       * New:
+       *
+       * decisionTraceService.getTrace(actualDecisionId, scope)
+       *
+       * This prevents a simulation in STAGING from comparing against a
+       * DecisionTrace belonging to PROD.
+       */
+      const actualDecision =
+        await decisionTraceService
+          .getTrace(
+            actualDecisionId,
+            scope
+          );
+
       if (!actualDecision) {
-        throw new Error(`Decision ${actualDecisionId} not found`);
+        const error =
+          new Error(
+            `Decision ${actualDecisionId} not found`
+          );
+
+        error.code =
+          'DECISION_NOT_FOUND';
+
+        error.status =
+          404;
+
+        throw error;
       }
 
-      // Find differences
-      const differences = this._findDifferences(
-        simulation.decisionTrace,
-        actualDecision
-      );
+      const differences =
+        this._findDifferences(
+          simulation.decisionTrace,
+          actualDecision
+        );
+
+      const actualConfidence =
+        actualDecision.inputs
+          ?.confidence ??
+        actualDecision.confidence ??
+        0;
+
+      const simulationConfidence =
+        simulation.decisionTrace
+          ?.confidence ??
+        0;
 
       return {
         simulation,
+
         actualDecision,
+
         differences,
+
         wereDecisionsEqual:
-          simulation.decisionTrace.recommendedAction ===
-          actualDecision.recommendedAction,
+          simulation.decisionTrace
+            .recommendedAction ===
+          actualDecision
+            .recommendedAction,
+
         confidenceDelta:
-          actualDecision.confidence - simulation.decisionTrace.confidence,
+          actualConfidence -
+          simulationConfidence,
       };
     } catch (error) {
-      console.error("[SimulationService] Comparison failed:", error);
+      console.error(
+        '[SimulationService] Comparison failed:',
+        error
+      );
+
       throw error;
     }
   }
 
   /**
-   * Find significant differences between two traces
+   * Find significant differences between two traces.
    */
-  _findDifferences(simTrace, actualTrace) {
-    const diffs = [];
+  _findDifferences(
+    simTrace,
+    actualTrace
+  ) {
+    const differences =
+      [];
 
-    if (simTrace.recommendedAction !== actualTrace.recommendedAction) {
-      diffs.push(
+    if (
+      simTrace.recommendedAction !==
+      actualTrace.recommendedAction
+    ) {
+      differences.push(
         `Action: ${simTrace.recommendedAction} → ${actualTrace.recommendedAction}`
       );
     }
 
-    const confDelta = Math.abs(
-      simTrace.confidence - actualTrace.confidence
-    );
-    if (confDelta > 0.05) {
-      diffs.push(
-        `Confidence: ${(simTrace.confidence * 100).toFixed(0)}% → ${(
-          actualTrace.confidence * 100
-        ).toFixed(0)}%`
+    const actualConfidence =
+      actualTrace.inputs
+        ?.confidence ??
+      actualTrace.confidence ??
+      0;
+
+    const simulationConfidence =
+      simTrace.confidence ??
+      0;
+
+    const confidenceDelta =
+      Math.abs(
+        simulationConfidence -
+        actualConfidence
+      );
+
+    if (
+      confidenceDelta >
+      0.05
+    ) {
+      differences.push(
+        `Confidence: ${(simulationConfidence * 100).toFixed(0)}% → ${(actualConfidence * 100).toFixed(0)}%`
       );
     }
 
-    return diffs;
+    return differences;
+  }
+
+  /**
+   * Normalize canonical scope.
+   *
+   * Accepts either:
+   *
+   * {
+   *   tenantId,
+   *   organizationId,
+   *   environmentId
+   * }
+   *
+   * or legacy tenantId string.
+   */
+  _normalizeScope(
+    input,
+    fallback = {}
+  ) {
+    if (
+      typeof input ===
+      'string'
+    ) {
+      return {
+        tenantId:
+          input,
+
+        organizationId:
+          fallback.organizationId ||
+          null,
+
+        environmentId:
+          fallback.environmentId ||
+          null,
+      };
+    }
+
+    return {
+      tenantId:
+        input?.tenantId ||
+        fallback.tenantId ||
+        null,
+
+      organizationId:
+        input?.organizationId ||
+        input?.orgId ||
+        fallback.organizationId ||
+        fallback.orgId ||
+        null,
+
+      environmentId:
+        input?.environmentId ||
+        fallback.environmentId ||
+        null,
+    };
+  }
+
+  /**
+   * Fail closed when simulation ownership is incomplete.
+   */
+  _assertScope(
+    scope
+  ) {
+    if (!scope.tenantId) {
+      const error =
+        new Error(
+          'tenantId is required for simulation operations'
+        );
+
+      error.code =
+        'SIMULATION_TENANT_REQUIRED';
+
+      error.status =
+        400;
+
+      throw error;
+    }
+
+    if (!scope.organizationId) {
+      const error =
+        new Error(
+          'organizationId is required for simulation operations'
+        );
+
+      error.code =
+        'SIMULATION_ORGANIZATION_REQUIRED';
+
+      error.status =
+        400;
+
+      throw error;
+    }
+
+    if (!scope.environmentId) {
+      const error =
+        new Error(
+          'environmentId is required for simulation operations'
+        );
+
+      error.code =
+        'SIMULATION_ENVIRONMENT_REQUIRED';
+
+      error.status =
+        400;
+
+      throw error;
+    }
   }
 }
 
-module.exports = new SimulationService();
+module.exports =
+  new SimulationService();

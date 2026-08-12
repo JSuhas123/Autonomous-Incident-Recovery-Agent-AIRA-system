@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 /**
  * Playbook Execution Service
@@ -6,492 +6,1759 @@
  * Orchestrates playbook execution by chaining runbook executions through
  * the RunbookExecutionEngine.
  *
- * Architecture invariant:
- *   PlaybookExecutionService → PlaybookRegistry → PlaybookParameterMapper
- *                           → RunbookRegistry → RunbookExecutionEngine
- *                                            → ActionHandlerRegistry
+ * Canonical execution ownership:
  *
- * This service NEVER calls infrastructure directly.
- * It NEVER calls the ActionHandlerRegistry directly.
- * All infrastructure execution flows through RunbookExecutionEngine.
+ * tenantId
+ * + organizationId
+ * + environmentId
+ * + incidentId
+ *
+ * Architecture invariant:
+ *
+ * PlaybookExecutionService
+ *   → PlaybookRegistry
+ *   → PlaybookParameterMapper
+ *   → RunbookRegistry
+ *   → RunbookExecutionEngine
+ *   → ActionHandlerRegistry
+ *
+ * This service NEVER executes infrastructure directly.
  */
 
-const { v4: uuidv4 } = require('uuid');
+const {
+  v4: uuidv4,
+} = require("uuid");
+
 const {
   PLAYBOOK_EXECUTION_STATUS,
   STAGE_EXECUTION_STATUS,
-  PLAYBOOK_LIFECYCLE,
   PLAYBOOK_STAGE_TYPE,
   PLAYBOOK_FAILURE_POLICY,
   PLAYBOOK_ROLLBACK_STRATEGY,
-} = require('../../constants/playbook');
+} = require("../../constants/playbook");
 
-const { getPlaybookRegistry }         = require('../registry/playbookRegistry');
-const { mapParameters }               = require('../parameters/playbookParameterMapper');
-const { computePlaybookChecksum, playbookVersionRef } = require('../versioning/playbookVersioning');
-const { getRunbookRegistry }          = require('../../runbooks/registry/runbookRegistry');
-const { getRunbookExecutionEngine }   = require('../../runbooks/execution/runbookExecutionEngine');
+const PlaybookExecution =
+  require("../../models/PlaybookExecution");
 
-// ── Execution service ──────────────────────────────────────────────────────
+const {
+  getPlaybookRegistry,
+} = require("../registry/playbookRegistry");
+
+const {
+  mapParameters,
+} = require("../parameters/playbookParameterMapper");
+
+const {
+  computePlaybookChecksum,
+  playbookVersionRef,
+} = require("../versioning/playbookVersioning");
+
+const {
+  getRunbookRegistry,
+} = require("../../runbooks/registry/runbookRegistry");
+
+const {
+  getRunbookExecutionEngine,
+} = require("../../runbooks/execution/runbookExecutionEngine");
+
+// ============================================================================
+// SERVICE
+// ============================================================================
 
 class PlaybookExecutionService {
   constructor(options = {}) {
-    this._playbookRegistry = options.playbookRegistry || getPlaybookRegistry();
-    this._runbookRegistry  = options.runbookRegistry  || getRunbookRegistry();
-    this._executionEngine  = options.executionEngine  || getRunbookExecutionEngine();
+    this._playbookRegistry =
+      options.playbookRegistry ||
+      getPlaybookRegistry();
+
+    this._runbookRegistry =
+      options.runbookRegistry ||
+      getRunbookRegistry();
+
+    this._executionEngine =
+      options.executionEngine ||
+      getRunbookExecutionEngine();
   }
+
+  // ==========================================================================
+  // CONTEXT
+  // ==========================================================================
+
+  _assertExecutionScope(
+    options = {}
+  ) {
+    const {
+      tenantId,
+      organizationId,
+      environmentId,
+      incidentId,
+    } = options;
+
+    if (!tenantId) {
+      const error =
+        new Error(
+          "tenantId is required for playbook execution"
+        );
+
+      error.status = 400;
+      error.code =
+        "PLAYBOOK_EXECUTION_TENANT_REQUIRED";
+
+      throw error;
+    }
+
+    if (!organizationId) {
+      const error =
+        new Error(
+          "organizationId is required for playbook execution"
+        );
+
+      error.status = 400;
+      error.code =
+        "PLAYBOOK_EXECUTION_ORGANIZATION_REQUIRED";
+
+      throw error;
+    }
+
+    if (!environmentId) {
+      const error =
+        new Error(
+          "environmentId is required for playbook execution"
+        );
+
+      error.status = 400;
+      error.code =
+        "PLAYBOOK_EXECUTION_ENVIRONMENT_REQUIRED";
+
+      throw error;
+    }
+
+    return {
+      tenantId,
+      organizationId,
+      environmentId,
+      incidentId:
+        incidentId || null,
+    };
+  }
+
+  _executionScopeFilter(
+    record
+  ) {
+    return {
+      executionId:
+        record.executionId,
+
+      organizationId:
+        record.organizationId,
+
+      environmentId:
+        record.environmentId,
+    };
+  }
+
+  // ==========================================================================
+  // EXECUTE
+  // ==========================================================================
 
   /**
    * Execute a playbook for a given incident context.
    *
-   * @param {string} playbookId
-   * @param {string} semver
-   * @param {object} incidentContext - evidence, signal data, etc.
-   * @param {object} options         - { tenantId, orgId, incidentId, correlationId, initiatedBy, dryRun }
-   * @returns {object} Execution record
+   * options:
+   *
+   * {
+   *   tenantId,
+   *   organizationId,
+   *   environmentId,
+   *   incidentId,
+   *   correlationId,
+   *   initiatedBy,
+   *   initiatorType,
+   *   dryRun,
+   *   policyDecision,
+   *   approvalId,
+   *   approver,
+   *   context
+   * }
    */
-  async execute(playbookId, semver, incidentContext = {}, options = {}) {
-    const executionId   = uuidv4();
-    const correlationId = options.correlationId || uuidv4();
-    const startedAt     = Date.now();
-
-    const record = _createRecord(executionId, correlationId, playbookId, semver, options);
-
-    try {
-      // ── Load playbook definition (must be ACTIVE) ──────────────────────────
-      record.status = PLAYBOOK_EXECUTION_STATUS.EVALUATING;
-
-      const playbookDef = await this._playbookRegistry.getExecutionDefinition(
-        playbookId,
-        semver,
-        options.tenantId,
+  async execute(
+    playbookId,
+    semver,
+    incidentContext = {},
+    options = {}
+  ) {
+    const scope =
+      this._assertExecutionScope(
+        options
       );
 
-      record.playbookSnapshot = playbookDef;
-      record.playbookChecksum = playbookDef.checksum || computePlaybookChecksum(playbookDef);
-      record.versionRef       = playbookVersionRef(playbookId, semver);
+    const executionId =
+      uuidv4();
 
-      // ── Policy check ───────────────────────────────────────────────────────
-      const policyDecision = _evaluatePolicy(playbookDef, incidentContext, options);
-      record.policyDecision = policyDecision;
+    const correlationId =
+      options.correlationId ||
+      uuidv4();
 
-      if (policyDecision.denied) {
-        record.status      = PLAYBOOK_EXECUTION_STATUS.FAILED;
-        record.errorCode   = 'POLICY_DENIED';
-        record.errorMessage = policyDecision.reason;
-        _setOutcome(record, false, Date.now() - startedAt, policyDecision.reason);
-        return record;
-      }
+    const startedAtMs =
+      Date.now();
 
-      // ── Approval gate ──────────────────────────────────────────────────────
-      if (_requiresApproval(playbookDef, policyDecision)) {
-        record.status = PLAYBOOK_EXECUTION_STATUS.WAITING_FOR_APPROVAL;
-        return record;
-      }
+    /**
+     * Create the forensic execution record immediately.
+     *
+     * Even failures during registry lookup or matching are
+     * therefore persisted.
+     */
+    let record =
+      await PlaybookExecution.create({
+        executionId,
 
-      // ── Execute stages ─────────────────────────────────────────────────────
-      record.status    = PLAYBOOK_EXECUTION_STATUS.RUNNING;
-      record.startedAt = new Date();
+        correlationId,
 
-      const sortedStages = [...playbookDef.stages].sort((a, b) => a.order - b.order);
-      let lastFailedStage = null;
+        tenantId:
+          scope.tenantId,
 
-      for (const stage of sortedStages) {
-        // Skip rollback/escalation/verification stages during normal execution
-        if (stage.type === PLAYBOOK_STAGE_TYPE.ROLLBACK     && !record._inRollback)    continue;
-        if (stage.type === PLAYBOOK_STAGE_TYPE.ESCALATION   && !record._inEscalation)  continue;
-        if (stage.type === PLAYBOOK_STAGE_TYPE.VERIFICATION)                           continue;
+        organizationId:
+          scope.organizationId,
 
-        const stageRecord = _createStageRecord(stage);
-        record.stageExecutions.push(stageRecord);
+        environmentId:
+          scope.environmentId,
 
-        await this._executeStage(stageRecord, stage, incidentContext, playbookDef, options);
+        incidentId:
+          scope.incidentId,
 
-        if (stageRecord.status === STAGE_EXECUTION_STATUS.FAILED) {
-          lastFailedStage = stage;
+        // Legacy compatibility only.
+        orgId:
+          String(
+            scope.organizationId
+          ),
 
-          // Apply failure policy
-          const policy = stage.failurePolicy || PLAYBOOK_FAILURE_POLICY.STOP;
+        playbookId,
 
-          if (policy === PLAYBOOK_FAILURE_POLICY.STOP) {
-            record.status        = PLAYBOOK_EXECUTION_STATUS.FAILED;
-            record.failedStageId = stage.id;
-            record.errorMessage  = stageRecord.error;
-            break;
-          }
+        playbookVersion:
+          semver,
 
-          if (policy === PLAYBOOK_FAILURE_POLICY.ROLLBACK) {
-            record.status = PLAYBOOK_EXECUTION_STATUS.ROLLBACK_PENDING;
-            break;
-          }
+        /**
+         * Required by schema.
+         *
+         * Replaced with the real immutable definition
+         * immediately after registry resolution.
+         */
+        playbookSnapshot:
+          {
+            playbookId,
+            semver,
+          },
 
-          if (policy === PLAYBOOK_FAILURE_POLICY.ESCALATE) {
-            record.status = PLAYBOOK_EXECUTION_STATUS.ESCALATED;
-            await this._triggerEscalation(record, playbookDef, stage, options);
-            break;
-          }
+        playbookChecksum:
+          "pending",
 
-          if (policy === PLAYBOOK_FAILURE_POLICY.SKIP) {
-            stageRecord.status      = STAGE_EXECUTION_STATUS.SKIPPED;
-            stageRecord.skipped     = true;
-            stageRecord.skippedReason = `Skipped after failure (policy: SKIP)`;
-            continue;
-          }
+        versionRef:
+          playbookVersionRef(
+            playbookId,
+            semver
+          ),
 
-          if (policy === PLAYBOOK_FAILURE_POLICY.CONTINUE) {
-            continue;
-          }
-        }
-      }
+        incidentContext,
 
-      // ── Rollback if needed ─────────────────────────────────────────────────
-      if (record.status === PLAYBOOK_EXECUTION_STATUS.ROLLBACK_PENDING) {
-        await this._executeRollback(record, playbookDef, incidentContext, options, startedAt);
-      } else if (record.status === PLAYBOOK_EXECUTION_STATUS.RUNNING) {
-        // ── Verification pass ────────────────────────────────────────────────
-        record.status = PLAYBOOK_EXECUTION_STATUS.VERIFYING;
+        initiatedBy:
+          options.initiatedBy ||
+          null,
 
-        const verifyStages = sortedStages.filter(s => s.type === PLAYBOOK_STAGE_TYPE.VERIFICATION);
-        let verificationPassed = true;
-        for (const vs of verifyStages) {
-          const vr = _createStageRecord(vs);
-          record.stageExecutions.push(vr);
-          await this._executeStage(vr, vs, incidentContext, playbookDef, options);
-          if (vr.status === STAGE_EXECUTION_STATUS.FAILED) {
-            verificationPassed = false;
-            const failPolicy = vs.failurePolicy || PLAYBOOK_FAILURE_POLICY.STOP;
-            if (failPolicy === PLAYBOOK_FAILURE_POLICY.ESCALATE) {
-              record.status = PLAYBOOK_EXECUTION_STATUS.ESCALATED;
-              await this._triggerEscalation(record, playbookDef, vs, options);
-            } else {
-              record.status        = PLAYBOOK_EXECUTION_STATUS.FAILED;
-              record.errorCode     = 'VERIFICATION_FAILED';
-              record.errorMessage  = vr.error || `Verification stage '${vs.id}' failed`;
-            }
-            break;
-          }
-        }
+        initiatorType:
+          options.initiatorType ||
+          "api",
 
-        if (verificationPassed) {
-          record.status = PLAYBOOK_EXECUTION_STATUS.SUCCEEDED;
-          _setOutcome(record, true, Date.now() - startedAt, null);
-        } else {
-          _setOutcome(record, false, Date.now() - startedAt, record.errorMessage);
-        }
-      }
+        status:
+          PLAYBOOK_EXECUTION_STATUS
+            .CREATED,
 
-    } catch (err) {
-      record.status       = PLAYBOOK_EXECUTION_STATUS.FAILED;
-      record.errorMessage = err.message;
-      record.errorCode    = err.code || 'EXECUTION_ERROR';
-      _setOutcome(record, false, Date.now() - startedAt, err.message);
-    }
-
-    record.completedAt = new Date();
-    record.durationMs  = Date.now() - startedAt;
-
-    return record;
-  }
-
-  // ── Stage execution ─────────────────────────────────────────────────────
-
-  async _executeStage(stageRecord, stage, incidentContext, playbookDef, options) {
-    stageRecord.status    = STAGE_EXECUTION_STATUS.RUNNING;
-    stageRecord.startedAt = new Date();
-
-    const stageStart = Date.now();
+        stageExecutions:
+          [],
+      });
 
     try {
-      const runbooks = stage.runbooks || [];
+      // ======================================================================
+      // 1. LOAD PLAYBOOK
+      // ======================================================================
 
-      for (let i = 0; i < runbooks.length; i++) {
-        const ref  = runbooks[i];
-        const rbId = ref.runbookId;
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .EVALUATING;
 
-        // Resolve runbook version
-        const rbVersion = await this._resolveRunbookVersion(rbId, ref.versionConstraint, options.tenantId);
+      await record.save();
 
-        // Map parameters for this runbook
-        const rbDef = await this._runbookRegistry.getVersion(rbId, rbVersion, options.tenantId);
-        const { mapped, missing } = mapParameters(
-          ref.parameterMappings || {},
-          {
-            incident:     incidentContext,
-            signal:       incidentContext.signal,
-            context:      options.context || {},
-            evidence:     incidentContext.evidence || {},
-            service:      incidentContext.service || {},
-            constants:    options.constants || {},
-            stage_output: _collectStageOutputs(stageRecord),
-          },
-          rbDef.parameters || [],
+      /**
+       * Registry call receives full ownership scope.
+       *
+       * Registry implementation will be updated next so it can return:
+       * - global system playbook
+       * - matching tenant/environment playbook
+       *
+       * but never another tenant environment.
+       */
+      const playbookDef =
+        await this
+          ._playbookRegistry
+          .getExecutionDefinition(
+            playbookId,
+            semver,
+            {
+              tenantId:
+                scope.tenantId,
+
+              organizationId:
+                scope.organizationId,
+
+              environmentId:
+                scope.environmentId,
+            }
+          );
+
+      const checksum =
+        playbookDef.checksum ||
+        computePlaybookChecksum(
+          playbookDef
         );
 
-        if (missing.length > 0) {
-          // Check if any missing params are required
-          const required = rbDef.parameters?.filter(p => p.required && missing.includes(p.name)) || [];
-          if (required.length > 0) {
-            stageRecord.status = STAGE_EXECUTION_STATUS.FAILED;
-            stageRecord.error  = `Missing required parameters for runbook ${rbId}: ${required.map(p => p.name).join(', ')}`;
-            return;
-          }
-        }
-
-        // Execute via RunbookExecutionEngine (NEVER call ActionHandlerRegistry directly)
-        const rbExecResult = await this._executionEngine.execute(
-          rbDef,
-          {
-            explicitInputs:   mapped,
-            incidentEvidence: incidentContext.evidence || {},
-            alertLabels:      incidentContext.signal?.labels || {},
-            tenantId:         options.tenantId,
-            correlationId:    options.correlationId,
-            initiatedBy:      options.initiatedBy,
-            incidentId:       options.incidentId,
-            dryRun:           options.dryRun,
-          },
+      record.playbookSnapshot =
+        _sanitizePlaybookSnapshot(
+          playbookDef
         );
 
-        const rbRef = {
-          runbookId:      rbId,
-          runbookVersion: rbVersion,
-          executionId:    rbExecResult.executionId,
-          status:         rbExecResult.status,
-          startedAt:      rbExecResult.startedAt,
-          completedAt:    rbExecResult.completedAt,
-          durationMs:     rbExecResult.durationMs,
-          mappedParams:   _redactMappedParams(mapped, rbDef.parameters || []),
-          output:         rbExecResult.output || null,
-          error:          rbExecResult.errorMessage || null,
+      record.playbookChecksum =
+        checksum;
+
+      record.versionRef =
+        playbookVersionRef(
+          playbookId,
+          semver
+        );
+
+      await record.save();
+
+      // ======================================================================
+      // 2. POLICY
+      // ======================================================================
+
+      const policyDecision =
+        _evaluatePolicy(
+          playbookDef,
+          incidentContext,
+          options
+        );
+
+      record.policyDecision =
+        policyDecision;
+
+      await record.save();
+
+      if (
+        policyDecision.denied
+      ) {
+        record.status =
+          PLAYBOOK_EXECUTION_STATUS
+            .FAILED;
+
+        record.errorCode =
+          "POLICY_DENIED";
+
+        record.errorMessage =
+          policyDecision.reason;
+
+        _setOutcome(
+          record,
+          false,
+          Date.now() -
+            startedAtMs,
+          policyDecision.reason
+        );
+
+        record.completedAt =
+          new Date();
+
+        record.durationMs =
+          Date.now() -
+          startedAtMs;
+
+        await record.save();
+
+        return record.toObject();
+      }
+
+      // ======================================================================
+      // 3. APPROVAL
+      // ======================================================================
+
+      if (
+        _requiresApproval(
+          playbookDef,
+          policyDecision
+        ) &&
+        !options.approvalId
+      ) {
+        record.status =
+          PLAYBOOK_EXECUTION_STATUS
+            .WAITING_FOR_APPROVAL;
+
+        record.statusReason =
+          "Playbook requires human approval";
+
+        await record.save();
+
+        return record.toObject();
+      }
+
+      if (
+        options.approvalId
+      ) {
+        record.approval = {
+          approvalId:
+            options.approvalId,
+
+          approver:
+            options.approver ||
+            null,
+
+          approvedAt:
+            new Date(),
+
+          mode:
+            playbookDef
+              .approval
+              ?.mode ||
+            null,
+
+          decision:
+            "APPROVED",
         };
 
-        stageRecord.runbookExecutions.push(rbRef);
+        await record.save();
+      }
 
-        // Check runbook execution status
-        if (['FAILED', 'ROLLBACK_FAILED', 'ESCALATED'].includes(rbExecResult.status)) {
-          const rbRequired = ref.required !== false;
-          if (rbRequired) {
-            stageRecord.status = STAGE_EXECUTION_STATUS.FAILED;
-            stageRecord.error  = `Runbook ${rbId} failed: ${rbExecResult.errorMessage || rbExecResult.status}`;
-            return;
+      // ======================================================================
+      // 4. RUN
+      // ======================================================================
+
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .RUNNING;
+
+      record.startedAt =
+        new Date();
+
+      await record.save();
+
+      const sortedStages =
+        [
+          ...(playbookDef
+            .stages ||
+            []),
+        ].sort(
+          (a, b) =>
+            a.order -
+            b.order
+        );
+
+      for (
+        const stage
+        of sortedStages
+      ) {
+        /**
+         * Rollback/escalation/verification stages are
+         * handled in their respective phases.
+         */
+        if (
+          stage.type ===
+            PLAYBOOK_STAGE_TYPE
+              .ROLLBACK &&
+          !record._inRollback
+        ) {
+          continue;
+        }
+
+        if (
+          stage.type ===
+            PLAYBOOK_STAGE_TYPE
+              .ESCALATION &&
+          !record._inEscalation
+        ) {
+          continue;
+        }
+
+        if (
+          stage.type ===
+          PLAYBOOK_STAGE_TYPE
+            .VERIFICATION
+        ) {
+          continue;
+        }
+
+        const stageRecord =
+          _createStageRecord(
+            stage
+          );
+
+        record.stageExecutions
+          .push(
+            stageRecord
+          );
+
+        await record.save();
+
+        await this._executeStage(
+          stageRecord,
+          stage,
+          incidentContext,
+          playbookDef,
+          {
+            ...options,
+
+            tenantId:
+              scope.tenantId,
+
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+
+            incidentId:
+              scope.incidentId,
+
+            correlationId,
           }
-          // optional runbook — log but continue
+        );
+
+        /**
+         * stageRecord is a plain object, so explicitly mark
+         * nested field modified after mutation.
+         */
+        record.markModified(
+          "stageExecutions"
+        );
+
+        await record.save();
+
+        if (
+          stageRecord.status ===
+          STAGE_EXECUTION_STATUS
+            .FAILED
+        ) {
+          const failurePolicy =
+            stage.failurePolicy ||
+            PLAYBOOK_FAILURE_POLICY
+              .STOP;
+
+          if (
+            failurePolicy ===
+            PLAYBOOK_FAILURE_POLICY
+              .STOP
+          ) {
+            record.status =
+              PLAYBOOK_EXECUTION_STATUS
+                .FAILED;
+
+            record.failedStageId =
+              stage.id;
+
+            record.errorMessage =
+              stageRecord.error;
+
+            break;
+          }
+
+          if (
+            failurePolicy ===
+            PLAYBOOK_FAILURE_POLICY
+              .ROLLBACK
+          ) {
+            record.status =
+              PLAYBOOK_EXECUTION_STATUS
+                .ROLLBACK_PENDING;
+
+            break;
+          }
+
+          if (
+            failurePolicy ===
+            PLAYBOOK_FAILURE_POLICY
+              .ESCALATE
+          ) {
+            record.status =
+              PLAYBOOK_EXECUTION_STATUS
+                .ESCALATED;
+
+            await this
+              ._triggerEscalation(
+                record,
+                playbookDef,
+                stage,
+                options
+              );
+
+            break;
+          }
+
+          if (
+            failurePolicy ===
+            PLAYBOOK_FAILURE_POLICY
+              .SKIP
+          ) {
+            stageRecord.status =
+              STAGE_EXECUTION_STATUS
+                .SKIPPED;
+
+            stageRecord.skipped =
+              true;
+
+            stageRecord.skippedReason =
+              "Skipped after failure (policy: SKIP)";
+
+            record.markModified(
+              "stageExecutions"
+            );
+
+            await record.save();
+
+            continue;
+          }
+
+          if (
+            failurePolicy ===
+            PLAYBOOK_FAILURE_POLICY
+              .CONTINUE
+          ) {
+            continue;
+          }
         }
       }
 
-      stageRecord.status      = STAGE_EXECUTION_STATUS.SUCCEEDED;
-      stageRecord.completedAt = new Date();
-      stageRecord.durationMs  = Date.now() - stageStart;
+      // ======================================================================
+      // 5. ROLLBACK
+      // ======================================================================
 
-    } catch (err) {
-      stageRecord.status      = STAGE_EXECUTION_STATUS.FAILED;
-      stageRecord.error       = err.message;
-      stageRecord.completedAt = new Date();
-      stageRecord.durationMs  = Date.now() - stageStart;
+      if (
+        record.status ===
+        PLAYBOOK_EXECUTION_STATUS
+          .ROLLBACK_PENDING
+      ) {
+        await this
+          ._executeRollback(
+            record,
+            playbookDef,
+            incidentContext,
+            {
+              ...options,
+
+              tenantId:
+                scope.tenantId,
+
+              organizationId:
+                scope.organizationId,
+
+              environmentId:
+                scope.environmentId,
+
+              incidentId:
+                scope.incidentId,
+
+              correlationId,
+            },
+            startedAtMs
+          );
+      }
+
+      // ======================================================================
+      // 6. VERIFICATION
+      // ======================================================================
+
+      else if (
+        record.status ===
+        PLAYBOOK_EXECUTION_STATUS
+          .RUNNING
+      ) {
+        record.status =
+          PLAYBOOK_EXECUTION_STATUS
+            .VERIFYING;
+
+        await record.save();
+
+        const verificationStages =
+          sortedStages.filter(
+            (stage) =>
+              stage.type ===
+              PLAYBOOK_STAGE_TYPE
+                .VERIFICATION
+          );
+
+        let verificationPassed =
+          true;
+
+        for (
+          const verificationStage
+          of verificationStages
+        ) {
+          const stageRecord =
+            _createStageRecord(
+              verificationStage
+            );
+
+          record.stageExecutions
+            .push(
+              stageRecord
+            );
+
+          await record.save();
+
+          await this
+            ._executeStage(
+              stageRecord,
+              verificationStage,
+              incidentContext,
+              playbookDef,
+              {
+                ...options,
+
+                tenantId:
+                  scope.tenantId,
+
+                organizationId:
+                  scope.organizationId,
+
+                environmentId:
+                  scope.environmentId,
+
+                incidentId:
+                  scope.incidentId,
+
+                correlationId,
+              }
+            );
+
+          record.markModified(
+            "stageExecutions"
+          );
+
+          await record.save();
+
+          if (
+            stageRecord.status ===
+            STAGE_EXECUTION_STATUS
+              .FAILED
+          ) {
+            verificationPassed =
+              false;
+
+            const failurePolicy =
+              verificationStage
+                .failurePolicy ||
+              PLAYBOOK_FAILURE_POLICY
+                .STOP;
+
+            if (
+              failurePolicy ===
+              PLAYBOOK_FAILURE_POLICY
+                .ESCALATE
+            ) {
+              record.status =
+                PLAYBOOK_EXECUTION_STATUS
+                  .ESCALATED;
+
+              await this
+                ._triggerEscalation(
+                  record,
+                  playbookDef,
+                  verificationStage,
+                  options
+                );
+            } else {
+              record.status =
+                PLAYBOOK_EXECUTION_STATUS
+                  .FAILED;
+
+              record.errorCode =
+                "VERIFICATION_FAILED";
+
+              record.errorMessage =
+                stageRecord.error ||
+                `Verification stage "${verificationStage.id}" failed`;
+            }
+
+            break;
+          }
+        }
+
+        if (
+          verificationPassed
+        ) {
+          record.status =
+            PLAYBOOK_EXECUTION_STATUS
+              .SUCCEEDED;
+
+          _setOutcome(
+            record,
+            true,
+            Date.now() -
+              startedAtMs,
+            null
+          );
+        } else {
+          _setOutcome(
+            record,
+            false,
+            Date.now() -
+              startedAtMs,
+            record.errorMessage
+          );
+        }
+      }
+
+      // ======================================================================
+      // COMPLETE
+      // ======================================================================
+
+      record.completedAt =
+        new Date();
+
+      record.durationMs =
+        Date.now() -
+        startedAtMs;
+
+      await record.save();
+
+      return record.toObject();
+    } catch (error) {
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .FAILED;
+
+      record.errorMessage =
+        error.message;
+
+      record.errorCode =
+        error.code ||
+        "EXECUTION_ERROR";
+
+      record.completedAt =
+        new Date();
+
+      record.durationMs =
+        Date.now() -
+        startedAtMs;
+
+      _setOutcome(
+        record,
+        false,
+        record.durationMs,
+        error.message
+      );
+
+      try {
+        await record.save();
+      } catch (
+        persistenceError
+      ) {
+        console.error(
+          "[playbook-execution] Failed to persist failure state:",
+          persistenceError.message
+        );
+      }
+
+      return record.toObject();
     }
   }
 
-  // ── Rollback ────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // STAGE EXECUTION
+  // ==========================================================================
 
-  async _executeRollback(record, playbookDef, incidentContext, options, startedAt) {
-    const strategy = playbookDef.rollback?.strategy || PLAYBOOK_ROLLBACK_STRATEGY.NONE;
+  async _executeStage(
+    stageRecord,
+    stage,
+    incidentContext,
+    playbookDef,
+    options
+  ) {
+    stageRecord.status =
+      STAGE_EXECUTION_STATUS
+        .RUNNING;
 
-    if (strategy === PLAYBOOK_ROLLBACK_STRATEGY.NONE) {
-      record.status = PLAYBOOK_EXECUTION_STATUS.FAILED;
-      _setOutcome(record, false, Date.now() - startedAt, 'Stage failed, no rollback configured');
+    stageRecord.startedAt =
+      new Date();
+
+    const stageStartedAt =
+      Date.now();
+
+    try {
+      const runbooks =
+        stage.runbooks ||
+        [];
+
+      for (
+        const reference
+        of runbooks
+      ) {
+        const runbookId =
+          reference.runbookId;
+
+        const runbookVersion =
+          await this
+            ._resolveRunbookVersion(
+              runbookId,
+              reference
+                .versionConstraint,
+              {
+                tenantId:
+                  options.tenantId,
+
+                organizationId:
+                  options.organizationId,
+
+                environmentId:
+                  options.environmentId,
+              }
+            );
+
+        /**
+         * Environment-safe registry lookup.
+         */
+        const runbookDefinition =
+          await this
+            ._runbookRegistry
+            .getVersion(
+              runbookId,
+              runbookVersion,
+              {
+                tenantId:
+                  options.tenantId,
+
+                organizationId:
+                  options.organizationId,
+
+                environmentId:
+                  options.environmentId,
+              }
+            );
+
+        const {
+          mapped,
+          missing,
+        } =
+          mapParameters(
+            reference
+              .parameterMappings ||
+              {},
+            {
+              incident:
+                incidentContext,
+
+              signal:
+                incidentContext.signal,
+
+              context:
+                options.context ||
+                {},
+
+              evidence:
+                incidentContext
+                  .evidence ||
+                {},
+
+              service:
+                incidentContext
+                  .service ||
+                {},
+
+              constants:
+                options.constants ||
+                {},
+
+              stage_output:
+                _collectStageOutputs(
+                  stageRecord
+                ),
+            },
+            runbookDefinition
+              .parameters ||
+              []
+          );
+
+        if (
+          missing.length >
+          0
+        ) {
+          const required =
+            runbookDefinition
+              .parameters
+              ?.filter(
+                (parameter) =>
+                  parameter.required &&
+                  missing.includes(
+                    parameter.name
+                  )
+              ) ||
+            [];
+
+          if (
+            required.length >
+            0
+          ) {
+            stageRecord.status =
+              STAGE_EXECUTION_STATUS
+                .FAILED;
+
+            stageRecord.error =
+              `Missing required parameters for runbook ${runbookId}: ${required
+                .map(
+                  (parameter) =>
+                    parameter.name
+                )
+                .join(", ")}`;
+
+            stageRecord.completedAt =
+              new Date();
+
+            stageRecord.durationMs =
+              Date.now() -
+              stageStartedAt;
+
+            return;
+          }
+        }
+
+        /**
+         * CRITICAL:
+         *
+         * Full ownership context flows into the real
+         * RunbookExecutionEngine and therefore down into
+         * action handlers.
+         */
+        const runbookExecution =
+          await this
+            ._executionEngine
+            .execute(
+              runbookDefinition,
+              {
+                explicitInputs:
+                  mapped,
+
+                incidentEvidence:
+                  incidentContext
+                    .evidence ||
+                  {},
+
+                alertLabels:
+                  incidentContext
+                    .signal
+                    ?.labels ||
+                  {},
+
+                tenantId:
+                  options.tenantId,
+
+                organizationId:
+                  options.organizationId,
+
+                environmentId:
+                  options.environmentId,
+
+                incidentId:
+                  options.incidentId,
+
+                correlationId:
+                  options.correlationId,
+
+                initiatedBy:
+                  options.initiatedBy,
+
+                initiatorType:
+                  options.initiatorType ||
+                  "system",
+
+                approvalId:
+                  options.approvalId,
+
+                approver:
+                  options.approver,
+
+                dryRun:
+                  options.dryRun,
+              }
+            );
+
+        stageRecord
+          .runbookExecutions
+          .push({
+            runbookId,
+
+            runbookVersion,
+
+            executionId:
+              runbookExecution
+                .executionId,
+
+            status:
+              runbookExecution
+                .status,
+
+            startedAt:
+              runbookExecution
+                .startedAt,
+
+            completedAt:
+              runbookExecution
+                .completedAt,
+
+            durationMs:
+              runbookExecution
+                .durationMs,
+
+            mappedParams:
+              _redactMappedParams(
+                mapped,
+                runbookDefinition
+                  .parameters ||
+                  []
+              ),
+
+            output:
+              runbookExecution
+                .output ||
+              null,
+
+            error:
+              runbookExecution
+                .errorMessage ||
+              null,
+          });
+
+        if (
+          [
+            "FAILED",
+            "ROLLBACK_FAILED",
+            "ESCALATED",
+          ].includes(
+            runbookExecution.status
+          )
+        ) {
+          const required =
+            reference.required !==
+            false;
+
+          if (required) {
+            stageRecord.status =
+              STAGE_EXECUTION_STATUS
+                .FAILED;
+
+            stageRecord.error =
+              `Runbook ${runbookId} failed: ${
+                runbookExecution.errorMessage ||
+                runbookExecution.status
+              }`;
+
+            stageRecord.completedAt =
+              new Date();
+
+            stageRecord.durationMs =
+              Date.now() -
+              stageStartedAt;
+
+            return;
+          }
+        }
+      }
+
+      stageRecord.status =
+        STAGE_EXECUTION_STATUS
+          .SUCCEEDED;
+
+      stageRecord.completedAt =
+        new Date();
+
+      stageRecord.durationMs =
+        Date.now() -
+        stageStartedAt;
+    } catch (error) {
+      stageRecord.status =
+        STAGE_EXECUTION_STATUS
+          .FAILED;
+
+      stageRecord.error =
+        error.message;
+
+      stageRecord.completedAt =
+        new Date();
+
+      stageRecord.durationMs =
+        Date.now() -
+        stageStartedAt;
+    }
+  }
+
+  // ==========================================================================
+  // ROLLBACK
+  // ==========================================================================
+
+  async _executeRollback(
+    record,
+    playbookDef,
+    incidentContext,
+    options,
+    startedAt
+  ) {
+    const strategy =
+      playbookDef
+        .rollback
+        ?.strategy ||
+      PLAYBOOK_ROLLBACK_STRATEGY
+        .NONE;
+
+    if (
+      strategy ===
+      PLAYBOOK_ROLLBACK_STRATEGY
+        .NONE
+    ) {
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .FAILED;
+
+      _setOutcome(
+        record,
+        false,
+        Date.now() -
+          startedAt,
+        "Stage failed, no rollback configured"
+      );
+
+      await record.save();
+
       return;
     }
 
-    record.status = PLAYBOOK_EXECUTION_STATUS.ROLLING_BACK;
-    record._inRollback = true;
+    record.status =
+      PLAYBOOK_EXECUTION_STATUS
+        .ROLLING_BACK;
 
-    const rollbackRecord = {
-      strategy,
-      triggeredAt: new Date(),
-      success: false,
-      reason: null,
-      stageResults: [],
-    };
+    record._inRollback =
+      true;
+
+    await record.save();
+
+    const rollbackRecord =
+      {
+        strategy,
+
+        triggeredAt:
+          new Date(),
+
+        success:
+          false,
+
+        reason:
+          null,
+
+        stageResults:
+          [],
+      };
 
     try {
-      if (strategy === PLAYBOOK_ROLLBACK_STRATEGY.STAGE_ROLLBACK) {
-        const rollbackStageIds = playbookDef.rollback?.stages || [];
-        const sortedStages     = [...(playbookDef.stages || [])].sort((a, b) => b.order - a.order);
-        const rollbackStages   = rollbackStageIds.length > 0
-          ? rollbackStageIds.map(id => playbookDef.stages.find(s => s.id === id)).filter(Boolean)
-          : sortedStages.filter(s => s.type === PLAYBOOK_STAGE_TYPE.ROLLBACK);
+      if (
+        strategy ===
+        PLAYBOOK_ROLLBACK_STRATEGY
+          .STAGE_ROLLBACK
+      ) {
+        const rollbackStageIds =
+          playbookDef
+            .rollback
+            ?.stages ||
+          [];
 
-        for (const stage of rollbackStages) {
-          const sr = _createStageRecord(stage);
-          record.stageExecutions.push(sr);
-          await this._executeStage(sr, stage, incidentContext, playbookDef, options);
-          rollbackRecord.stageResults.push({ stageId: stage.id, status: sr.status });
+        const descendingStages =
+          [
+            ...(
+              playbookDef
+                .stages ||
+              []
+            ),
+          ].sort(
+            (a, b) =>
+              b.order -
+              a.order
+          );
+
+        const rollbackStages =
+          rollbackStageIds
+            .length >
+          0
+            ? rollbackStageIds
+                .map(
+                  (id) =>
+                    playbookDef
+                      .stages
+                      .find(
+                        (
+                          stage
+                        ) =>
+                          stage.id ===
+                          id
+                      )
+                )
+                .filter(
+                  Boolean
+                )
+            : descendingStages
+                .filter(
+                  (stage) =>
+                    stage.type ===
+                    PLAYBOOK_STAGE_TYPE
+                      .ROLLBACK
+                );
+
+        for (
+          const stage
+          of rollbackStages
+        ) {
+          const stageRecord =
+            _createStageRecord(
+              stage
+            );
+
+          record.stageExecutions
+            .push(
+              stageRecord
+            );
+
+          await record.save();
+
+          await this
+            ._executeStage(
+              stageRecord,
+              stage,
+              incidentContext,
+              playbookDef,
+              options
+            );
+
+          rollbackRecord
+            .stageResults
+            .push({
+              stageId:
+                stage.id,
+
+              status:
+                stageRecord.status,
+            });
+
+          record.markModified(
+            "stageExecutions"
+          );
+
+          await record.save();
         }
       }
 
-      rollbackRecord.completedAt = new Date();
-      rollbackRecord.success     = true;
-      record.rollback            = rollbackRecord;
-      record.status              = PLAYBOOK_EXECUTION_STATUS.ROLLED_BACK;
-      _setOutcome(record, false, Date.now() - startedAt, 'Execution rolled back');
+      rollbackRecord.completedAt =
+        new Date();
 
-    } catch (err) {
-      rollbackRecord.completedAt = new Date();
-      rollbackRecord.success     = false;
-      rollbackRecord.reason      = err.message;
-      record.rollback            = rollbackRecord;
-      record.status              = PLAYBOOK_EXECUTION_STATUS.ROLLBACK_FAILED;
-      _setOutcome(record, false, Date.now() - startedAt, `Rollback failed: ${err.message}`);
+      rollbackRecord.success =
+        true;
+
+      record.rollback =
+        rollbackRecord;
+
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .ROLLED_BACK;
+
+      _setOutcome(
+        record,
+        false,
+        Date.now() -
+          startedAt,
+        "Execution rolled back"
+      );
+
+      await record.save();
+    } catch (error) {
+      rollbackRecord.completedAt =
+        new Date();
+
+      rollbackRecord.success =
+        false;
+
+      rollbackRecord.reason =
+        error.message;
+
+      record.rollback =
+        rollbackRecord;
+
+      record.status =
+        PLAYBOOK_EXECUTION_STATUS
+          .ROLLBACK_FAILED;
+
+      _setOutcome(
+        record,
+        false,
+        Date.now() -
+          startedAt,
+        `Rollback failed: ${error.message}`
+      );
+
+      await record.save();
     }
   }
 
-  // ── Escalation ──────────────────────────────────────────────────────────
+  // ==========================================================================
+  // ESCALATION
+  // ==========================================================================
 
-  async _triggerEscalation(record, playbookDef, failedStage, options) {
-    record.escalation = {
-      triggered:   true,
-      triggeredAt: new Date(),
-      reason:      `Stage "${failedStage.id}" failed with ESCALATE policy`,
-      escalatedTo: playbookDef.escalation?.escalateTo || null,
-      notified:    false,
-      channels:    playbookDef.escalation?.notifyChannels || [],
-    };
+  async _triggerEscalation(
+    record,
+    playbookDef,
+    failedStage
+  ) {
+    record.escalation =
+      {
+        triggered:
+          true,
+
+        triggeredAt:
+          new Date(),
+
+        reason:
+          `Stage "${failedStage.id}" failed with ESCALATE policy`,
+
+        escalatedTo:
+          playbookDef
+            .escalation
+            ?.escalateTo ||
+          null,
+
+        notified:
+          false,
+
+        channels:
+          playbookDef
+            .escalation
+            ?.notifyChannels ||
+          [],
+      };
+
+    await record.save();
   }
 
-  // ── Runbook version resolution ──────────────────────────────────────────
+  // ==========================================================================
+  // RUNBOOK VERSION RESOLUTION
+  // ==========================================================================
 
-  async _resolveRunbookVersion(runbookId, constraint, tenantId) {
-    if (constraint && constraint !== '') {
-      return constraint.replace(/^[>=~]/, '');
+  async _resolveRunbookVersion(
+    runbookId,
+    constraint,
+    scope
+  ) {
+    if (
+      constraint &&
+      constraint !==
+        ""
+    ) {
+      return constraint
+        .replace(
+          /^[>=~]/,
+          ""
+        );
     }
-    // Latest
-    const latest = await this._runbookRegistry.getLatestVersion(runbookId, tenantId);
-    if (!latest) throw new Error(`Runbook "${runbookId}" not found`);
+
+    const latest =
+      await this
+        ._runbookRegistry
+        .getLatestVersion(
+          runbookId,
+          scope
+        );
+
+    if (!latest) {
+      throw new Error(
+        `Runbook "${runbookId}" not found in the active environment`
+      );
+    }
+
     return latest.semver;
   }
 }
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ============================================================================
+// HELPERS
+// ============================================================================
 
-function _createRecord(executionId, correlationId, playbookId, semver, options) {
+function _createStageRecord(
+  stage
+) {
   return {
-    executionId,
-    correlationId,
-    playbookId,
-    playbookVersion:  semver,
-    playbookSnapshot: null,
-    playbookChecksum: null,
-    versionRef:       null,
-    incidentContext:  options.incidentContext || null,
-    tenantId:         options.tenantId        || null,
-    orgId:            options.orgId           || null,
-    incidentId:       options.incidentId      || null,
-    initiatedBy:      options.initiatedBy     || null,
-    initiatorType:    options.initiatorType   || 'api',
-    status:           PLAYBOOK_EXECUTION_STATUS.CREATED,
-    statusReason:     null,
-    startedAt:        null,
-    completedAt:      null,
-    durationMs:       null,
-    policyDecision:   null,
-    approval:         null,
-    stageExecutions:  [],
-    rollback:         null,
-    escalation:       null,
-    outcome:          null,
-    failedStageId:    null,
-    errorMessage:     null,
-    errorCode:        null,
-    auditEventIds:    [],
-    resolvedMappings: [],
-    _inRollback:      false,
-    _inEscalation:    false,
+    stageId:
+      stage.id,
+
+    stageName:
+      stage.name,
+
+    stageType:
+      stage.type,
+
+    status:
+      STAGE_EXECUTION_STATUS
+        .PENDING,
+
+    startedAt:
+      null,
+
+    completedAt:
+      null,
+
+    durationMs:
+      null,
+
+    runbookExecutions:
+      [],
+
+    output:
+      null,
+
+    error:
+      null,
+
+    skipped:
+      false,
+
+    skippedReason:
+      null,
   };
 }
 
-function _createStageRecord(stage) {
-  return {
-    stageId:           stage.id,
-    stageName:         stage.name,
-    stageType:         stage.type,
-    status:            STAGE_EXECUTION_STATUS.PENDING,
-    startedAt:         null,
-    completedAt:       null,
-    durationMs:        null,
-    runbookExecutions: [],
-    output:            null,
-    error:             null,
-    skipped:           false,
-    skippedReason:     null,
-  };
+function _setOutcome(
+  record,
+  successful,
+  durationMs,
+  failureReason
+) {
+  record.outcome =
+    {
+      successful,
+
+      recoveryTimeMs:
+        durationMs,
+
+      failureReason:
+        failureReason ||
+        null,
+
+      learningCaptured:
+        false,
+
+      incidentMemoryUpdated:
+        false,
+
+      humanInvolved:
+        record.approval !=
+        null,
+
+      summary:
+        successful
+          ? "Playbook completed successfully"
+          : (
+              failureReason ||
+              "Execution failed"
+            ),
+    };
 }
 
-function _setOutcome(record, successful, durationMs, failureReason) {
-  record.outcome = {
-    successful,
-    recoveryTimeMs: durationMs,
-    failureReason:  failureReason || null,
-    learningCaptured: false,
-    incidentMemoryUpdated: false,
-    humanInvolved: record.approval != null,
-    summary: successful ? 'Playbook completed successfully' : (failureReason || 'Execution failed'),
-  };
-}
+function _evaluatePolicy(
+  playbookDef,
+  incidentContext,
+  options
+) {
+  if (
+    !playbookDef
+      .policy
+      ?.required
+  ) {
+    return {
+      denied:
+        false,
 
-function _evaluatePolicy(playbookDef, incidentContext, options) {
-  if (!playbookDef.policy?.required) {
-    return { denied: false, reason: null };
+      reason:
+        null,
+    };
   }
 
-  // Basic policy evaluation (in production this would call a policy engine)
-  if (!options.policyDecision) {
-    return { denied: false, reason: null }; // no policy engine attached → allow
+  if (
+    !options
+      .policyDecision
+  ) {
+    return {
+      denied:
+        false,
+
+      reason:
+        null,
+    };
   }
 
-  return options.policyDecision;
+  return options
+    .policyDecision;
 }
 
-function _requiresApproval(playbookDef, policyDecision) {
-  const mode = playbookDef.approval?.mode;
-  if (!mode || mode === 'DISABLED' || mode === 'AUTOMATIC') return false;
-  if (mode === 'MANUAL') return true;
-  if (mode === 'CONDITIONAL') return policyDecision?.requiresApproval === true;
+function _requiresApproval(
+  playbookDef,
+  policyDecision
+) {
+  const mode =
+    playbookDef
+      .approval
+      ?.mode;
+
+  if (
+    !mode ||
+    mode ===
+      "DISABLED" ||
+    mode ===
+      "AUTOMATIC"
+  ) {
+    return false;
+  }
+
+  if (
+    mode ===
+    "MANUAL"
+  ) {
+    return true;
+  }
+
+  if (
+    mode ===
+    "CONDITIONAL"
+  ) {
+    return (
+      policyDecision
+        ?.requiresApproval ===
+      true
+    );
+  }
+
   return false;
 }
 
-function _collectStageOutputs(stageRecord) {
-  const output = {};
-  if (!stageRecord?.runbookExecutions) return output;
-  for (const rbExec of stageRecord.runbookExecutions) {
-    if (rbExec.output) {
-      Object.assign(output, rbExec.output);
+function _collectStageOutputs(
+  stageRecord
+) {
+  const output =
+    {};
+
+  if (
+    !stageRecord
+      ?.runbookExecutions
+  ) {
+    return output;
+  }
+
+  for (
+    const runbookExecution
+    of stageRecord
+      .runbookExecutions
+  ) {
+    if (
+      runbookExecution.output
+    ) {
+      Object.assign(
+        output,
+        runbookExecution
+          .output
+      );
     }
   }
+
   return output;
 }
 
-function _redactMappedParams(mapped, paramDefs) {
-  const sensitive = new Set(
-    paramDefs.filter(p => p.sensitive || p.type === 'secret-reference').map(p => p.name)
-  );
-  const result = {};
-  for (const [k, v] of Object.entries(mapped)) {
-    result[k] = sensitive.has(k) ? '[REDACTED]' : v;
+function _redactMappedParams(
+  mapped,
+  parameterDefinitions
+) {
+  const sensitive =
+    new Set(
+      parameterDefinitions
+        .filter(
+          (parameter) =>
+            parameter.sensitive ||
+            parameter.type ===
+              "secret-reference"
+        )
+        .map(
+          (parameter) =>
+            parameter.name
+        )
+    );
+
+  const result =
+    {};
+
+  for (
+    const [
+      key,
+      value,
+    ]
+    of Object.entries(
+      mapped
+    )
+  ) {
+    result[key] =
+      sensitive.has(
+        key
+      )
+        ? "[REDACTED]"
+        : value;
   }
+
   return result;
 }
 
-// ── Singleton ─────────────────────────────────────────────────────────────
+function _sanitizePlaybookSnapshot(
+  definition
+) {
+  const snapshot =
+    {
+      ...definition,
+    };
 
-let _instance = null;
+  delete snapshot._id;
+  delete snapshot.__v;
+  delete snapshot.createdAt;
+  delete snapshot.updatedAt;
 
-function getPlaybookExecutionService(options = {}) {
-  if (!_instance) _instance = new PlaybookExecutionService(options);
-  return _instance;
+  return snapshot;
+}
+
+// ============================================================================
+// SINGLETON
+// ============================================================================
+
+let instance =
+  null;
+
+function getPlaybookExecutionService(
+  options = {}
+) {
+  if (!instance) {
+    instance =
+      new PlaybookExecutionService(
+        options
+      );
+  }
+
+  return instance;
 }
 
 function resetPlaybookExecutionService() {
-  _instance = null;
+  instance =
+    null;
 }
 
 module.exports = {

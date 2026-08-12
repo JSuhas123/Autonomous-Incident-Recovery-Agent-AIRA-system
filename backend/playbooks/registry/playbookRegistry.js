@@ -1,353 +1,1303 @@
-'use strict';
+"use strict";
 
 /**
  * Playbook Registry
  *
- * Authoritative domain interface for Playbook lifecycle management.
+ * Environment-aware authoritative lifecycle registry.
  *
- * Key invariant: activate() requires ALL required runbooks to be ACTIVE.
- * A Playbook NEVER executes infrastructure — only orchestrates Runbooks.
+ * Ownership rules:
+ *
+ * SYSTEM playbook
+ *   owner.ownerType = system
+ *   tenantId = null
+ *   organizationId = null
+ *   environmentId = null
+ *
+ * TENANT playbook
+ *   tenantId required
+ *   organizationId required
+ *   environmentId required
+ *
+ * Resolution order:
+ *
+ * 1. tenant playbook in exact organization + environment
+ * 2. system playbook
+ *
+ * Never cross environments.
  */
 
 const {
   PLAYBOOK_LIFECYCLE,
   PLAYBOOK_LIFECYCLE_TRANSITIONS,
   PLAYBOOK_VALIDATION_PURPOSE,
-  PLAYBOOK_DIAGNOSTIC_CODES,
   PLAYBOOK_OWNER_TYPE,
-} = require('../../constants/playbook');
+} = require("../../constants/playbook");
 
-const { validatePlaybook }               = require('../validators/playbookValidator');
-const { computePlaybookChecksum, playbookVersionRef, isNewerVersion } = require('../versioning/playbookVersioning');
+const {
+  validatePlaybook,
+} = require("../validators/playbookValidator");
 
-// ── Registry Error ────────────────────────────────────────────────────────
+const {
+  computePlaybookChecksum,
+  playbookVersionRef,
+  isNewerVersion,
+} = require("../versioning/playbookVersioning");
+
+// ============================================================================
+// ERRORS
+// ============================================================================
 
 class PlaybookRegistryError extends Error {
-  constructor(code, message, details = {}) {
+  constructor(
+    code,
+    message,
+    details = {}
+  ) {
     super(message);
-    this.name  = 'PlaybookRegistryError';
-    this.code  = code;
-    this.details = details;
+
+    this.name =
+      "PlaybookRegistryError";
+
+    this.code =
+      code;
+
+    this.details =
+      details;
   }
 }
 
-const REGISTRY_ERROR_CODES = Object.freeze({
-  NOT_FOUND:                  'NOT_FOUND',
-  DUPLICATE_VERSION:          'DUPLICATE_VERSION',
-  IMPORT_VALIDATION_FAILED:   'IMPORT_VALIDATION_FAILED',
-  ACTIVATION_VALIDATION_FAILED: 'ACTIVATION_VALIDATION_FAILED',
-  VALIDATION_FAILED:          'VALIDATION_FAILED',
-  INVALID_TRANSITION:         'INVALID_TRANSITION',
-  TRANSITION_CONFLICT:        'TRANSITION_CONFLICT',
-  POLICY_DENIED:              'POLICY_DENIED',
-  NOT_EXECUTABLE:             'NOT_EXECUTABLE',
-  TENANT_REQUIRED:            'TENANT_REQUIRED',
-  INVALID_VERSION:            'INVALID_VERSION',
-});
+const REGISTRY_ERROR_CODES =
+  Object.freeze({
+    NOT_FOUND:
+      "NOT_FOUND",
 
-// ── Registry ──────────────────────────────────────────────────────────────
+    DUPLICATE_VERSION:
+      "DUPLICATE_VERSION",
+
+    IMPORT_VALIDATION_FAILED:
+      "IMPORT_VALIDATION_FAILED",
+
+    ACTIVATION_VALIDATION_FAILED:
+      "ACTIVATION_VALIDATION_FAILED",
+
+    VALIDATION_FAILED:
+      "VALIDATION_FAILED",
+
+    INVALID_TRANSITION:
+      "INVALID_TRANSITION",
+
+    TRANSITION_CONFLICT:
+      "TRANSITION_CONFLICT",
+
+    POLICY_DENIED:
+      "POLICY_DENIED",
+
+    NOT_EXECUTABLE:
+      "NOT_EXECUTABLE",
+
+    TENANT_REQUIRED:
+      "TENANT_REQUIRED",
+
+    ORGANIZATION_REQUIRED:
+      "ORGANIZATION_REQUIRED",
+
+    ENVIRONMENT_REQUIRED:
+      "ENVIRONMENT_REQUIRED",
+
+    INVALID_VERSION:
+      "INVALID_VERSION",
+  });
+
+// ============================================================================
+// REGISTRY
+// ============================================================================
 
 class PlaybookRegistry {
   constructor() {
-    // Map: playbookId → Map<semver, PlaybookDefinition>
-    this._store = new Map();
+    /**
+     * Keyed by ownership-aware composite key:
+     *
+     * system::<playbookId>::<semver>
+     *
+     * tenant::<organizationId>::<environmentId>::<playbookId>::<semver>
+     */
+    this._store =
+      new Map();
   }
 
-  // ── Register ────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // REGISTER
+  // ==========================================================================
 
-  async register(playbook, options = {}) {
-    _requireFields(playbook, ['playbookId', 'semver']);
+  async register(
+    playbook,
+    options = {}
+  ) {
+    _requireFields(
+      playbook,
+      [
+        "playbookId",
+        "semver",
+      ]
+    );
 
-    const { playbookId, semver } = playbook;
+    const {
+      playbookId,
+      semver,
+    } = playbook;
 
-    // Validate structure + (optionally) semantics
-    const purpose = options.validate === false
-      ? null
-      : (options.purpose || PLAYBOOK_VALIDATION_PURPOSE.IMPORT);
+    const scope =
+      _resolveOwnership(
+        playbook,
+        options
+      );
+
+    const purpose =
+      options.validate ===
+      false
+        ? null
+        : (
+            options.purpose ||
+            PLAYBOOK_VALIDATION_PURPOSE
+              .IMPORT
+          );
 
     if (purpose) {
-      const result = await validatePlaybook(playbook, {
-        purpose,
-        runbookRegistry: options.runbookRegistry,
-        tenantContext:   options.tenantContext,
-      });
+      const validation =
+        await validatePlaybook(
+          {
+            ...playbook,
 
-      if (!result.valid) {
+            tenantId:
+              scope.tenantId,
+
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+          },
+          {
+            purpose,
+
+            runbookRegistry:
+              options.runbookRegistry,
+
+            tenantContext:
+              scope.isSystem
+                ? undefined
+                : {
+                    tenantId:
+                      scope.tenantId,
+
+                    organizationId:
+                      scope.organizationId,
+
+                    environmentId:
+                      scope.environmentId,
+                  },
+          }
+        );
+
+      if (
+        !validation.valid
+      ) {
         throw new PlaybookRegistryError(
-          REGISTRY_ERROR_CODES.IMPORT_VALIDATION_FAILED,
+          REGISTRY_ERROR_CODES
+            .IMPORT_VALIDATION_FAILED,
+
           `Playbook validation failed for ${playbookId}@${semver}`,
-          { diagnostics: result.diagnostics, summary: result.summary },
+
+          {
+            diagnostics:
+              validation.diagnostics,
+
+            summary:
+              validation.summary,
+          }
         );
       }
     }
 
-    // Duplicate check
-    if (this._has(playbookId, semver)) {
+    const storageKey =
+      _entryKey(
+        playbookId,
+        semver,
+        scope
+      );
+
+    if (
+      this._store.has(
+        storageKey
+      )
+    ) {
       throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.DUPLICATE_VERSION,
-        `Playbook ${playbookId}@${semver} is already registered`,
+        REGISTRY_ERROR_CODES
+          .DUPLICATE_VERSION,
+
+        `Playbook ${playbookId}@${semver} is already registered in this ownership scope`
       );
     }
 
-    // Compute and attach checksum
-    const checksum = computePlaybookChecksum(playbook);
-    const entry    = {
+    const entry = {
       ...playbook,
-      checksum,
-      immutable:  false,
-      _registeredAt: new Date().toISOString(),
+
+      tenantId:
+        scope.tenantId,
+
+      organizationId:
+        scope.organizationId,
+
+      environmentId:
+        scope.environmentId,
+
+      checksum:
+        computePlaybookChecksum(
+          playbook
+        ),
+
+      immutable:
+        false,
+
+      _registeredAt:
+        new Date()
+          .toISOString(),
     };
 
-    _setEntry(this._store, playbookId, semver, entry);
+    this._store.set(
+      storageKey,
+      entry
+    );
+
     return entry;
   }
 
-  // ── Import (alias with explicit purpose) ──────────────────────────────
+  // ==========================================================================
+  // IMPORT
+  // ==========================================================================
 
-  async importDefinition(playbook, options = {}) {
-    return this.register(playbook, { ...options, purpose: PLAYBOOK_VALIDATION_PURPOSE.IMPORT });
+  async importDefinition(
+    playbook,
+    options = {}
+  ) {
+    return this.register(
+      playbook,
+      {
+        ...options,
+
+        purpose:
+          PLAYBOOK_VALIDATION_PURPOSE
+            .IMPORT,
+      }
+    );
   }
 
-  // ── Get by ID (returns all versions) ──────────────────────────────────
+  // ==========================================================================
+  // GET ALL VERSIONS
+  // ==========================================================================
 
-  async getById(playbookId, tenantId) {
-    const versions = this._store.get(playbookId);
-    if (!versions || versions.size === 0) {
-      throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.NOT_FOUND,
-        `Playbook "${playbookId}" not found`,
+  async getById(
+    playbookId,
+    context = {}
+  ) {
+    const scope =
+      _normalizeContext(
+        context
       );
-    }
-    const all = Array.from(versions.values());
-    return tenantId ? all.filter(p => !p.tenantId || p.tenantId === tenantId) : all;
-  }
 
-  // ── Get a specific version ────────────────────────────────────────────
+    const candidates =
+      [];
 
-  async getVersion(playbookId, semver, tenantId) {
-    const versions = this._store.get(playbookId);
-    if (!versions) {
-      throw new PlaybookRegistryError(REGISTRY_ERROR_CODES.NOT_FOUND, `Playbook "${playbookId}" not found`);
-    }
-    const entry = versions.get(semver);
-    if (!entry) {
-      throw new PlaybookRegistryError(REGISTRY_ERROR_CODES.NOT_FOUND, `Playbook ${playbookId}@${semver} not found`);
-    }
-    if (tenantId && entry.tenantId && entry.tenantId !== tenantId) {
-      throw new PlaybookRegistryError(REGISTRY_ERROR_CODES.NOT_FOUND, `Playbook ${playbookId}@${semver} not found for tenant "${tenantId}"`);
-    }
-    return entry;
-  }
+    for (
+      const entry
+      of this._store.values()
+    ) {
+      if (
+        entry.playbookId !==
+        playbookId
+      ) {
+        continue;
+      }
 
-  // ── Get latest version ────────────────────────────────────────────────
-
-  async getLatestVersion(playbookId, tenantId) {
-    const all = await this.getById(playbookId, tenantId);
-    return all.reduce((best, cur) =>
-      !best || isNewerVersion(cur.semver, best.semver) ? cur : best, null);
-  }
-
-  // ── List ──────────────────────────────────────────────────────────────
-
-  async list(options = {}) {
-    const { tenantId, lifecycle, category } = options;
-    const results = [];
-
-    for (const versions of this._store.values()) {
-      for (const entry of versions.values()) {
-        if (tenantId && entry.tenantId && entry.tenantId !== tenantId) continue;
-        if (lifecycle && entry.lifecycle !== lifecycle) continue;
-        if (category && entry.category !== category) continue;
-        results.push(entry);
+      if (
+        _isVisibleToScope(
+          entry,
+          scope
+        )
+      ) {
+        candidates.push(
+          entry
+        );
       }
     }
+
+    if (
+      candidates.length ===
+      0
+    ) {
+      throw new PlaybookRegistryError(
+        REGISTRY_ERROR_CODES
+          .NOT_FOUND,
+
+        `Playbook "${playbookId}" not found`
+      );
+    }
+
+    return candidates;
+  }
+
+  // ==========================================================================
+  // GET VERSION
+  // ==========================================================================
+
+  async getVersion(
+    playbookId,
+    semver,
+    context = {}
+  ) {
+    const scope =
+      _normalizeContext(
+        context
+      );
+
+    const tenantKey =
+      scope.organizationId &&
+      scope.environmentId
+        ? _entryKey(
+            playbookId,
+            semver,
+            {
+              isSystem:
+                false,
+
+              organizationId:
+                scope.organizationId,
+
+              environmentId:
+                scope.environmentId,
+            }
+          )
+        : null;
+
+    if (
+      tenantKey &&
+      this._store.has(
+        tenantKey
+      )
+    ) {
+      const entry =
+        this._store.get(
+          tenantKey
+        );
+
+      if (
+        !scope.tenantId ||
+        !entry.tenantId ||
+        entry.tenantId ===
+          scope.tenantId
+      ) {
+        return entry;
+      }
+    }
+
+    const systemKey =
+      _entryKey(
+        playbookId,
+        semver,
+        {
+          isSystem:
+            true,
+        }
+      );
+
+    if (
+      this._store.has(
+        systemKey
+      )
+    ) {
+      return this._store.get(
+        systemKey
+      );
+    }
+
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .NOT_FOUND,
+
+      `Playbook ${playbookId}@${semver} not found for active environment`
+    );
+  }
+
+  // ==========================================================================
+  // LATEST
+  // ==========================================================================
+
+  async getLatestVersion(
+    playbookId,
+    context = {}
+  ) {
+    const all =
+      await this.getById(
+        playbookId,
+        context
+      );
+
+    return all.reduce(
+      (
+        best,
+        current
+      ) =>
+        !best ||
+        isNewerVersion(
+          current.semver,
+          best.semver
+        )
+          ? current
+          : best,
+      null
+    );
+  }
+
+  // ==========================================================================
+  // LIST
+  // ==========================================================================
+
+  async list(
+    options = {}
+  ) {
+    const {
+      lifecycle,
+      category,
+    } = options;
+
+    const scope =
+      _normalizeContext(
+        options
+      );
+
+    const results =
+      [];
+
+    for (
+      const entry
+      of this._store.values()
+    ) {
+      if (
+        !_isVisibleToScope(
+          entry,
+          scope
+        )
+      ) {
+        continue;
+      }
+
+      if (
+        lifecycle &&
+        entry.lifecycle !==
+          lifecycle
+      ) {
+        continue;
+      }
+
+      if (
+        category &&
+        entry.category !==
+          category
+      ) {
+        continue;
+      }
+
+      results.push(
+        entry
+      );
+    }
+
     return results;
   }
 
-  // ── Lifecycle transitions ─────────────────────────────────────────────
+  // ==========================================================================
+  // VALIDATE
+  // ==========================================================================
 
-  async validate(playbookId, semver, options = {}) {
-    const entry = await this.getVersion(playbookId, semver, options.tenantId);
-    _assertTransition(entry, PLAYBOOK_LIFECYCLE.VALIDATED, playbookId, semver);
+  async validate(
+    playbookId,
+    semver,
+    options = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        options
+      );
 
-    const result = await validatePlaybook(entry, {
-      purpose: PLAYBOOK_VALIDATION_PURPOSE.APPROVAL,
-      runbookRegistry: options.runbookRegistry,
-      tenantContext: options.tenantContext,
-    });
+    _assertTransition(
+      entry,
+      PLAYBOOK_LIFECYCLE
+        .VALIDATED,
+      playbookId,
+      semver
+    );
 
-    if (!result.valid) {
+    const scope =
+      _normalizeContext(
+        options
+      );
+
+    const result =
+      await validatePlaybook(
+        entry,
+        {
+          purpose:
+            PLAYBOOK_VALIDATION_PURPOSE
+              .APPROVAL,
+
+          runbookRegistry:
+            options.runbookRegistry,
+
+          tenantContext:
+            _tenantContext(
+              scope
+            ),
+        }
+      );
+
+    if (
+      !result.valid
+    ) {
       throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.VALIDATION_FAILED,
+        REGISTRY_ERROR_CODES
+          .VALIDATION_FAILED,
+
         `Validation failed for ${playbookId}@${semver}`,
-        { diagnostics: result.diagnostics },
+
+        {
+          diagnostics:
+            result.diagnostics,
+        }
       );
     }
 
-    entry.lifecycle = PLAYBOOK_LIFECYCLE.VALIDATED;
-    entry.checksum  = computePlaybookChecksum(entry);
-    return { ...entry, validationResult: result };
+    entry.lifecycle =
+      PLAYBOOK_LIFECYCLE
+        .VALIDATED;
+
+    entry.checksum =
+      computePlaybookChecksum(
+        entry
+      );
+
+    return {
+      ...entry,
+
+      validationResult:
+        result,
+    };
   }
 
-  async approve(playbookId, semver, options = {}) {
-    const entry = await this.getVersion(playbookId, semver, options.tenantId);
-    _assertTransition(entry, PLAYBOOK_LIFECYCLE.APPROVED, playbookId, semver);
-    entry.lifecycle   = PLAYBOOK_LIFECYCLE.APPROVED;
-    entry._approvedAt = new Date().toISOString();
-    entry._approvedBy = options.approvedBy || 'system';
-    return { ...entry };
+  // ==========================================================================
+  // APPROVE
+  // ==========================================================================
+
+  async approve(
+    playbookId,
+    semver,
+    options = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        options
+      );
+
+    _assertTransition(
+      entry,
+      PLAYBOOK_LIFECYCLE
+        .APPROVED,
+      playbookId,
+      semver
+    );
+
+    entry.lifecycle =
+      PLAYBOOK_LIFECYCLE
+        .APPROVED;
+
+    entry._approvedAt =
+      new Date()
+        .toISOString();
+
+    entry._approvedBy =
+      options.approvedBy ||
+      "system";
+
+    return {
+      ...entry,
+    };
   }
 
-  async activate(playbookId, semver, options = {}) {
-    const entry = await this.getVersion(playbookId, semver, options.tenantId);
-    _assertTransition(entry, PLAYBOOK_LIFECYCLE.ACTIVE, playbookId, semver);
+  // ==========================================================================
+  // ACTIVATE
+  // ==========================================================================
 
-    // ACTIVATION requires ALL required runbooks to be ACTIVE
-    const result = await validatePlaybook(entry, {
-      purpose: PLAYBOOK_VALIDATION_PURPOSE.ACTIVATION,
-      runbookRegistry: options.runbookRegistry,
-      tenantContext:   options.tenantContext,
-    });
+  async activate(
+    playbookId,
+    semver,
+    options = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        options
+      );
 
-    if (!result.valid) {
+    _assertTransition(
+      entry,
+      PLAYBOOK_LIFECYCLE
+        .ACTIVE,
+      playbookId,
+      semver
+    );
+
+    const scope =
+      _normalizeContext(
+        options
+      );
+
+    const result =
+      await validatePlaybook(
+        entry,
+        {
+          purpose:
+            PLAYBOOK_VALIDATION_PURPOSE
+              .ACTIVATION,
+
+          runbookRegistry:
+            options.runbookRegistry,
+
+          tenantContext:
+            _tenantContext(
+              scope
+            ),
+        }
+      );
+
+    if (
+      !result.valid
+    ) {
       throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.ACTIVATION_VALIDATION_FAILED,
+        REGISTRY_ERROR_CODES
+          .ACTIVATION_VALIDATION_FAILED,
+
         `Activation validation failed for ${playbookId}@${semver}`,
-        { diagnostics: result.diagnostics, summary: result.summary },
+
+        {
+          diagnostics:
+            result.diagnostics,
+
+          summary:
+            result.summary,
+        }
       );
     }
 
-    entry.lifecycle   = PLAYBOOK_LIFECYCLE.ACTIVE;
-    entry._activatedAt = new Date().toISOString();
-    entry.checksum    = computePlaybookChecksum(entry);
-    return { ...entry };
+    entry.lifecycle =
+      PLAYBOOK_LIFECYCLE
+        .ACTIVE;
+
+    entry._activatedAt =
+      new Date()
+        .toISOString();
+
+    entry.checksum =
+      computePlaybookChecksum(
+        entry
+      );
+
+    return {
+      ...entry,
+    };
   }
 
-  async disable(playbookId, semver, options = {}) {
-    const entry = await this.getVersion(playbookId, semver, options.tenantId);
-    _assertTransition(entry, PLAYBOOK_LIFECYCLE.DISABLED, playbookId, semver);
-    entry.lifecycle   = PLAYBOOK_LIFECYCLE.DISABLED;
-    entry._disabledAt = new Date().toISOString();
-    entry._disabledBy = options.disabledBy || 'system';
-    entry._disabledReason = options.reason || null;
-    return { ...entry };
+  // ==========================================================================
+  // DISABLE
+  // ==========================================================================
+
+  async disable(
+    playbookId,
+    semver,
+    options = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        options
+      );
+
+    _assertTransition(
+      entry,
+      PLAYBOOK_LIFECYCLE
+        .DISABLED,
+      playbookId,
+      semver
+    );
+
+    entry.lifecycle =
+      PLAYBOOK_LIFECYCLE
+        .DISABLED;
+
+    entry._disabledAt =
+      new Date()
+        .toISOString();
+
+    entry._disabledBy =
+      options.disabledBy ||
+      "system";
+
+    entry._disabledReason =
+      options.reason ||
+      null;
+
+    return {
+      ...entry,
+    };
   }
 
-  async deprecate(playbookId, semver, options = {}) {
-    const entry = await this.getVersion(playbookId, semver, options.tenantId);
-    _assertTransition(entry, PLAYBOOK_LIFECYCLE.DEPRECATED, playbookId, semver);
-    entry.lifecycle     = PLAYBOOK_LIFECYCLE.DEPRECATED;
-    entry._deprecatedAt = new Date().toISOString();
-    entry._deprecatedBy = options.deprecatedBy || 'system';
-    entry._deprecationReason = options.reason || null;
-    return { ...entry };
+  // ==========================================================================
+  // DEPRECATE
+  // ==========================================================================
+
+  async deprecate(
+    playbookId,
+    semver,
+    options = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        options
+      );
+
+    _assertTransition(
+      entry,
+      PLAYBOOK_LIFECYCLE
+        .DEPRECATED,
+      playbookId,
+      semver
+    );
+
+    entry.lifecycle =
+      PLAYBOOK_LIFECYCLE
+        .DEPRECATED;
+
+    entry._deprecatedAt =
+      new Date()
+        .toISOString();
+
+    entry._deprecatedBy =
+      options.deprecatedBy ||
+      "system";
+
+    entry._deprecationReason =
+      options.reason ||
+      null;
+
+    return {
+      ...entry,
+    };
   }
 
-  // ── Version creation ──────────────────────────────────────────────────
+  // ==========================================================================
+  // CREATE VERSION
+  // ==========================================================================
 
-  async createVersion(playbookId, baseSemver, newSemver, patches = {}, options = {}) {
-    const base = await this.getVersion(playbookId, baseSemver, options.tenantId);
+  async createVersion(
+    playbookId,
+    baseSemver,
+    newSemver,
+    patches = {},
+    options = {}
+  ) {
+    const base =
+      await this.getVersion(
+        playbookId,
+        baseSemver,
+        options
+      );
 
-    if (this._has(playbookId, newSemver)) {
+    const scope =
+      _resolveOwnership(
+        base,
+        options
+      );
+
+    const newKey =
+      _entryKey(
+        playbookId,
+        newSemver,
+        scope
+      );
+
+    if (
+      this._store.has(
+        newKey
+      )
+    ) {
       throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.DUPLICATE_VERSION,
-        `Playbook ${playbookId}@${newSemver} already exists`,
+        REGISTRY_ERROR_CODES
+          .DUPLICATE_VERSION,
+
+        `Playbook ${playbookId}@${newSemver} already exists in this ownership scope`
       );
     }
 
-    const newDef = {
+    const newDefinition = {
       ...base,
       ...patches,
-      semver:    newSemver,
-      lifecycle: PLAYBOOK_LIFECYCLE.DRAFT,
-      immutable: false,
-      checksum:  null,
-      _registeredAt: new Date().toISOString(),
+
+      semver:
+        newSemver,
+
+      lifecycle:
+        PLAYBOOK_LIFECYCLE
+          .DRAFT,
+
+      immutable:
+        false,
+
+      checksum:
+        null,
+
+      _registeredAt:
+        new Date()
+          .toISOString(),
     };
 
-    return this.register(newDef, { validate: false });
+    return this.register(
+      newDefinition,
+      {
+        ...options,
+
+        validate:
+          false,
+      }
+    );
   }
 
-  // ── Execution definition ──────────────────────────────────────────────
-  // Locks the playbook version as immutable on first call
+  // ==========================================================================
+  // EXECUTION DEFINITION
+  // ==========================================================================
 
-  async getExecutionDefinition(playbookId, semver, tenantId) {
-    const entry = await this.getVersion(playbookId, semver, tenantId);
+  async getExecutionDefinition(
+    playbookId,
+    semver,
+    context = {}
+  ) {
+    const entry =
+      await this.getVersion(
+        playbookId,
+        semver,
+        context
+      );
 
-    if (entry.lifecycle !== PLAYBOOK_LIFECYCLE.ACTIVE) {
+    if (
+      entry.lifecycle !==
+      PLAYBOOK_LIFECYCLE
+        .ACTIVE
+    ) {
       throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES.NOT_EXECUTABLE,
-        `Playbook ${playbookId}@${semver} is not ACTIVE (lifecycle: ${entry.lifecycle})`,
+        REGISTRY_ERROR_CODES
+          .NOT_EXECUTABLE,
+
+        `Playbook ${playbookId}@${semver} is not ACTIVE (lifecycle: ${entry.lifecycle})`
       );
     }
 
-    if (!entry.immutable) {
-      entry.immutable = true;
-      entry.checksum  = computePlaybookChecksum(entry);
-      entry._frozenAt = new Date().toISOString();
+    if (
+      !entry.immutable
+    ) {
+      entry.immutable =
+        true;
+
+      entry.checksum =
+        computePlaybookChecksum(
+          entry
+        );
+
+      entry._frozenAt =
+        new Date()
+          .toISOString();
     }
 
-    // Return deep-frozen snapshot
-    return Object.freeze(JSON.parse(JSON.stringify(entry)));
+    return Object.freeze(
+      JSON.parse(
+        JSON.stringify(
+          entry
+        )
+      )
+    );
   }
 
-  // ── Eligibility check ─────────────────────────────────────────────────
+  // ==========================================================================
+  // EXECUTABLE
+  // ==========================================================================
 
-  isExecutable(entry) {
-    return entry?.lifecycle === PLAYBOOK_LIFECYCLE.ACTIVE;
+  isExecutable(
+    entry
+  ) {
+    return (
+      entry?.lifecycle ===
+      PLAYBOOK_LIFECYCLE
+        .ACTIVE
+    );
   }
 
-  // ── Internal helpers ──────────────────────────────────────────────────
-
-  _has(playbookId, semver) {
-    return this._store.has(playbookId) && this._store.get(playbookId).has(semver);
-  }
+  // ==========================================================================
+  // SIZE
+  // ==========================================================================
 
   get size() {
-    let n = 0;
-    for (const v of this._store.values()) n += v.size;
-    return n;
+    return this._store
+      .size;
   }
 }
 
-// ── Module-level helpers ──────────────────────────────────────────────────
+// ============================================================================
+// HELPERS
+// ============================================================================
 
-function _requireFields(obj, fields) {
-  for (const f of fields) {
-    if (!obj[f]) throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES.VALIDATION_FAILED,
-      `Playbook definition missing required field: ${f}`,
-    );
+function _requireFields(
+  object,
+  fields
+) {
+  for (
+    const field
+    of fields
+  ) {
+    if (
+      !object[field]
+    ) {
+      throw new PlaybookRegistryError(
+        REGISTRY_ERROR_CODES
+          .VALIDATION_FAILED,
+
+        `Playbook definition missing required field: ${field}`
+      );
+    }
   }
 }
 
-function _assertTransition(entry, targetLifecycle, playbookId, semver) {
-  const allowed = PLAYBOOK_LIFECYCLE_TRANSITIONS[entry.lifecycle] || [];
-  if (!allowed.includes(targetLifecycle)) {
+function _assertTransition(
+  entry,
+  targetLifecycle,
+  playbookId,
+  semver
+) {
+  const allowed =
+    PLAYBOOK_LIFECYCLE_TRANSITIONS[
+      entry.lifecycle
+    ] ||
+    [];
+
+  if (
+    !allowed.includes(
+      targetLifecycle
+    )
+  ) {
     throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES.INVALID_TRANSITION,
-      `Cannot transition ${playbookId}@${semver} from ${entry.lifecycle} → ${targetLifecycle}. ` +
-      `Allowed: ${allowed.length ? allowed.join(', ') : 'none'}`,
+      REGISTRY_ERROR_CODES
+        .INVALID_TRANSITION,
+
+      `Cannot transition ${playbookId}@${semver} from ${entry.lifecycle} → ${targetLifecycle}. Allowed: ${
+        allowed.length
+          ? allowed.join(", ")
+          : "none"
+      }`
     );
   }
 }
 
-function _setEntry(store, playbookId, semver, entry) {
-  if (!store.has(playbookId)) store.set(playbookId, new Map());
-  store.get(playbookId).set(semver, entry);
+function _normalizeContext(
+  context = {}
+) {
+  /**
+   * Compatibility:
+   * older callers may still pass tenantId as a string.
+   */
+  if (
+    typeof context ===
+    "string"
+  ) {
+    return {
+      tenantId:
+        context,
+
+      organizationId:
+        null,
+
+      environmentId:
+        null,
+    };
+  }
+
+  return {
+    tenantId:
+      context.tenantId ||
+      null,
+
+    organizationId:
+      context.organizationId ||
+      null,
+
+    environmentId:
+      context.environmentId ||
+      null,
+  };
 }
 
-// ── Singleton ─────────────────────────────────────────────────────────────
+function _resolveOwnership(
+  definition,
+  context = {}
+) {
+  const normalized =
+    _normalizeContext(
+      context
+    );
 
-let _instance = null;
+  const ownerType =
+    definition.owner
+      ?.ownerType ||
+    PLAYBOOK_OWNER_TYPE
+      .SYSTEM ||
+    "system";
+
+  const isSystem =
+    String(
+      ownerType
+    ).toLowerCase() ===
+    "system";
+
+  if (isSystem) {
+    return {
+      isSystem:
+        true,
+
+      tenantId:
+        null,
+
+      organizationId:
+        null,
+
+      environmentId:
+        null,
+    };
+  }
+
+  const tenantId =
+    normalized.tenantId ||
+    definition.tenantId;
+
+  const organizationId =
+    normalized.organizationId ||
+    definition.organizationId;
+
+  const environmentId =
+    normalized.environmentId ||
+    definition.environmentId;
+
+  if (!tenantId) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .TENANT_REQUIRED,
+
+      "Tenant playbook requires tenantId"
+    );
+  }
+
+  if (!organizationId) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .ORGANIZATION_REQUIRED,
+
+      "Tenant playbook requires organizationId"
+    );
+  }
+
+  if (!environmentId) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .ENVIRONMENT_REQUIRED,
+
+      "Tenant playbook requires environmentId"
+    );
+  }
+
+  return {
+    isSystem:
+      false,
+
+    tenantId,
+
+    organizationId:
+      String(
+        organizationId
+      ),
+
+    environmentId:
+      String(
+        environmentId
+      ),
+  };
+}
+
+function _entryKey(
+  playbookId,
+  semver,
+  scope
+) {
+  if (
+    scope.isSystem
+  ) {
+    return [
+      "system",
+      playbookId,
+      semver,
+    ].join("::");
+  }
+
+  return [
+    "tenant",
+    String(
+      scope.organizationId
+    ),
+    String(
+      scope.environmentId
+    ),
+    playbookId,
+    semver,
+  ].join("::");
+}
+
+function _isSystemEntry(
+  entry
+) {
+  return (
+    String(
+      entry.owner
+        ?.ownerType ||
+      ""
+    ).toLowerCase() ===
+      "system" ||
+    (
+      !entry.tenantId &&
+      !entry.organizationId &&
+      !entry.environmentId
+    )
+  );
+}
+
+function _isVisibleToScope(
+  entry,
+  scope
+) {
+  if (
+    _isSystemEntry(
+      entry
+    )
+  ) {
+    return true;
+  }
+
+  /**
+   * Tenant definition is visible only when both canonical
+   * ownership fields match exactly.
+   */
+  if (
+    !scope.organizationId ||
+    !scope.environmentId
+  ) {
+    return false;
+  }
+
+  if (
+    String(
+      entry.organizationId
+    ) !==
+    String(
+      scope.organizationId
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    String(
+      entry.environmentId
+    ) !==
+    String(
+      scope.environmentId
+    )
+  ) {
+    return false;
+  }
+
+  if (
+    scope.tenantId &&
+    entry.tenantId &&
+    entry.tenantId !==
+      scope.tenantId
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function _tenantContext(
+  scope
+) {
+  if (
+    !scope.tenantId ||
+    !scope.organizationId ||
+    !scope.environmentId
+  ) {
+    return undefined;
+  }
+
+  return {
+    tenantId:
+      scope.tenantId,
+
+    organizationId:
+      scope.organizationId,
+
+    environmentId:
+      scope.environmentId,
+  };
+}
+
+// ============================================================================
+// SINGLETON
+// ============================================================================
+
+let instance =
+  null;
 
 function getPlaybookRegistry() {
-  if (!_instance) _instance = new PlaybookRegistry();
-  return _instance;
+  if (!instance) {
+    instance =
+      new PlaybookRegistry();
+  }
+
+  return instance;
 }
 
 function resetPlaybookRegistry() {
-  _instance = null;
+  instance =
+    null;
 }
 
 module.exports = {

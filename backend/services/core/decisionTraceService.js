@@ -1,291 +1,1068 @@
-const DecisionTrace = require("../../models/DecisionTrace");
+"use strict";
+
+const mongoose = require("mongoose");
+
+const DecisionTrace =
+  require("../../models/DecisionTrace");
 
 /**
  * Decision Trace Service
- * Manages creation and retrieval of decision traces
- * Central repository for decision explainability
+ *
+ * Canonical runtime scope:
+ *
+ * {
+ *   tenantId,
+ *   organizationId,
+ *   environmentId,
+ *   incidentId?
+ * }
+ *
+ * Every operational read/write is scoped by
+ * organizationId + environmentId.
  */
 
 class DecisionTraceService {
+  // ==========================================================================
+  // CONTEXT HELPERS
+  // ==========================================================================
+
+  _normalizeContext(context = {}) {
+    return {
+      tenantId:
+        context.tenantId || null,
+
+      organizationId:
+        context.organizationId || null,
+
+      environmentId:
+        context.environmentId || null,
+
+      incidentId:
+        context.incidentId || null,
+    };
+  }
+
+  _assertContext(
+    context,
+    {
+      requireIncident = false,
+    } = {}
+  ) {
+    const normalized =
+      this._normalizeContext(
+        context
+      );
+
+    if (
+      !normalized.tenantId
+    ) {
+      const error =
+        new Error(
+          "tenantId is required for decision trace operations"
+        );
+
+      error.status = 400;
+      error.code =
+        "DECISION_TRACE_TENANT_REQUIRED";
+
+      throw error;
+    }
+
+    if (
+      !normalized.organizationId
+    ) {
+      const error =
+        new Error(
+          "organizationId is required for decision trace operations"
+        );
+
+      error.status = 400;
+      error.code =
+        "DECISION_TRACE_ORGANIZATION_REQUIRED";
+
+      throw error;
+    }
+
+    if (
+      !normalized.environmentId
+    ) {
+      const error =
+        new Error(
+          "environmentId is required for decision trace operations"
+        );
+
+      error.status = 400;
+      error.code =
+        "DECISION_TRACE_ENVIRONMENT_REQUIRED";
+
+      throw error;
+    }
+
+    if (
+      requireIncident &&
+      !normalized.incidentId
+    ) {
+      const error =
+        new Error(
+          "incidentId is required for this decision trace operation"
+        );
+
+      error.status = 400;
+      error.code =
+        "DECISION_TRACE_INCIDENT_REQUIRED";
+
+      throw error;
+    }
+
+    if (
+      !mongoose.Types.ObjectId
+        .isValid(
+          normalized.organizationId
+        )
+    ) {
+      const error =
+        new Error(
+          "Invalid organizationId"
+        );
+
+      error.status = 400;
+      error.code =
+        "INVALID_ORGANIZATION_ID";
+
+      throw error;
+    }
+
+    if (
+      !mongoose.Types.ObjectId
+        .isValid(
+          normalized.environmentId
+        )
+    ) {
+      const error =
+        new Error(
+          "Invalid environmentId"
+        );
+
+      error.status = 400;
+      error.code =
+        "INVALID_ENVIRONMENT_ID";
+
+      throw error;
+    }
+
+    if (
+      normalized.incidentId &&
+      !mongoose.Types.ObjectId
+        .isValid(
+          normalized.incidentId
+        )
+    ) {
+      const error =
+        new Error(
+          "Invalid incidentId"
+        );
+
+      error.status = 400;
+      error.code =
+        "INVALID_INCIDENT_ID";
+
+      throw error;
+    }
+
+    return normalized;
+  }
+
+  _scopeFilter(
+    context
+  ) {
+    const normalized =
+      this._assertContext(
+        context
+      );
+
+    return {
+      tenantId:
+        normalized.tenantId,
+
+      organizationId:
+        normalized.organizationId,
+
+      environmentId:
+        normalized.environmentId,
+    };
+  }
+
+  _notFound(
+    decisionId
+  ) {
+    const error =
+      new Error(
+        `Decision trace not found: ${decisionId}`
+      );
+
+    error.status = 404;
+    error.code =
+      "DECISION_TRACE_NOT_FOUND";
+
+    return error;
+  }
+
+  // ==========================================================================
+  // CREATE
+  // ==========================================================================
+
   /**
-   * Create a new decision trace
+   * Create a new decision trace.
+   *
+   * traceData must contain:
+   *
+   * tenantId
+   * organizationId
+   * environmentId
+   *
+   * incidentId is optional for non-incident decisions,
+   * but should be supplied whenever this trace originates
+   * from an incident.
    */
-  async createTrace(traceData) {
+  async createTrace(
+    traceData
+  ) {
     try {
-      const trace = new DecisionTrace({
-        decisionId: traceData.decisionId,
-        tenantId: traceData.tenantId,
-        correlationId: traceData.correlationId,
-        inputs: traceData.inputs,
-        reasoning: traceData.reasoning,
-        rulesTriggered: traceData.rulesTriggered,
-        alternatives: traceData.alternatives,
-        decision: traceData.decision,
-        recommendedAction: traceData.recommendedAction,
-        actionRisk: traceData.actionRisk,
-        auditTrail: [
-          {
-            stage: "decision_made",
-            timestamp: new Date(),
-            status: "SUCCESS",
-          },
-        ],
-      });
+      const context =
+        this._assertContext({
+          tenantId:
+            traceData.tenantId,
+
+          organizationId:
+            traceData.organizationId,
+
+          environmentId:
+            traceData.environmentId,
+
+          incidentId:
+            traceData.incidentId,
+        });
+
+      if (
+        !traceData.decisionId
+      ) {
+        const error =
+          new Error(
+            "decisionId is required"
+          );
+
+        error.status = 400;
+        error.code =
+          "DECISION_ID_REQUIRED";
+
+        throw error;
+      }
+
+      const trace =
+        new DecisionTrace({
+          decisionId:
+            traceData.decisionId,
+
+          tenantId:
+            context.tenantId,
+
+          organizationId:
+            context.organizationId,
+
+          environmentId:
+            context.environmentId,
+
+          incidentId:
+            context.incidentId,
+
+          correlationId:
+            traceData.correlationId,
+
+          inputs:
+            traceData.inputs,
+
+          reasoning:
+            traceData.reasoning,
+
+          rulesTriggered:
+            traceData.rulesTriggered,
+
+          alternatives:
+            traceData.alternatives,
+
+          decision:
+            traceData.decision,
+
+          recommendedAction:
+            traceData.recommendedAction,
+
+          tier:
+            traceData.tier,
+
+          actionRisk:
+            traceData.actionRisk,
+
+          auditTrail: [
+            {
+              stage:
+                "decision_made",
+
+              timestamp:
+                new Date(),
+
+              status:
+                "SUCCESS",
+            },
+          ],
+        });
 
       await trace.save();
-      console.log(`[decision-trace] Created trace: ${traceData.decisionId}`);
-      return trace;
-    } catch (error) {
-      console.error("[decision-trace] Error creating trace:", error);
-      throw error;
-    }
-  }
 
-  /**
-   * Update policy check result in trace
-   * CRITICAL FIX: Now stores policyVersionId + policySnapshot for reproducibility
-   */
-  async updatePolicyCheck(decisionId, policyCheckData) {
-    try {
-      const trace = await DecisionTrace.findOneAndUpdate(
-        { decisionId },
+      console.log(
+        `[decision-trace] Created trace: ${traceData.decisionId}`,
         {
-          $set: {
-            "policyCheck.policyVersionId": policyCheckData.policyVersionId,
-            "policyCheck.policyVersion": policyCheckData.policyVersion,
-            // CRITICAL: Store the exact policy that was used for this decision
-            "policyCheck.policySnapshot": policyCheckData.policySnapshot,
-            "policyCheck.timestamp": new Date(),
-            "policyCheck.verdict": policyCheckData.verdict,
-            "policyCheck.checks": policyCheckData.checks,
-            "policyCheck.reason": policyCheckData.reason,
-          },
-          $push: {
-            auditTrail: {
-              stage: "policy_checked",
-              timestamp: new Date(),
-              status: policyCheckData.verdict,
-            },
-          },
-        },
-        { new: true }
+          organizationId:
+            String(
+              context.organizationId
+            ),
+
+          environmentId:
+            String(
+              context.environmentId
+            ),
+
+          incidentId:
+            context.incidentId
+              ? String(
+                  context.incidentId
+                )
+              : null,
+        }
       );
 
-      console.log(`[decision-trace] Updated policy check (version=${policyCheckData.policyVersionId}): ${decisionId}`);
       return trace;
     } catch (error) {
-      console.error("[decision-trace] Error updating policy check:", error);
-      throw error;
-    }
-  }
-
-  /**
-   * Update action execution result in trace
-   */
-  async updateActionResult(decisionId, actionResultData) {
-    try {
-      const trace = await DecisionTrace.findOneAndUpdate(
-        { decisionId },
-        {
-          $set: {
-            "actionResult.actionId": actionResultData.actionId,
-            "actionResult.status": actionResultData.status,
-            "actionResult.durationMs": actionResultData.durationMs,
-            "actionResult.dryRunPerformed": actionResultData.dryRunPerformed,
-            "actionResult.dryRunResult": actionResultData.dryRunResult,
-            "actionResult.outcome": actionResultData.outcome,
-            "actionResult.error": actionResultData.error,
-            "actionResult.timestamp": new Date(),
-          },
-          $push: {
-            auditTrail: {
-              stage: "action_executed",
-              timestamp: new Date(),
-              status: actionResultData.status,
-            },
-          },
-        },
-        { new: true }
+      console.error(
+        "[decision-trace] Error creating trace:",
+        error.message
       );
 
-      console.log(`[decision-trace] Updated action result: ${decisionId}`);
-      return trace;
-    } catch (error) {
-      console.error("[decision-trace] Error updating action result:", error);
       throw error;
     }
   }
 
+  // ==========================================================================
+  // POLICY
+  // ==========================================================================
+
   /**
-   * Update memory learning result in trace
+   * Update policy result.
+   *
+   * decisionId alone is NEVER sufficient.
    */
-  async updateMemoryUpdate(decisionId, memoryUpdateData) {
+  async updatePolicyCheck(
+    decisionId,
+    policyCheckData,
+    context
+  ) {
     try {
-      const trace = await DecisionTrace.findOneAndUpdate(
-        { decisionId },
-        {
-          $set: {
-            "memoryUpdate.patternId": memoryUpdateData.patternId,
-            "memoryUpdate.pattern": memoryUpdateData.pattern,
-            "memoryUpdate.actionRecorded": memoryUpdateData.actionRecorded,
-            "memoryUpdate.successRecorded": memoryUpdateData.successRecorded,
-            "memoryUpdate.recoveryTime": memoryUpdateData.recoveryTime,
-            "memoryUpdate.timestamp": new Date(),
-          },
-          $push: {
-            auditTrail: {
-              stage: "memory_updated",
-              timestamp: new Date(),
-              status: "SUCCESS",
+      const scope =
+        this._scopeFilter(
+          context
+        );
+
+      const trace =
+        await DecisionTrace
+          .findOneAndUpdate(
+            {
+              decisionId,
+
+              ...scope,
             },
-          },
-        },
-        { new: true }
-      );
+            {
+              $set: {
+                "policyCheck.policyVersionId":
+                  policyCheckData
+                    .policyVersionId,
 
-      console.log(`[decision-trace] Updated memory: ${decisionId}`);
-      return trace;
-    } catch (error) {
-      console.error("[decision-trace] Error updating memory:", error);
-      throw error;
-    }
-  }
+                "policyCheck.policyVersion":
+                  policyCheckData
+                    .policyVersion,
 
-  /**
-   * Retrieve trace by ID
-   */
-  async getTrace(decisionId, tenantId) {
-    try {
-      const trace = await DecisionTrace.findOne({
-        decisionId,
-        tenantId,
-      });
+                "policyCheck.policySnapshot":
+                  policyCheckData
+                    .policySnapshot,
+
+                "policyCheck.timestamp":
+                  new Date(),
+
+                "policyCheck.verdict":
+                  policyCheckData
+                    .verdict,
+
+                "policyCheck.checks":
+                  policyCheckData
+                    .checks,
+
+                "policyCheck.reason":
+                  policyCheckData
+                    .reason,
+
+                updatedAt:
+                  new Date(),
+              },
+
+              $push: {
+                auditTrail: {
+                  stage:
+                    "policy_checked",
+
+                  timestamp:
+                    new Date(),
+
+                  status:
+                    policyCheckData
+                      .verdict,
+                },
+              },
+            },
+            {
+              new:
+                true,
+            }
+          );
 
       if (!trace) {
-        throw new Error(`Trace not found: ${decisionId}`);
+        throw this._notFound(
+          decisionId
+        );
+      }
+
+      console.log(
+        `[decision-trace] Updated policy check (version=${policyCheckData.policyVersionId}): ${decisionId}`
+      );
+
+      return trace;
+    } catch (error) {
+      console.error(
+        "[decision-trace] Error updating policy check:",
+        error.message
+      );
+
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // ACTION RESULT
+  // ==========================================================================
+
+  async updateActionResult(
+    decisionId,
+    actionResultData,
+    context
+  ) {
+    try {
+      const scope =
+        this._scopeFilter(
+          context
+        );
+
+      const trace =
+        await DecisionTrace
+          .findOneAndUpdate(
+            {
+              decisionId,
+
+              ...scope,
+            },
+            {
+              $set: {
+                "actionResult.actionId":
+                  actionResultData
+                    .actionId,
+
+                "actionResult.status":
+                  actionResultData
+                    .status,
+
+                "actionResult.durationMs":
+                  actionResultData
+                    .durationMs,
+
+                "actionResult.dryRunPerformed":
+                  actionResultData
+                    .dryRunPerformed,
+
+                "actionResult.dryRunResult":
+                  actionResultData
+                    .dryRunResult,
+
+                "actionResult.outcome":
+                  actionResultData
+                    .outcome,
+
+                "actionResult.error":
+                  actionResultData
+                    .error,
+
+                "actionResult.timestamp":
+                  new Date(),
+
+                updatedAt:
+                  new Date(),
+              },
+
+              $push: {
+                auditTrail: {
+                  stage:
+                    "action_executed",
+
+                  timestamp:
+                    new Date(),
+
+                  status:
+                    actionResultData
+                      .status,
+                },
+              },
+            },
+            {
+              new:
+                true,
+            }
+          );
+
+      if (!trace) {
+        throw this._notFound(
+          decisionId
+        );
+      }
+
+      console.log(
+        `[decision-trace] Updated action result: ${decisionId}`
+      );
+
+      return trace;
+    } catch (error) {
+      console.error(
+        "[decision-trace] Error updating action result:",
+        error.message
+      );
+
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // MEMORY UPDATE
+  // ==========================================================================
+
+  async updateMemoryUpdate(
+    decisionId,
+    memoryUpdateData,
+    context
+  ) {
+    try {
+      const scope =
+        this._scopeFilter(
+          context
+        );
+
+      const trace =
+        await DecisionTrace
+          .findOneAndUpdate(
+            {
+              decisionId,
+
+              ...scope,
+            },
+            {
+              $set: {
+                "memoryUpdate.patternId":
+                  memoryUpdateData
+                    .patternId,
+
+                "memoryUpdate.pattern":
+                  memoryUpdateData
+                    .pattern,
+
+                "memoryUpdate.actionRecorded":
+                  memoryUpdateData
+                    .actionRecorded,
+
+                "memoryUpdate.successRecorded":
+                  memoryUpdateData
+                    .successRecorded,
+
+                "memoryUpdate.recoveryTime":
+                  memoryUpdateData
+                    .recoveryTime,
+
+                "memoryUpdate.timestamp":
+                  new Date(),
+
+                updatedAt:
+                  new Date(),
+              },
+
+              $push: {
+                auditTrail: {
+                  stage:
+                    "memory_updated",
+
+                  timestamp:
+                    new Date(),
+
+                  status:
+                    "SUCCESS",
+                },
+              },
+            },
+            {
+              new:
+                true,
+            }
+          );
+
+      if (!trace) {
+        throw this._notFound(
+          decisionId
+        );
+      }
+
+      console.log(
+        `[decision-trace] Updated memory: ${decisionId}`
+      );
+
+      return trace;
+    } catch (error) {
+      console.error(
+        "[decision-trace] Error updating memory:",
+        error.message
+      );
+
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // GET ONE
+  // ==========================================================================
+
+  async getTrace(
+    decisionId,
+    context
+  ) {
+    try {
+      const trace =
+        await DecisionTrace
+          .findOne({
+            decisionId,
+
+            ...this._scopeFilter(
+              context
+            ),
+          });
+
+      if (!trace) {
+        throw this._notFound(
+          decisionId
+        );
       }
 
       return trace;
     } catch (error) {
-      console.error("[decision-trace] Error retrieving trace:", error);
+      console.error(
+        "[decision-trace] Error retrieving trace:",
+        error.message
+      );
+
       throw error;
     }
   }
 
   /**
-   * Get recent decision traces for tenant
+   * Compatibility alias.
    */
-  async getRecentTraces(tenantId, limit = 50, filter = {}) {
-    try {
-      const query = { tenantId, ...filter };
-      const traces = await DecisionTrace.find(query)
-        .sort({ createdAt: -1 })
-        .limit(limit);
-
-      return traces;
-    } catch (error) {
-      console.error("[decision-trace] Error retrieving recent traces:", error);
-      throw error;
-    }
+  async getDecisionTrace(
+    context,
+    decisionId
+  ) {
+    return this.getTrace(
+      decisionId,
+      context
+    );
   }
 
-  /**
-   * Get decision summary (for statistics)
-   */
-  async getDecisionSummary(tenantId, timeWindowMs = 86400000) {
-    try {
-      const since = new Date(Date.now() - timeWindowMs);
+  // ==========================================================================
+  // RECENT
+  // ==========================================================================
 
-      const summary = {
-        totalDecisions: 0,
-        byDecisionType: {},
-        byActionType: {},
-        successRate: 0,
-        avgConfidence: 0,
-        policyApprovalRate: 0,
+  async getRecentTraces(
+    context,
+    limit = 50,
+    filter = {}
+  ) {
+    try {
+      const safeLimit =
+        Math.min(
+          Math.max(
+            Number.parseInt(
+              limit,
+              10
+            ) || 50,
+            1
+          ),
+          200
+        );
+
+      const query = {
+        ...this._scopeFilter(
+          context
+        ),
+
+        ...filter,
       };
 
-      const traces = await DecisionTrace.find({
-        tenantId,
-        createdAt: { $gte: since },
-      });
+      /**
+       * Ownership fields may never be overridden by filter.
+       */
+      const scope =
+        this._scopeFilter(
+          context
+        );
 
-      if (traces.length === 0) {
+      query.tenantId =
+        scope.tenantId;
+
+      query.organizationId =
+        scope.organizationId;
+
+      query.environmentId =
+        scope.environmentId;
+
+      return DecisionTrace
+        .find(query)
+        .sort({
+          createdAt:
+            -1,
+        })
+        .limit(
+          safeLimit
+        );
+    } catch (error) {
+      console.error(
+        "[decision-trace] Error retrieving recent traces:",
+        error.message
+      );
+
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // SUMMARY
+  // ==========================================================================
+
+  async getDecisionSummary(
+    context,
+    timeWindowMs = 86400000
+  ) {
+    try {
+      const since =
+        new Date(
+          Date.now() -
+          timeWindowMs
+        );
+
+      const summary = {
+        totalDecisions:
+          0,
+
+        byDecisionType:
+          {},
+
+        byActionType:
+          {},
+
+        successRate:
+          0,
+
+        avgConfidence:
+          0,
+
+        policyApprovalRate:
+          0,
+      };
+
+      const traces =
+        await DecisionTrace
+          .find({
+            ...this._scopeFilter(
+              context
+            ),
+
+            createdAt: {
+              $gte:
+                since,
+            },
+          });
+
+      if (
+        traces.length ===
+        0
+      ) {
         return summary;
       }
 
-      summary.totalDecisions = traces.length;
+      summary.totalDecisions =
+        traces.length;
 
-      let totalConfidence = 0;
-      let approvedCount = 0;
-      let successCount = 0;
+      let totalConfidence =
+        0;
 
-      for (const trace of traces) {
-        // Decision type
-        summary.byDecisionType[trace.decision] =
-          (summary.byDecisionType[trace.decision] || 0) + 1;
+      let confidenceCount =
+        0;
 
-        // Action type
-        summary.byActionType[trace.recommendedAction] =
-          (summary.byActionType[trace.recommendedAction] || 0) + 1;
+      let approvedCount =
+        0;
 
-        // Confidence
-        if (trace.inputs.confidence) {
-          totalConfidence += trace.inputs.confidence;
+      let successCount =
+        0;
+
+      for (
+        const trace
+        of traces
+      ) {
+        if (
+          trace.decision
+        ) {
+          summary
+            .byDecisionType[
+              trace.decision
+            ] =
+            (
+              summary
+                .byDecisionType[
+                  trace.decision
+                ] ||
+              0
+            ) +
+            1;
         }
 
-        // Policy approval
-        if (trace.policyCheck?.verdict === "APPROVED") {
-          approvedCount++;
+        if (
+          trace.recommendedAction
+        ) {
+          summary
+            .byActionType[
+              trace
+                .recommendedAction
+            ] =
+            (
+              summary
+                .byActionType[
+                  trace
+                    .recommendedAction
+                ] ||
+              0
+            ) +
+            1;
         }
 
-        // Action success
-        if (trace.actionResult?.status === "SUCCESS") {
-          successCount++;
+        if (
+          typeof trace.inputs
+            ?.confidence ===
+          "number"
+        ) {
+          totalConfidence +=
+            trace.inputs
+              .confidence;
+
+          confidenceCount +=
+            1;
+        }
+
+        if (
+          trace.policyCheck
+            ?.verdict ===
+          "APPROVED"
+        ) {
+          approvedCount +=
+            1;
+        }
+
+        if (
+          trace.actionResult
+            ?.status ===
+          "SUCCESS"
+        ) {
+          successCount +=
+            1;
         }
       }
 
-      summary.avgConfidence = totalConfidence / traces.length;
-      summary.policyApprovalRate = approvedCount / traces.length;
-      summary.successRate = successCount / traces.length;
+      summary.avgConfidence =
+        confidenceCount > 0
+          ? totalConfidence /
+            confidenceCount
+          : 0;
+
+      summary.policyApprovalRate =
+        approvedCount /
+        traces.length;
+
+      summary.successRate =
+        successCount /
+        traces.length;
 
       return summary;
     } catch (error) {
-      console.error("[decision-trace] Error computing summary:", error);
+      console.error(
+        "[decision-trace] Error computing summary:",
+        error.message
+      );
+
       throw error;
     }
   }
 
-  /**
-   * Search traces with advanced filtering
-   */
-  async searchTraces(tenantId, query = {}) {
+  // ==========================================================================
+  // SEARCH
+  // ==========================================================================
+
+  async searchTraces(
+    context,
+    query = {}
+  ) {
     try {
-      const filter = { tenantId };
+      const filter = {
+        ...this._scopeFilter(
+          context
+        ),
+      };
 
-      // Support filtering by decision outcome
-      if (query.decision) filter.decision = query.decision;
-      if (query.action) filter.recommendedAction = query.action;
-      if (query.policyVerdict) filter["policyCheck.verdict"] = query.policyVerdict;
-      if (query.actionStatus) filter["actionResult.status"] = query.actionStatus;
-
-      // Time range
-      if (query.startTime || query.endTime) {
-        filter.createdAt = {};
-        if (query.startTime) filter.createdAt.$gte = new Date(query.startTime);
-        if (query.endTime) filter.createdAt.$lte = new Date(query.endTime);
+      if (
+        query.decision
+      ) {
+        filter.decision =
+          query.decision;
       }
 
-      const traces = await DecisionTrace.find(filter)
-        .sort({ createdAt: -1 })
-        .limit(query.limit || 50);
+      if (
+        query.action
+      ) {
+        filter.recommendedAction =
+          query.action;
+      }
 
-      return traces;
+      if (
+        query.policyVerdict
+      ) {
+        filter[
+          "policyCheck.verdict"
+        ] =
+          query.policyVerdict;
+      }
+
+      if (
+        query.actionStatus
+      ) {
+        filter[
+          "actionResult.status"
+        ] =
+          query.actionStatus;
+      }
+
+      if (
+        query.incidentId
+      ) {
+        if (
+          !mongoose.Types.ObjectId
+            .isValid(
+              query.incidentId
+            )
+        ) {
+          const error =
+            new Error(
+              "Invalid incidentId"
+            );
+
+          error.status =
+            400;
+
+          error.code =
+            "INVALID_INCIDENT_ID";
+
+          throw error;
+        }
+
+        filter.incidentId =
+          query.incidentId;
+      }
+
+      if (
+        query.startTime ||
+        query.endTime
+      ) {
+        filter.createdAt =
+          {};
+
+        if (
+          query.startTime
+        ) {
+          filter
+            .createdAt
+            .$gte =
+            new Date(
+              query.startTime
+            );
+        }
+
+        if (
+          query.endTime
+        ) {
+          filter
+            .createdAt
+            .$lte =
+            new Date(
+              query.endTime
+            );
+        }
+      }
+
+      const safeLimit =
+        Math.min(
+          Math.max(
+            Number.parseInt(
+              query.limit,
+              10
+            ) || 50,
+            1
+          ),
+          200
+        );
+
+      return DecisionTrace
+        .find(filter)
+        .sort({
+          createdAt:
+            -1,
+        })
+        .limit(
+          safeLimit
+        );
     } catch (error) {
-      console.error("[decision-trace] Error searching traces:", error);
+      console.error(
+        "[decision-trace] Error searching traces:",
+        error.message
+      );
+
       throw error;
     }
   }
 }
 
-module.exports = new DecisionTraceService();
+module.exports =
+  new DecisionTraceService();

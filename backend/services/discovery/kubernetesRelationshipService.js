@@ -25,17 +25,47 @@ class KubernetesRelationshipService {
    *
    * Deployment → Pod label matching is retained only as fallback.
    */
-  async rebuildRelationships({
-    tenantId,
-    organizationId,
-    integrationId,
-  }) {
-    const resources =
-      await KubernetesResource.find({
-        tenantId,
+ async rebuildRelationships({
+  tenantId,
+  organizationId,
+  environmentId,
+  integrationId,
+}) {
+  if (
+    !tenantId ||
+    !organizationId ||
+    !environmentId ||
+    !integrationId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Complete Kubernetes ownership context is required"
+      ),
+      {
+        code:
+          "K8S_RELATIONSHIP_CONTEXT_REQUIRED",
+      }
+    );
+  }
+
+  /**
+   * Only resources belonging to this exact
+   * organization + environment + integration
+   * may participate in this topology graph.
+   */
+  const resources =
+    await KubernetesResource
+      .find({
+        organizationId,
+
+        environmentId,
+
         integrationId,
-        active: true,
-      }).lean();
+
+        active:
+          true,
+      })
+      .lean();
 
     const services =
       resources.filter(
@@ -498,21 +528,21 @@ class KubernetesRelationshipService {
       of seenRelations
     ) {
       const key = {
-        tenantId,
+  organizationId,
 
-        integrationId,
+  environmentId,
 
-        sourceResourceId:
-          relation.source
-            ._id,
+  integrationId,
 
-        targetResourceId:
-          relation.target
-            ._id,
+  sourceResourceId:
+    relation.source._id,
 
-        relationType:
-          relation.relationType,
-      };
+  targetResourceId:
+    relation.target._id,
+
+  relationType:
+    relation.relationType,
+};
 
       activeRelationKeys.push(
         key
@@ -522,10 +552,16 @@ class KubernetesRelationshipService {
         .findOneAndUpdate(
           key,
           {
-            $set: {
-              organizationId,
+          $set: {
+  tenantId,
 
-              confidence:
+  organizationId,
+
+  environmentId,
+
+  integrationId,
+
+  confidence:
                 relation.confidence ??
                 1,
 
@@ -560,12 +596,17 @@ class KubernetesRelationshipService {
     // ────────────────────────────────────────────────────────────────────────
 
     const existingRelations =
-      await KubernetesResourceRelation
-        .find({
-          tenantId,
-          integrationId,
-          active: true,
-        });
+  await KubernetesResourceRelation
+    .find({
+      organizationId,
+
+      environmentId,
+
+      integrationId,
+
+      active:
+        true,
+    });
 
     for (
       const existing

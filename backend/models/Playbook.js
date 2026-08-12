@@ -1,6 +1,8 @@
-'use strict';
+"use strict";
 
-const mongoose = require('mongoose');
+const mongoose =
+  require("mongoose");
+
 const {
   LIFECYCLE_VALUES,
   STAGE_TYPE_VALUES,
@@ -10,140 +12,832 @@ const {
   APPROVAL_MODE_VALUES,
   OWNER_TYPE_VALUES,
   PLAYBOOK_LIFECYCLE,
-} = require('../constants/playbook');
+} =
+  require(
+    "../constants/playbook"
+  );
 
-// ── Runbook reference ──────────────────────────────────────────────────────
-const runbookRefSchema = new mongoose.Schema({
-  runbookId:          { type: String, required: true },
-  versionConstraint:  { type: String, default: null }, // e.g. ">=1.0.0", null = latest
-  required:           { type: Boolean, default: true },
-  parameterMappings:  { type: mongoose.Schema.Types.Mixed, default: {} },
-  conditions:         { type: mongoose.Schema.Types.Mixed, default: {} },
-  description:        { type: String },
-}, { _id: false });
+// ============================================================================
+// SUB-SCHEMAS
+// ============================================================================
 
-// ── Stage ──────────────────────────────────────────────────────────────────
-const stageSchema = new mongoose.Schema({
-  id:           { type: String, required: true },
-  order:        { type: Number, required: true },
-  name:         { type: String, required: true },
-  type:         { type: String, enum: STAGE_TYPE_VALUES, required: true },
-  description:  { type: String },
-  conditions:   { type: mongoose.Schema.Types.Mixed, default: {} },
-  runbooks:     [runbookRefSchema],
-  failurePolicy:{ type: String, enum: FAILURE_POLICY_VALUES, default: 'STOP' },
-}, { _id: false });
+const runbookRefSchema =
+  new mongoose.Schema(
+    {
+      runbookId: {
+        type:
+          String,
+        required:
+          true,
+      },
 
-// ── Main schema ────────────────────────────────────────────────────────────
-const playbookSchema = new mongoose.Schema(
-  {
-    // ── Identity
-    apiVersion:   { type: String, default: 'aira.io/v1' },
-    kind:         { type: String, default: 'Playbook' },
-    playbookId:   { type: String, required: true, index: true },
-    semver:       { type: String, required: true },
-    name:         { type: String, required: true },
-    description:  { type: String },
-    category:     { type: String },
-    lifecycle:    { type: String, enum: LIFECYCLE_VALUES, default: PLAYBOOK_LIFECYCLE.DRAFT },
+      versionConstraint: {
+        type:
+          String,
+        default:
+          null,
+      },
 
-    // ── Ownership
-    tenantId:     { type: String, index: true, default: null },
-    owner: {
-      ownerType:  { type: String, enum: OWNER_TYPE_VALUES, default: 'system' },
-      name:       { type: String },
-      team:       { type: String },
+      required: {
+        type:
+          Boolean,
+        default:
+          true,
+      },
+
+      parameterMappings: {
+        type:
+          mongoose.Schema.Types.Mixed,
+        default:
+          {},
+      },
+
+      conditions: {
+        type:
+          mongoose.Schema.Types.Mixed,
+        default:
+          {},
+      },
+
+      description:
+        String,
     },
+    {
+      _id:
+        false,
+    }
+  );
 
-    // ── Incident matching
-    incident: {
-      types:        [{ type: String }],
-      severities:   [{ type: String }],
-      providers:    [{ type: String }],
-      environments: [{ type: String }],
-      serviceTypes: [{ type: String }],
+const stageSchema =
+  new mongoose.Schema(
+    {
+      id: {
+        type:
+          String,
+        required:
+          true,
+      },
+
+      order: {
+        type:
+          Number,
+        required:
+          true,
+      },
+
+      name: {
+        type:
+          String,
+        required:
+          true,
+      },
+
+      type: {
+        type:
+          String,
+        enum:
+          STAGE_TYPE_VALUES,
+        required:
+          true,
+      },
+
+      description:
+        String,
+
+      conditions: {
+        type:
+          mongoose.Schema.Types.Mixed,
+        default:
+          {},
+      },
+
+      runbooks: [
+        runbookRefSchema,
+      ],
+
+      failurePolicy: {
+        type:
+          String,
+        enum:
+          FAILURE_POLICY_VALUES,
+        default:
+          "STOP",
+      },
     },
+    {
+      _id:
+        false,
+    }
+  );
 
-    // ── Triggers
-    triggers: {
-      all:  { type: mongoose.Schema.Types.Mixed, default: [] },
-      any:  { type: mongoose.Schema.Types.Mixed, default: [] },
-      none: { type: mongoose.Schema.Types.Mixed, default: [] },
+// ============================================================================
+// ROOT SCHEMA
+// ============================================================================
+
+const playbookSchema =
+  new mongoose.Schema(
+    {
+      // ---------------------------------------------------------------------
+      // Canonical identity
+      // ---------------------------------------------------------------------
+
+      apiVersion: {
+        type:
+          String,
+        default:
+          "aira.io/v1",
+      },
+
+      kind: {
+        type:
+          String,
+        default:
+          "Playbook",
+      },
+
+      playbookId: {
+        type:
+          String,
+        required:
+          true,
+        trim:
+          true,
+      },
+
+      semver: {
+        type:
+          String,
+        required:
+          true,
+        trim:
+          true,
+      },
+
+      name: {
+        type:
+          String,
+        required:
+          true,
+      },
+
+      description:
+        String,
+
+      category:
+        String,
+
+      lifecycle: {
+        type:
+          String,
+        enum:
+          LIFECYCLE_VALUES,
+        default:
+          PLAYBOOK_LIFECYCLE
+            .DRAFT,
+      },
+
+      // ---------------------------------------------------------------------
+      // Ownership
+      // ---------------------------------------------------------------------
+
+      tenantId: {
+        type:
+          String,
+        trim:
+          true,
+        lowercase:
+          true,
+        default:
+          null,
+      },
+
+      /**
+       * null for system-owned global playbooks.
+       */
+      organizationId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+        ref:
+          "Organization",
+        default:
+          null,
+        index:
+          true,
+      },
+
+      /**
+       * null for system-owned global playbooks.
+       */
+      environmentId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+        ref:
+          "Environment",
+        default:
+          null,
+        index:
+          true,
+      },
+
+      owner: {
+        ownerType: {
+          type:
+            String,
+          enum:
+            OWNER_TYPE_VALUES,
+          default:
+            "system",
+        },
+
+        name:
+          String,
+
+        team:
+          String,
+      },
+
+      // ---------------------------------------------------------------------
+      // Incident matching
+      //
+      // IMPORTANT:
+      // incident.environments describes applicability.
+      // environmentId describes ownership.
+      // ---------------------------------------------------------------------
+
+      incident: {
+        types: [
+          {
+            type:
+              String,
+          },
+        ],
+
+        severities: [
+          {
+            type:
+              String,
+          },
+        ],
+
+        providers: [
+          {
+            type:
+              String,
+          },
+        ],
+
+        environments: [
+          {
+            type:
+              String,
+          },
+        ],
+
+        serviceTypes: [
+          {
+            type:
+              String,
+          },
+        ],
+      },
+
+      // ---------------------------------------------------------------------
+      // Triggers
+      // ---------------------------------------------------------------------
+
+      triggers: {
+        all: {
+          type:
+            mongoose.Schema.Types.Mixed,
+          default:
+            [],
+        },
+
+        any: {
+          type:
+            mongoose.Schema.Types.Mixed,
+          default:
+            [],
+        },
+
+        none: {
+          type:
+            mongoose.Schema.Types.Mixed,
+          default:
+            [],
+        },
+      },
+
+      requiredEvidence: [
+        {
+          type:
+            String,
+        },
+      ],
+
+      conditions: {
+        minimumConfidence: {
+          type:
+            Number,
+          min:
+            0,
+          max:
+            1,
+          default:
+            0.7,
+        },
+
+        requiredSignals: [
+          {
+            type:
+              String,
+          },
+        ],
+
+        safetyConditions:
+          mongoose.Schema.Types.Mixed,
+      },
+
+      risk: {
+        level: {
+          type:
+            String,
+          enum:
+            RISK_LEVEL_VALUES,
+        },
+
+        blastRadius:
+          String,
+      },
+
+      policy: {
+        required: {
+          type:
+            Boolean,
+          default:
+            false,
+        },
+
+        constraints:
+          mongoose.Schema.Types.Mixed,
+      },
+
+      approval: {
+        mode: {
+          type:
+            String,
+          enum:
+            APPROVAL_MODE_VALUES,
+          default:
+            "AUTOMATIC",
+        },
+
+        conditions:
+          mongoose.Schema.Types.Mixed,
+      },
+
+      // ---------------------------------------------------------------------
+      // Orchestration
+      // ---------------------------------------------------------------------
+
+      stages: [
+        stageSchema,
+      ],
+
+      rollback: {
+        strategy: {
+          type:
+            String,
+          enum:
+            ROLLBACK_STRATEGY_VALUES,
+          default:
+            "NONE",
+        },
+
+        maxAttempts: {
+          type:
+            Number,
+          default:
+            1,
+        },
+
+        stages: [
+          {
+            type:
+              String,
+          },
+        ],
+      },
+
+      escalation: {
+        maxRecoveryAttempts: {
+          type:
+            Number,
+          default:
+            3,
+        },
+
+        condition:
+          String,
+
+        escalateTo:
+          String,
+
+        notifyChannels: [
+          {
+            type:
+              String,
+          },
+        ],
+      },
+
+      outcome: {
+        captureLearning: {
+          type:
+            Boolean,
+          default:
+            false,
+        },
+
+        updateIncidentMemory: {
+          type:
+            Boolean,
+          default:
+            false,
+        },
+
+        successMetrics: [
+          {
+            type:
+              String,
+          },
+        ],
+      },
+
+      checksum:
+        String,
+
+      immutable: {
+        type:
+          Boolean,
+        default:
+          false,
+      },
+
+      tags: [
+        {
+          type:
+            String,
+        },
+      ],
     },
+    {
+      timestamps:
+        true,
 
-    // ── Required evidence fields
-    requiredEvidence: [{ type: String }],
+      strict:
+        true,
 
-    // ── Eligibility conditions
-    conditions: {
-      minimumConfidence: { type: Number, min: 0, max: 1, default: 0.7 },
-      requiredSignals:   [{ type: String }],
-      safetyConditions:  { type: mongoose.Schema.Types.Mixed },
-    },
+      versionKey:
+        false,
+    }
+  );
 
-    // ── Risk
-    risk: {
-      level:       { type: String, enum: RISK_LEVEL_VALUES },
-      blastRadius: { type: String },
-    },
+// ============================================================================
+// OWNERSHIP VALIDATION
+// ============================================================================
 
-    // ── Policy
-    policy: {
-      required:    { type: Boolean, default: false },
-      constraints: { type: mongoose.Schema.Types.Mixed },
-    },
+function isSystemOwned(
+  document
+) {
+  return (
+    document?.owner
+      ?.ownerType ===
+    "system"
+  );
+}
 
-    // ── Approval
-    approval: {
-      mode:       { type: String, enum: APPROVAL_MODE_VALUES, default: 'AUTOMATIC' },
-      conditions: { type: mongoose.Schema.Types.Mixed },
-    },
+function validateOwnership(
+  document
+) {
+  if (
+    isSystemOwned(
+      document
+    )
+  ) {
+    document.tenantId =
+      null;
 
-    // ── Stages (the core orchestration definition)
-    stages: [stageSchema],
+    document.organizationId =
+      null;
 
-    // ── Rollback
-    rollback: {
-      strategy:    { type: String, enum: ROLLBACK_STRATEGY_VALUES, default: 'NONE' },
-      maxAttempts: { type: Number, default: 1 },
-      stages:      [{ type: String }],  // stage IDs to run on rollback
-    },
+    document.environmentId =
+      null;
 
-    // ── Escalation
-    escalation: {
-      maxRecoveryAttempts: { type: Number, default: 3 },
-      condition:           { type: String },
-      escalateTo:          { type: String },
-      notifyChannels:      [{ type: String }],
-    },
+    return null;
+  }
 
-    // ── Outcome configuration
-    outcome: {
-      captureLearning:      { type: Boolean, default: false },
-      updateIncidentMemory: { type: Boolean, default: false },
-      successMetrics:       [{ type: String }],
-    },
+  if (
+    !document.tenantId
+  ) {
+    return new Error(
+      "Tenant-owned playbook requires tenantId"
+    );
+  }
 
-    // ── Versioning / immutability
-    checksum:  { type: String },
-    immutable: { type: Boolean, default: false },
+  if (
+    !document.organizationId
+  ) {
+    return new Error(
+      "Tenant-owned playbook requires organizationId"
+    );
+  }
 
-    // ── Audit
-    tags: [{ type: String }],
-  },
-  {
-    timestamps: true,
-    strict: true,
-  },
+  if (
+    !document.environmentId
+  ) {
+    return new Error(
+      "Tenant-owned playbook requires environmentId"
+    );
+  }
+
+  return null;
+}
+
+// ============================================================================
+// STAGE VALIDATION
+// ============================================================================
+
+function validateStageIds(
+  stages
+) {
+  if (
+    !Array.isArray(
+      stages
+    )
+  ) {
+    return null;
+  }
+
+  const ids =
+    stages
+      .map(
+        (stage) =>
+          stage.id
+      )
+      .filter(
+        Boolean
+      );
+
+  const seen =
+    new Set();
+
+  for (
+    const id
+    of ids
+  ) {
+    if (
+      seen.has(id)
+    ) {
+      return new Error(
+        `Duplicate playbook stage id: ${id}`
+      );
+    }
+
+    seen.add(
+      id
+    );
+  }
+
+  return null;
+}
+
+// ============================================================================
+// PRE-SAVE
+// ============================================================================
+
+playbookSchema.pre(
+  "save",
+  function beforeSave(
+    next
+  ) {
+    const ownershipError =
+      validateOwnership(
+        this
+      );
+
+    if (
+      ownershipError
+    ) {
+      return next(
+        ownershipError
+      );
+    }
+
+    const stageError =
+      validateStageIds(
+        this.stages
+      );
+
+    if (
+      stageError
+    ) {
+      return next(
+        stageError
+      );
+    }
+
+    return next();
+  }
 );
 
-// ── Compound indexes ───────────────────────────────────────────────────────
-playbookSchema.index({ playbookId: 1, semver: 1 }, { unique: true });
-playbookSchema.index({ tenantId: 1, lifecycle: 1 });
-playbookSchema.index({ 'incident.types': 1, lifecycle: 1 });
-playbookSchema.index({ 'incident.severities': 1, lifecycle: 1 });
+// ============================================================================
+// INDEXES
+// ============================================================================
 
-// TTL — 2 years (playbooks are long-lived)
-playbookSchema.index({ createdAt: 1 }, { expireAfterSeconds: 63_072_000 });
+/**
+ * Global reusable system playbook version.
+ */
+playbookSchema.index(
+  {
+    playbookId:
+      1,
 
-module.exports = mongoose.model('Playbook', playbookSchema);
+    semver:
+      1,
+  },
+  {
+    unique:
+      true,
+
+    name:
+      "unique_system_playbook_version",
+
+    partialFilterExpression: {
+      "owner.ownerType":
+        "system",
+
+      playbookId: {
+        $type:
+          "string",
+      },
+
+      semver: {
+        $type:
+          "string",
+      },
+    },
+  }
+);
+
+/**
+ * Tenant-owned version uniqueness.
+ *
+ * Same logical playbook/version may exist separately
+ * in Production and Staging.
+ */
+playbookSchema.index(
+  {
+    organizationId:
+      1,
+
+    environmentId:
+      1,
+
+    playbookId:
+      1,
+
+    semver:
+      1,
+  },
+  {
+    unique:
+      true,
+
+    name:
+      "unique_tenant_playbook_version_per_environment",
+
+    partialFilterExpression: {
+      organizationId: {
+        $type:
+          "objectId",
+      },
+
+      environmentId: {
+        $type:
+          "objectId",
+      },
+
+      playbookId: {
+        $type:
+          "string",
+      },
+
+      semver: {
+        $type:
+          "string",
+      },
+    },
+  }
+);
+
+/**
+ * Environment catalogue.
+ */
+playbookSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  lifecycle:
+    1,
+});
+
+/**
+ * Incident-type matching.
+ */
+playbookSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  "incident.types":
+    1,
+
+  lifecycle:
+    1,
+});
+
+/**
+ * Severity matching.
+ */
+playbookSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  "incident.severities":
+    1,
+
+  lifecycle:
+    1,
+});
+
+/**
+ * Provider matching.
+ */
+playbookSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  "incident.providers":
+    1,
+
+  lifecycle:
+    1,
+});
+
+/**
+ * Tag search.
+ */
+playbookSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  tags:
+    1,
+});
+
+// ============================================================================
+// MODEL
+// ============================================================================
+
+const Playbook =
+  mongoose.model(
+    "Playbook",
+    playbookSchema
+  );
+
+Playbook.validateOwnership =
+  validateOwnership;
+
+Playbook.validateStageIds =
+  validateStageIds;
+
+Playbook.isSystemOwned =
+  isSystemOwned;
+
+module.exports =
+  Playbook;

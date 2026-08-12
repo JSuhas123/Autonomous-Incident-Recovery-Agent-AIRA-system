@@ -1,5 +1,4 @@
-﻿import { useAuthStore } from '@/store/authStore'
-
+﻿import { useAuthStore, type EnvironmentSummary } from '@/store/authStore'
 const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:5000'
 
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
@@ -33,6 +32,20 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
+  }
+    /**
+   * Canonical environment context.
+   *
+   * The backend still validates that this environment belongs
+   * to the authenticated organization. The browser value is
+   * never treated as authoritative.
+   */
+  const activeEnvironment =
+    useAuthStore.getState().activeEnvironment
+
+  if (activeEnvironment?.id) {
+    headers['X-AIRA-Environment-Id'] =
+      activeEnvironment.id
   }
 
   if (hasBody) {
@@ -92,22 +105,198 @@ export const authApi = {
     request<{ user: unknown; organization: unknown; membership: unknown; csrfToken: string }>(
       '/api/v1/auth/login', { method: 'POST', body, skipCsrf: true }),
 
-  session: (signal?: AbortSignal) =>
+    session: (signal?: AbortSignal) =>
     request<{
       authenticated: boolean
       user: unknown
       organization: unknown
       membership: unknown
+      environment: EnvironmentSummary | null
       session: unknown
       csrfToken: string
-    }>('/api/v1/auth/session', { signal }),
+    }>('/api/v1/auth/session', {
+      signal,
+    }),
 
   logout: () => request('/api/v1/auth/logout', { method: 'POST' }),
   logoutAll: () => request('/api/v1/auth/logout-all', { method: 'POST' }),
   csrf: (signal?: AbortSignal) =>
     request<{ csrfToken: string }>('/api/v1/auth/csrf', { signal }),
 }
+export interface EnvironmentSummaryResponse {
+  total: number
+  active: number
+  maintenance: number
+  hasProduction: boolean
 
+  plan: string
+
+  limit: number | null
+  remaining: number | null
+}
+
+export const environmentApi = {
+  list: (
+    signal?: AbortSignal,
+  ) =>
+    request<{
+      environments: EnvironmentSummary[]
+    }>(
+      '/api/v1/environments',
+      {
+        signal,
+      },
+    ),
+
+  summary: (
+    signal?: AbortSignal,
+  ) =>
+    request<{
+      summary: EnvironmentSummaryResponse
+    }>(
+      '/api/v1/environments/summary',
+      {
+        signal,
+      },
+    ),
+
+  get: (
+    environmentId: string,
+    signal?: AbortSignal,
+  ) =>
+    request<{
+      environment: EnvironmentSummary
+    }>(
+      `/api/v1/environments/${environmentId}`,
+      {
+        signal,
+      },
+    ),
+
+  create: (body: {
+    name: string
+    slug?: string
+
+    type?:
+      | 'development'
+      | 'testing'
+      | 'staging'
+      | 'production'
+      | 'custom'
+
+    criticality?:
+      | 'low'
+      | 'medium'
+      | 'high'
+      | 'critical'
+
+    description?: string
+
+    settings?: {
+      allowAutonomousExecution?: boolean
+      requireApprovalForDestructiveActions?: boolean
+      timezone?: string | null
+    }
+  }) =>
+    request<{
+      environment: EnvironmentSummary
+    }>(
+      '/api/v1/environments',
+      {
+        method: 'POST',
+        body,
+      },
+    ),
+
+  update: (
+    environmentId: string,
+    body: {
+      name?: string
+      description?: string
+
+      criticality?:
+        | 'low'
+        | 'medium'
+        | 'high'
+        | 'critical'
+
+      settings?: {
+        allowAutonomousExecution?: boolean
+        requireApprovalForDestructiveActions?: boolean
+        timezone?: string | null
+      }
+    },
+  ) =>
+    request<{
+      environment: EnvironmentSummary
+    }>(
+      `/api/v1/environments/${environmentId}`,
+      {
+        method: 'PATCH',
+        body,
+      },
+    ),
+
+  setDefault: (
+    environmentId: string,
+  ) =>
+    request<{
+      environment: EnvironmentSummary
+      isDefault: boolean
+    }>(
+      `/api/v1/environments/${environmentId}/default`,
+      {
+        method: 'POST',
+        body: {},
+      },
+    ),
+
+  enterMaintenance: (
+    environmentId: string,
+    reason: string,
+  ) =>
+    request<{
+      environment: EnvironmentSummary
+    }>(
+      `/api/v1/environments/${environmentId}/maintenance`,
+      {
+        method: 'POST',
+        body: {
+          reason,
+        },
+      },
+    ),
+
+  activate: (
+    environmentId: string,
+  ) =>
+    request<{
+      environment: EnvironmentSummary
+    }>(
+      `/api/v1/environments/${environmentId}/activate`,
+      {
+        method: 'POST',
+        body: {},
+      },
+    ),
+
+  archive: (
+    environmentId: string,
+    reason = '',
+  ) =>
+    request<{
+      archived: boolean
+      environment: EnvironmentSummary
+    }>(
+      `/api/v1/environments/${environmentId}`,
+      {
+        method: 'DELETE',
+        body: {
+          reason,
+        },
+      },
+    ),
+}
 // â”€â”€â”€ Public health endpoints â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface OnboardingStatus {
@@ -123,11 +312,11 @@ export interface OnboardingStatus {
 // ─── Service endpoints ───────────────────────────────────────────────────────
 
 import type {
-    CreateServiceBody,
-    Service,
-    ServiceListParams,
-    ServiceListResponse,
-    UpdateServiceBody,
+  CreateServiceBody,
+  Service,
+  ServiceListParams,
+  ServiceListResponse,
+  UpdateServiceBody,
 } from '@/types/service'
 
 export const serviceApi = {
@@ -162,10 +351,10 @@ export const serviceApi = {
 // ─── Verification endpoints ──────────────────────────────────────────────────
 
 import type {
-    VerificationChallenge,
-    VerificationCheckResult,
-    VerificationMethod,
-    VerificationStatus,
+  VerificationChallenge,
+  VerificationCheckResult,
+  VerificationMethod,
+  VerificationStatus,
 } from '@/types/verification'
 
 export const verificationApi = {
@@ -553,15 +742,69 @@ export const integrationConnectionApi = {
   list: () => request<{ integrations: import("../types/integration").IntegrationConnection[]; count: number }>("/api/v1/integrations/connections"),
   get:  (id: string) => request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}`),
   create: (body: import("../types/integration").CreateConnectionBody) =>
-    request<{ integration: import("../types/integration").IntegrationConnection }>("/api/v1/integrations/connections", { method: "POST", body: JSON.stringify(body) }),
+    request<{ integration: import("../types/integration").IntegrationConnection }>("/api/v1/integrations/connections", { method: "POST", body,  }),
   update: (id: string, body: import("../types/integration").UpdateConnectionBody) =>
-    request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+    request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}`, { method: "PATCH", body,}),
   test: (id: string) =>
     request<{ success: boolean; latencyMs?: number; detail?: string }>(`/api/v1/integrations/connections/${id}/test`, { method: "POST" }),
   disable: (id: string) =>
     request<{ integration: import("../types/integration").IntegrationConnection }>(`/api/v1/integrations/connections/${id}/disable`, { method: "POST" }),
   rotateSecret: (id: string, secret: string) =>
-    request<{ success: boolean }>(`/api/v1/integrations/connections/${id}/rotate-secret`, { method: "POST", body: JSON.stringify({ secret }) }),
+    request<{ success: boolean }>(`/api/v1/integrations/connections/${id}/rotate-secret`, { method: "POST", body: { secret } }),
   delete: (id: string) =>
     request<void>(`/api/v1/integrations/connections/${id}`, { method: "DELETE" }),
 };
+
+export const developmentApi = {
+  subscription: (
+    signal?: AbortSignal,
+  ) =>
+    request<{
+      plan: string
+      status: string
+      entitlements: Record<
+        string,
+        boolean | number | null
+      >
+    }>(
+      '/api/v1/dev/subscription',
+      {
+        signal,
+      },
+    ),
+
+  setPlan: (
+    plan:
+      | 'developer'
+      | 'team'
+      | 'business'
+      | 'enterprise',
+  ) =>
+    request<{
+      success: boolean
+
+      subscription: {
+        id: string
+        organizationId: string
+        plan: string
+        status: string
+      }
+
+      plan: string
+      status: string
+
+      entitlements: Record<
+        string,
+        boolean | number | null
+      >
+    }>(
+      '/api/v1/dev/subscription/plan',
+      {
+        method: 'POST',
+
+        body: {
+          plan,
+        },
+      },
+    ),
+}

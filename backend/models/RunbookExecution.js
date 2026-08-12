@@ -1,205 +1,665 @@
-'use strict';
+"use strict";
 
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 /**
- * RunbookExecution — forensic-grade execution record (Phase L)
+ * RunbookExecution
  *
- * Status lifecycle (uppercase):
- *   CREATED → VALIDATING → WAITING_FOR_APPROVAL → RUNNING
- *     → VERIFYING → SUCCEEDED
- *     → FAILED → ROLLBACK_PENDING → ROLLING_BACK → ROLLED_BACK | ROLLBACK_FAILED
- *     → ESCALATED | CANCELLED
+ * Forensic-grade record of one runbook execution.
  *
- * Immutability:
- *   - runbookSnapshot: frozen copy of the runbook definition at execution time
- *   - runbookChecksum: SHA-256 of canonical definition (tamper-detection)
- *   - resolvedParameters: provenance-tracked parameter values
+ * Canonical ownership:
+ *
+ * organizationId
+ * + environmentId
+ * + tenantId
+ * + incidentId
+ * + executionId
  */
 
 const EXECUTION_STATUS = [
-  'CREATED', 'VALIDATING', 'WAITING_FOR_APPROVAL', 'RUNNING',
-  'VERIFYING', 'SUCCEEDED', 'FAILED',
-  'ROLLBACK_PENDING', 'ROLLING_BACK', 'ROLLED_BACK', 'ROLLBACK_FAILED',
-  'ESCALATED', 'CANCELLED',
+  "CREATED",
+  "VALIDATING",
+  "WAITING_FOR_APPROVAL",
+  "RUNNING",
+  "VERIFYING",
+  "SUCCEEDED",
+  "FAILED",
+  "ROLLBACK_PENDING",
+  "ROLLING_BACK",
+  "ROLLED_BACK",
+  "ROLLBACK_FAILED",
+  "ESCALATED",
+  "CANCELLED",
 ];
 
-const STEP_STATUS = ['PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SKIPPED', 'TIMED_OUT'];
+const STEP_STATUS = [
+  "PENDING",
+  "RUNNING",
+  "SUCCEEDED",
+  "FAILED",
+  "SKIPPED",
+  "TIMED_OUT",
+];
 
-// ── Resolved parameter ─────────────────────────────────────────────────────
-const resolvedParameterSchema = new mongoose.Schema({
-  name:       { type: String, required: true },
-  value:      { type: mongoose.Schema.Types.Mixed },
-  source:     { type: String },
-  confidence: { type: Number },
-  resolvedAt: { type: String },
-  sensitive:  { type: Boolean, default: false },
-  redacted:   { type: Boolean, default: false },
-}, { _id: false });
+// ============================================================================
+// SUB-SCHEMAS
+// ============================================================================
 
-// ── Step attempt ───────────────────────────────────────────────────────────
-const stepAttemptSchema = new mongoose.Schema({
-  stepId:         { type: String, required: true },
-  attemptNumber:  { type: Number, default: 1 },
-  type:           { type: String },
-  action:         { type: String },
-  status:         { type: String, enum: STEP_STATUS, default: 'PENDING' },
-  startedAt:      { type: Date },
-  completedAt:    { type: Date },
-  durationMs:     { type: Number },
-  params:         { type: mongoose.Schema.Types.Mixed },  // runtime params (sensitive redacted)
-  output:         { type: mongoose.Schema.Types.Mixed },
-  preState:       { type: mongoose.Schema.Types.Mixed },
-  postState:      { type: mongoose.Schema.Types.Mixed },
-  error:          { type: String },
-  timedOut:       { type: Boolean, default: false },
-  evidence:       [{ type: String }],
-}, { _id: false });
-
-// ── Rollback step result ───────────────────────────────────────────────────
-const rollbackStepResultSchema = new mongoose.Schema({
-  stepId:  { type: String },
-  status:  { type: String },
-  result:  { type: mongoose.Schema.Types.Mixed },
-  error:   { type: String },
-  message: { type: String },
-}, { _id: false });
-
-// ── Rollback state ─────────────────────────────────────────────────────────
-const rollbackStateSchema = new mongoose.Schema({
-  strategy:    { type: String },
-  triggeredAt: { type: Date },
-  completedAt: { type: Date },
-  success:     { type: Boolean },
-  skipped:     { type: Boolean },
-  reason:      { type: String },
-  stepResults: [rollbackStepResultSchema],
-}, { _id: false });
-
-// ── Verification check result ──────────────────────────────────────────────
-const verificationCheckSchema = new mongoose.Schema({
-  id:            { type: String },
-  type:          { type: String },
-  result:        { type: String },
-  observedValue: { type: mongoose.Schema.Types.Mixed },
-  expected:      { type: mongoose.Schema.Types.Mixed },
-  evidence:      { type: mongoose.Schema.Types.Mixed },
-  error:         { type: String },
-  durationMs:    { type: Number },
-  timestamp:     { type: String },
-}, { _id: false });
-
-// ── Verification result ────────────────────────────────────────────────────
-const verificationResultSchema = new mongoose.Schema({
-  passed:   { type: Boolean },
-  strategy: { type: String },
-  summary:  { type: String },
-  skipped:  { type: Boolean },
-  checks:   [verificationCheckSchema],
-}, { _id: false });
-
-// ── Policy / approval ──────────────────────────────────────────────────────
-const policyDecisionSchema = new mongoose.Schema({
-  allowed:     { type: Boolean },
-  policyId:    { type: String },
-  reason:      { type: String },
-  decidedAt:   { type: Date },
-  decidedBy:   { type: String },
-}, { _id: false });
-
-// ── Main schema ────────────────────────────────────────────────────────────
-const runbookExecutionSchema = new mongoose.Schema(
+const resolvedParameterSchema = new mongoose.Schema(
   {
-    // ── Identity
-    executionId:   { type: String, required: true, unique: true },
-    tenantId:      { type: String, index: true },
-    orgId:         { type: String },
-    incidentId:    { type: String, index: true },
-    correlationId: { type: String, required: true, index: true },
-
-    // ── Runbook identity + immutable snapshot
-    runbookId:       { type: String, required: true, index: true },
-    runbookVersion:  { type: String, required: true },
-    runbookSnapshot: { type: mongoose.Schema.Types.Mixed, required: true },
-    runbookChecksum: { type: String, required: true },
-    versionRef:      { type: String },  // "RB-K8S-POD-RESTART@1.0.0"
-
-    // ── Resolved parameters (sensitive values redacted in stored copy)
-    resolvedParameters: [resolvedParameterSchema],
-
-    // ── Policy + approval
-    policyDecision: policyDecisionSchema,
-    approvalId:     { type: String },
-    approver:       { type: String },
-    approvedAt:     { type: Date },
-
-    // ── Status
-    status: {
-      type:    String,
-      enum:    EXECUTION_STATUS,
-      default: 'CREATED',
+    name: {
+      type: String,
       required: true,
     },
-    statusReason: { type: String },
 
-    // ── Timing
-    createdAt_:   { type: Date, default: Date.now },  // alias for TTL
-    startedAt:    { type: Date },
-    completedAt:  { type: Date },
-    durationMs:   { type: Number },
+    value: {
+      type: mongoose.Schema.Types.Mixed,
+    },
 
-    // ── Initiator
-    initiatedBy:  { type: String },
-    initiatorType:{ type: String, enum: ['user', 'agent', 'system', 'api'], default: 'api' },
+    source: {
+      type: String,
+    },
 
-    // ── Execution trace
-    stepAttempts: [stepAttemptSchema],
+    confidence: {
+      type: Number,
+    },
 
-    // ── Verification
-    verificationResult: verificationResultSchema,
+    resolvedAt: {
+      type: String,
+    },
 
-    // ── Rollback
-    rollbackState: rollbackStateSchema,
+    sensitive: {
+      type: Boolean,
+      default: false,
+    },
 
-    // ── Aggregate state capture
-    preExecutionState:  { type: mongoose.Schema.Types.Mixed },
-    postExecutionState: { type: mongoose.Schema.Types.Mixed },
+    redacted: {
+      type: Boolean,
+      default: false,
+    },
+  },
+  {
+    _id: false,
+  }
+);
 
-    // ── Audit references
-    auditEventIds:  [{ type: String }],
-    decisionTraceId:{ type: String },
+const stepAttemptSchema = new mongoose.Schema(
+  {
+    stepId: {
+      type: String,
+      required: true,
+    },
 
-    // ── Failure context
-    failedStepId:  { type: String },
-    errorMessage:  { type: String },
-    errorCode:     { type: String },
+    attemptNumber: {
+      type: Number,
+      default: 1,
+    },
 
-    // ── Flags
-    requiresHumanReview: { type: Boolean, default: false },
-    escalated:           { type: Boolean, default: false },
-    escalatedAt:         { type: Date },
-    escalationReason:    { type: String },
+    type: {
+      type: String,
+    },
+
+    action: {
+      type: String,
+    },
+
+    status: {
+      type: String,
+      enum: STEP_STATUS,
+      default: "PENDING",
+    },
+
+    startedAt: {
+      type: Date,
+    },
+
+    completedAt: {
+      type: Date,
+    },
+
+    durationMs: {
+      type: Number,
+    },
+
+    params: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    output: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    preState: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    postState: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    error: {
+      type: String,
+    },
+
+    timedOut: {
+      type: Boolean,
+      default: false,
+    },
+
+    evidence: [
+      {
+        type: String,
+      },
+    ],
+  },
+  {
+    _id: false,
+  }
+);
+
+const rollbackStepResultSchema = new mongoose.Schema(
+  {
+    stepId: String,
+
+    status: String,
+
+    result: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    error: String,
+
+    message: String,
+  },
+  {
+    _id: false,
+  }
+);
+
+const rollbackStateSchema = new mongoose.Schema(
+  {
+    strategy: String,
+
+    triggeredAt: Date,
+
+    completedAt: Date,
+
+    success: Boolean,
+
+    skipped: Boolean,
+
+    reason: String,
+
+    stepResults: [
+      rollbackStepResultSchema,
+    ],
+  },
+  {
+    _id: false,
+  }
+);
+
+const verificationCheckSchema = new mongoose.Schema(
+  {
+    id: String,
+
+    type: String,
+
+    result: String,
+
+    observedValue: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    expected: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    evidence: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    error: String,
+
+    durationMs: Number,
+
+    timestamp: String,
+  },
+  {
+    _id: false,
+  }
+);
+
+const verificationResultSchema = new mongoose.Schema(
+  {
+    passed: Boolean,
+
+    strategy: String,
+
+    summary: String,
+
+    skipped: Boolean,
+
+    checks: [
+      verificationCheckSchema,
+    ],
+  },
+  {
+    _id: false,
+  }
+);
+
+const policyDecisionSchema = new mongoose.Schema(
+  {
+    allowed: Boolean,
+
+    policyId: String,
+
+    reason: String,
+
+    decidedAt: Date,
+
+    decidedBy: String,
+  },
+  {
+    _id: false,
+  }
+);
+
+// ============================================================================
+// MAIN SCHEMA
+// ============================================================================
+
+const runbookExecutionSchema = new mongoose.Schema(
+  {
+    // -----------------------------------------------------------------------
+    // Execution identity
+    // -----------------------------------------------------------------------
+
+    executionId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+
+    correlationId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    // -----------------------------------------------------------------------
+    // Canonical ownership
+    // -----------------------------------------------------------------------
+
+    tenantId: {
+      type: String,
+      required: true,
+      trim: true,
+      lowercase: true,
+      index: true,
+    },
+
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+      index: true,
+    },
+
+    environmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Environment",
+      required: true,
+      index: true,
+    },
+
+    incidentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Incident",
+      default: null,
+      index: true,
+    },
+
+    /**
+     * Temporary compatibility field.
+     *
+     * Older execution code may still use orgId.
+     * New code should use organizationId.
+     */
+    orgId: {
+      type: String,
+      default: null,
+    },
+
+    // -----------------------------------------------------------------------
+    // Runbook identity
+    // -----------------------------------------------------------------------
+
+    runbookId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    runbookVersion: {
+      type: String,
+      required: true,
+    },
+
+    /**
+     * Immutable copy of the exact runbook executed.
+     */
+    runbookSnapshot: {
+      type: mongoose.Schema.Types.Mixed,
+      required: true,
+    },
+
+    runbookChecksum: {
+      type: String,
+      required: true,
+    },
+
+    versionRef: {
+      type: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Parameters
+    // -----------------------------------------------------------------------
+
+    resolvedParameters: [
+      resolvedParameterSchema,
+    ],
+
+    // -----------------------------------------------------------------------
+    // Policy / approval
+    // -----------------------------------------------------------------------
+
+    policyDecision: {
+      type: policyDecisionSchema,
+    },
+
+    approvalId: {
+      type: String,
+    },
+
+    approver: {
+      type: String,
+    },
+
+    approvedAt: {
+      type: Date,
+    },
+
+    // -----------------------------------------------------------------------
+    // Status
+    // -----------------------------------------------------------------------
+
+    status: {
+      type: String,
+      enum: EXECUTION_STATUS,
+      default: "CREATED",
+      required: true,
+    },
+
+    statusReason: {
+      type: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Timing
+    // -----------------------------------------------------------------------
+
+    startedAt: {
+      type: Date,
+    },
+
+    completedAt: {
+      type: Date,
+    },
+
+    durationMs: {
+      type: Number,
+    },
+
+    // -----------------------------------------------------------------------
+    // Initiator
+    // -----------------------------------------------------------------------
+
+    initiatedBy: {
+      type: String,
+    },
+
+    initiatorType: {
+      type: String,
+
+      enum: [
+        "user",
+        "agent",
+        "system",
+        "api",
+      ],
+
+      default: "api",
+    },
+
+    // -----------------------------------------------------------------------
+    // Execution trace
+    // -----------------------------------------------------------------------
+
+    stepAttempts: [
+      stepAttemptSchema,
+    ],
+
+    // -----------------------------------------------------------------------
+    // Verification
+    // -----------------------------------------------------------------------
+
+    verificationResult: {
+      type: verificationResultSchema,
+    },
+
+    // -----------------------------------------------------------------------
+    // Rollback
+    // -----------------------------------------------------------------------
+
+    rollbackState: {
+      type: rollbackStateSchema,
+    },
+
+    // -----------------------------------------------------------------------
+    // State capture
+    // -----------------------------------------------------------------------
+
+    preExecutionState: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    postExecutionState: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    // -----------------------------------------------------------------------
+    // Audit references
+    // -----------------------------------------------------------------------
+
+    auditEventIds: [
+      {
+        type: String,
+      },
+    ],
+
+    decisionTraceId: {
+      type: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Failure context
+    // -----------------------------------------------------------------------
+
+    failedStepId: {
+      type: String,
+    },
+
+    errorMessage: {
+      type: String,
+    },
+
+    errorCode: {
+      type: String,
+    },
+
+    // -----------------------------------------------------------------------
+    // Safety flags
+    // -----------------------------------------------------------------------
+
+    requiresHumanReview: {
+      type: Boolean,
+      default: false,
+    },
+
+    escalated: {
+      type: Boolean,
+      default: false,
+    },
+
+    escalatedAt: {
+      type: Date,
+    },
+
+    escalationReason: {
+      type: String,
+    },
   },
   {
     timestamps: true,
-    strict:     true,
-  },
+    strict: true,
+    versionKey: false,
+  }
 );
 
-// ── Indexes ────────────────────────────────────────────────────────────────
-runbookExecutionSchema.index({ tenantId: 1, runbookId: 1, status: 1 });
-runbookExecutionSchema.index({ tenantId: 1, incidentId: 1 });
+// ============================================================================
+// OWNERSHIP VALIDATION
+// ============================================================================
 
-// TTL — purge after 90 days (based on Mongoose timestamps createdAt)
+runbookExecutionSchema.pre(
+  "validate",
+  function validateExecutionOwnership(next) {
+    if (!this.organizationId) {
+      return next(
+        new Error(
+          "RunbookExecution requires organizationId"
+        )
+      );
+    }
+
+    if (!this.environmentId) {
+      return next(
+        new Error(
+          "RunbookExecution requires environmentId"
+        )
+      );
+    }
+
+    if (!this.tenantId) {
+      return next(
+        new Error(
+          "RunbookExecution requires tenantId"
+        )
+      );
+    }
+
+    return next();
+  }
+);
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+runbookExecutionSchema.index({
+  organizationId: 1,
+  environmentId: 1,
+  createdAt: -1,
+});
+
+runbookExecutionSchema.index({
+  organizationId: 1,
+  environmentId: 1,
+  runbookId: 1,
+  status: 1,
+});
+
+runbookExecutionSchema.index({
+  organizationId: 1,
+  environmentId: 1,
+  incidentId: 1,
+  createdAt: -1,
+});
+
+runbookExecutionSchema.index({
+  organizationId: 1,
+  environmentId: 1,
+  correlationId: 1,
+});
+
+runbookExecutionSchema.index({
+  organizationId: 1,
+  environmentId: 1,
+  status: 1,
+  createdAt: -1,
+});
+
+/**
+ * Compatibility lookup while tenant-scoped execution code
+ * is migrated to canonical environment ownership.
+ */
+runbookExecutionSchema.index({
+  tenantId: 1,
+  environmentId: 1,
+  runbookId: 1,
+  status: 1,
+});
+
+/**
+ * Execution history TTL — 90 days.
+ */
 runbookExecutionSchema.index(
-  { createdAt: 1 },
-  { expireAfterSeconds: 7_776_000 },
+  {
+    createdAt: 1,
+  },
+  {
+    expireAfterSeconds: 7776000,
+  }
 );
 
-// ── Statics ────────────────────────────────────────────────────────────────
-runbookExecutionSchema.statics.EXECUTION_STATUS = EXECUTION_STATUS;
-runbookExecutionSchema.statics.STEP_STATUS = STEP_STATUS;
+// ============================================================================
+// STATICS
+// ============================================================================
 
-module.exports = mongoose.model('RunbookExecution', runbookExecutionSchema);
-module.exports.EXECUTION_STATUS = EXECUTION_STATUS;
-module.exports.STEP_STATUS = STEP_STATUS;
+runbookExecutionSchema.statics.EXECUTION_STATUS =
+  EXECUTION_STATUS;
+
+runbookExecutionSchema.statics.STEP_STATUS =
+  STEP_STATUS;
+
+// ============================================================================
+// MODEL
+// ============================================================================
+
+const RunbookExecution =
+  mongoose.model(
+    "RunbookExecution",
+    runbookExecutionSchema
+  );
+
+module.exports =
+  RunbookExecution;
+
+module.exports.EXECUTION_STATUS =
+  EXECUTION_STATUS;
+
+module.exports.STEP_STATUS =
+  STEP_STATUS;

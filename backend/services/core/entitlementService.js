@@ -7,36 +7,115 @@ const {
 } = require("../../constants/entitlements");
 
 class EntitlementService {
-  static async getSubscription(organizationId) {
-    let subscription = await Subscription.findOne({
-      organizationId,
-    });
+  static createError(
+    message,
+    code,
+    status = 403,
+    metadata = {}
+  ) {
+    const error =
+      new Error(message);
+
+    error.code =
+      code;
+
+    error.status =
+      status;
+
+    Object.assign(
+      error,
+      metadata
+    );
+
+    return error;
+  }
+
+  static async getSubscription(
+    organizationId
+  ) {
+    let subscription =
+      await Subscription.findOne({
+        organizationId,
+      });
 
     if (!subscription) {
-      subscription = await Subscription.create({
-        organizationId,
-        plan: "developer",
-        status: "active",
-      });
+      subscription =
+        await Subscription.create({
+          organizationId,
+          plan:
+            "developer",
+          status:
+            "active",
+        });
     }
 
     return subscription;
   }
 
-  static async getPlan(organizationId) {
+  static assertSubscriptionUsable(
+    subscription
+  ) {
+    if (!subscription) {
+      throw this.createError(
+        "Subscription unavailable",
+        "SUBSCRIPTION_NOT_FOUND",
+        403
+      );
+    }
+
+    if (
+      subscription.status ===
+        "suspended" ||
+      subscription.status ===
+        "cancelled"
+    ) {
+      throw this.createError(
+        "Subscription is not active",
+        "SUBSCRIPTION_INACTIVE",
+        403,
+        {
+          subscriptionStatus:
+            subscription.status,
+        }
+      );
+    }
+
+    return true;
+  }
+
+  static async getPlan(
+    organizationId
+  ) {
     const subscription =
-      await this.getSubscription(organizationId);
+      await this.getSubscription(
+        organizationId
+      );
+
+    this.assertSubscriptionUsable(
+      subscription
+    );
 
     return subscription.plan;
   }
 
-  static async getEntitlements(organizationId) {
+  static async getEntitlements(
+    organizationId
+  ) {
     const subscription =
-      await this.getSubscription(organizationId);
+      await this.getSubscription(
+        organizationId
+      );
+
+    this.assertSubscriptionUsable(
+      subscription
+    );
 
     return (
-      PLAN_ENTITLEMENTS[subscription.plan] ||
-      PLAN_ENTITLEMENTS.developer
+      PLAN_ENTITLEMENTS[
+        subscription.plan
+      ] ||
+      PLAN_ENTITLEMENTS
+        .developer
     );
   }
 
@@ -45,19 +124,24 @@ class EntitlementService {
     entitlementKey
   ) {
     const entitlements =
-      await this.getEntitlements(organizationId);
+      await this.getEntitlements(
+        organizationId
+      );
 
-    return entitlements[entitlementKey];
+    return entitlements[
+      entitlementKey
+    ];
   }
 
   static async isEnabled(
     organizationId,
     entitlementKey
   ) {
-    const value = await this.getEntitlement(
-      organizationId,
-      entitlementKey
-    );
+    const value =
+      await this.getEntitlement(
+        organizationId,
+        entitlementKey
+      );
 
     return value === true;
   }
@@ -66,21 +150,40 @@ class EntitlementService {
     organizationId,
     entitlementKey
   ) {
-    const enabled = await this.isEnabled(
-      organizationId,
-      entitlementKey
-    );
-
-    if (!enabled) {
-      const error = new Error(
-        "This feature is not available on the current plan"
+    const subscription =
+      await this.getSubscription(
+        organizationId
       );
 
-      error.status = 403;
-      error.code = "ENTITLEMENT_REQUIRED";
-      error.entitlement = entitlementKey;
+    this.assertSubscriptionUsable(
+      subscription
+    );
 
-      throw error;
+    const entitlements =
+      PLAN_ENTITLEMENTS[
+        subscription.plan
+      ] ||
+      PLAN_ENTITLEMENTS
+        .developer;
+
+    const enabled =
+      entitlements[
+        entitlementKey
+      ] === true;
+
+    if (!enabled) {
+      throw this.createError(
+        "This feature is not available on the current plan",
+        "ENTITLEMENT_REQUIRED",
+        403,
+        {
+          entitlement:
+            entitlementKey,
+
+          plan:
+            subscription.plan,
+        }
+      );
     }
 
     return true;
@@ -92,37 +195,171 @@ class EntitlementService {
     currentUsage,
     requestedIncrease = 1
   ) {
-    const limit = await this.getEntitlement(
-      organizationId,
-      entitlementKey
+    const subscription =
+      await this.getSubscription(
+        organizationId
+      );
+
+    this.assertSubscriptionUsable(
+      subscription
     );
 
-    if (limit === null || limit === undefined) {
+    const entitlements =
+      PLAN_ENTITLEMENTS[
+        subscription.plan
+      ] ||
+      PLAN_ENTITLEMENTS
+        .developer;
+
+    const limit =
+      entitlements[
+        entitlementKey
+      ];
+
+    if (
+      limit === null ||
+      limit === undefined
+    ) {
       return true;
     }
 
-    if (typeof limit !== "number") {
-      throw new Error(
-        `Entitlement ${entitlementKey} is not a numeric limit`
+    if (
+      typeof limit !==
+      "number"
+    ) {
+      throw this.createError(
+        `Entitlement ${entitlementKey} is not a numeric limit`,
+        "INVALID_ENTITLEMENT_CONFIGURATION",
+        500,
+        {
+          entitlement:
+            entitlementKey,
+
+          plan:
+            subscription.plan,
+        }
       );
     }
 
-    if (currentUsage + requestedIncrease > limit) {
-      const error = new Error(
-        "Plan limit reached"
+    const normalizedCurrentUsage =
+      Number(
+        currentUsage
       );
 
-      error.status = 403;
-      error.code = "ENTITLEMENT_LIMIT_REACHED";
-      error.entitlement = entitlementKey;
-      error.limit = limit;
-      error.currentUsage = currentUsage;
+    const normalizedRequestedIncrease =
+      Number(
+        requestedIncrease
+      );
 
-      throw error;
+    if (
+      !Number.isFinite(
+        normalizedCurrentUsage
+      ) ||
+      normalizedCurrentUsage <
+        0
+    ) {
+      throw this.createError(
+        "Invalid current usage value",
+        "INVALID_USAGE_VALUE",
+        500,
+        {
+          entitlement:
+            entitlementKey,
+        }
+      );
+    }
+
+    if (
+      !Number.isFinite(
+        normalizedRequestedIncrease
+      ) ||
+      normalizedRequestedIncrease <
+        0
+    ) {
+      throw this.createError(
+        "Invalid requested increase value",
+        "INVALID_USAGE_INCREMENT",
+        500,
+        {
+          entitlement:
+            entitlementKey,
+        }
+      );
+    }
+
+    const projectedUsage =
+      normalizedCurrentUsage +
+      normalizedRequestedIncrease;
+
+    if (
+      projectedUsage >
+      limit
+    ) {
+      throw this.createError(
+        "Plan limit reached",
+        "ENTITLEMENT_LIMIT_REACHED",
+        403,
+        {
+          entitlement:
+            entitlementKey,
+
+          plan:
+            subscription.plan,
+
+          limit,
+
+          currentUsage:
+            normalizedCurrentUsage,
+
+          requestedIncrease:
+            normalizedRequestedIncrease,
+
+          projectedUsage,
+        }
+      );
     }
 
     return true;
   }
+
+  static async getEntitlementSnapshot(
+    organizationId
+  ) {
+    const subscription =
+      await this.getSubscription(
+        organizationId
+      );
+
+    this.assertSubscriptionUsable(
+      subscription
+    );
+
+    const entitlements =
+      PLAN_ENTITLEMENTS[
+        subscription.plan
+      ] ||
+      PLAN_ENTITLEMENTS
+        .developer;
+
+    return {
+      plan:
+        subscription.plan,
+
+      status:
+        subscription.status,
+
+      entitlements: {
+        ...entitlements,
+      },
+
+      startedAt:
+        subscription.startedAt,
+
+      endsAt:
+        subscription.endsAt,
+    };
+  }
 }
 
-module.exports = EntitlementService;
+module.exports =
+  EntitlementService;

@@ -7,79 +7,181 @@ const KubernetesClusterSnapshot =
   require("../../models/KubernetesClusterSnapshot");
 
 class KubernetesInventoryService {
-  async persistDiscovery({
-    tenantId,
-    organizationId,
-    integrationId,
-    discovery,
-    durationMs = null,
-  }) {
-    const now = new Date();
-
-    const resources = [
-      ...this._normaliseNamespaces(
-        discovery.namespaces || []
+async persistDiscovery({
+  tenantId,
+  organizationId,
+  environmentId,
+  integrationId,
+  discovery,
+  durationMs = null,
+}) {
+  if (!tenantId) {
+    throw Object.assign(
+      new Error(
+        "tenantId is required for Kubernetes inventory persistence"
       ),
-
-      ...this._normaliseDeployments(
-        discovery.deployments || []
-      ),
-
-      ...this._normaliseReplicaSets(
-        discovery.replicaSets || []
-      ),
-
-      ...this._normalisePods(
-        discovery.pods || []
-      ),
-
-      ...this._normaliseServices(
-        discovery.services || []
-      ),
-
-      ...this._normaliseNodes(
-        discovery.nodes || []
-      ),
-    ];
-
-    const seenKeys = [];
-
-    for (const resource of resources) {
-      if (!resource.name) {
-        continue;
+      {
+        code:
+          "K8S_TENANT_CONTEXT_REQUIRED",
       }
+    );
+  }
 
-      const key = {
-        tenantId,
-        integrationId,
-        kind: resource.kind,
-        namespace:
-          resource.namespace || null,
-        name: resource.name,
-      };
+  if (!organizationId) {
+    throw Object.assign(
+      new Error(
+        "organizationId is required for Kubernetes inventory persistence"
+      ),
+      {
+        code:
+          "K8S_ORGANIZATION_CONTEXT_REQUIRED",
+      }
+    );
+  }
 
-      seenKeys.push(key);
+  if (!environmentId) {
+    throw Object.assign(
+      new Error(
+        "environmentId is required for Kubernetes inventory persistence"
+      ),
+      {
+        code:
+          "K8S_ENVIRONMENT_CONTEXT_REQUIRED",
+      }
+    );
+  }
 
-      await KubernetesResource.findOneAndUpdate(
+  if (!integrationId) {
+    throw Object.assign(
+      new Error(
+        "integrationId is required for Kubernetes inventory persistence"
+      ),
+      {
+        code:
+          "K8S_INTEGRATION_CONTEXT_REQUIRED",
+      }
+    );
+  }
+
+  if (!discovery) {
+    throw Object.assign(
+      new Error(
+        "discovery payload is required"
+      ),
+      {
+        code:
+          "K8S_DISCOVERY_REQUIRED",
+      }
+    );
+  }
+
+  const now =
+    new Date();
+
+  const resources = [
+    ...this._normaliseNamespaces(
+      discovery.namespaces || []
+    ),
+
+    ...this._normaliseDeployments(
+      discovery.deployments || []
+    ),
+
+    ...this._normaliseReplicaSets(
+      discovery.replicaSets || []
+    ),
+
+    ...this._normalisePods(
+      discovery.pods || []
+    ),
+
+    ...this._normaliseServices(
+      discovery.services || []
+    ),
+
+    ...this._normaliseNodes(
+      discovery.nodes || []
+    ),
+  ];
+
+  /**
+   * Keep only the canonical resource identity fields
+   * needed to determine whether an active resource
+   * disappeared from the latest discovery.
+   */
+  const seenKeys =
+    [];
+
+  for (
+    const resource
+    of resources
+  ) {
+    if (!resource.name) {
+      continue;
+    }
+
+    const key = {
+      organizationId,
+
+      environmentId,
+
+      integrationId,
+
+      kind:
+        resource.kind,
+
+      namespace:
+        resource.namespace ||
+        null,
+
+      name:
+        resource.name,
+    };
+
+    seenKeys.push({
+      kind:
+        resource.kind,
+
+      namespace:
+        resource.namespace ||
+        null,
+
+      name:
+        resource.name,
+    });
+
+    await KubernetesResource
+      .findOneAndUpdate(
         key,
         {
           $set: {
+            tenantId,
+
             organizationId,
 
+            environmentId,
+
+            integrationId,
+
             uid:
-              resource.uid || null,
+              resource.uid ||
+              null,
 
             labels:
-              resource.labels || {},
+              resource.labels ||
+              {},
 
             metadata:
-              resource.metadata || {},
+              resource.metadata ||
+              {},
 
             status:
-              resource.status || {},
+              resource.status ||
+              {},
 
             spec:
-              resource.spec || {},
+              resource.spec ||
+              {},
 
             discoveredAt:
               now,
@@ -102,67 +204,75 @@ class KubernetesInventoryService {
 
           new:
             true,
+
+          setDefaultsOnInsert:
+            true,
         }
       );
-    }
+  }
 
-    /**
-     * Resources that disappear from a later discovery are not
-     * deleted. They are retained for historical incident context
-     * and marked inactive.
-     */
-    const activeResources =
-      await KubernetesResource.find({
-        tenantId,
+  /**
+   * Existing resources that disappeared from this exact
+   * environment + integration become inactive.
+   *
+   * We never inspect inventory belonging to another
+   * environment while performing stale-resource cleanup.
+   */
+  const activeResources =
+    await KubernetesResource
+      .find({
+        organizationId,
+
+        environmentId,
+
         integrationId,
-        active: true,
+
+        active:
+          true,
       });
 
-    for (
-      const existing
-      of activeResources
-    ) {
-      const stillPresent =
-        seenKeys.some(
-          (key) =>
-            String(
-              key.tenantId
-            ) ===
-              String(
-                existing.tenantId
-              ) &&
-            String(
-              key.integrationId
-            ) ===
-              String(
-                existing.integrationId
-              ) &&
-            key.kind ===
-              existing.kind &&
+  for (
+    const existing
+    of activeResources
+  ) {
+    const stillPresent =
+      seenKeys.some(
+        (key) =>
+          key.kind ===
+            existing.kind &&
+          (
+            key.namespace ||
+            null
+          ) ===
             (
-              key.namespace ||
+              existing.namespace ||
               null
-            ) ===
-              (
-                existing.namespace ||
-                null
-              ) &&
-            key.name ===
-              existing.name
-        );
+            ) &&
+          key.name ===
+            existing.name
+      );
 
-      if (!stillPresent) {
-        existing.active =
-          false;
+    if (!stillPresent) {
+      existing.active =
+        false;
 
-        await existing.save();
-      }
+      await existing.save();
     }
+  }
 
-    const snapshot =
-      await KubernetesClusterSnapshot.create({
+  /**
+   * Every discovery produces an immutable environment-scoped
+   * cluster snapshot.
+   */
+  const snapshot =
+    await KubernetesClusterSnapshot
+      .create({
         tenantId,
+
         organizationId,
+
+        environmentId,
+
         integrationId,
 
         discoveredAt:
@@ -219,21 +329,24 @@ class KubernetesInventoryService {
           null,
       });
 
-    return {
-      snapshotId:
-        snapshot._id,
+  return {
+    snapshotId:
+      snapshot._id,
 
-      resourceCount:
-        resources.length,
+    environmentId:
+      snapshot.environmentId,
 
-      activeResourceCount:
-        seenKeys.length,
+    resourceCount:
+      resources.length,
 
-      summary:
-        discovery.summary || {},
-    };
-  }
+    activeResourceCount:
+      seenKeys.length,
 
+    summary:
+      discovery.summary ||
+      {},
+  };
+}
   // ───────────────────────────────────────────────────────────────────────────
   // Namespaces
   // ───────────────────────────────────────────────────────────────────────────

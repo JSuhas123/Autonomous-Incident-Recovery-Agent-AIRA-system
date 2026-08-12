@@ -1,5 +1,71 @@
 'use strict';
+// ── Mock PlaybookExecution persistence ─────────────────────────────────────
+//
+// PlaybookExecutionService now persists forensic execution records.
+// This is a unit test, so MongoDB must not be required.
+//
+// The mock below behaves like the subset of a Mongoose document that the
+// execution service uses: create(), save(), markModified(), toObject().
 
+jest.mock('../../models/PlaybookExecution', () => {
+  let sequence = 0;
+
+  function createMockDocument(data) {
+    const document = {
+      ...data,
+
+      _id: `mock-playbook-exec-${++sequence}`,
+
+      createdAt:
+        data.createdAt ||
+        new Date(),
+
+      updatedAt:
+        data.updatedAt ||
+        new Date(),
+
+      async save() {
+        this.updatedAt =
+          new Date();
+
+        return this;
+      },
+
+      markModified() {
+        // No-op for in-memory unit-test document.
+      },
+
+      toObject() {
+        const plain = {};
+
+        for (
+          const [key, value]
+          of Object.entries(this)
+        ) {
+          if (
+            typeof value !==
+            'function'
+          ) {
+            plain[key] =
+              value;
+          }
+        }
+
+        return plain;
+      },
+    };
+
+    return document;
+  }
+
+  return {
+    create:
+      jest.fn(
+        async (data) =>
+          createMockDocument(data)
+      ),
+  };
+});
 /**
  * CrashLoopBackOff Golden Path Tests — Phase 4
  *
@@ -174,10 +240,44 @@ function makeSvc(playbookOverride = {}, rbExecOverride = {}, rbRegOverride = {})
   });
 }
 
+// ── Canonical ownership test fixtures ──────────────────────────────────────
+//
+// These are valid MongoDB ObjectId-shaped strings.
+// PlaybookExecution now requires canonical organization/environment ownership,
+// so every execution in this golden-path suite uses the same deterministic IDs.
+
+const TEST_ORGANIZATION_ID =
+  '64b000000000000000000001';
+
+const TEST_ENVIRONMENT_ID =
+  '64b000000000000000000002';
+
+const TEST_INCIDENT_ID =
+  '64b000000000000000000003';
+
 const EXEC_OPTS = {
-  tenantId:      'tenant-test',
-  incidentId:    'INC-001',
-  correlationId: 'CORR-001',
+  tenantId: 'tenant-test',
+
+  organizationId:
+    TEST_ORGANIZATION_ID,
+
+  environmentId:
+    TEST_ENVIRONMENT_ID,
+
+  incidentId:
+    TEST_INCIDENT_ID,
+
+  correlationId:
+    'test-correlation-id',
+
+  initiatedBy:
+    'test-user',
+
+  initiatorType:
+    'user',
+
+  dryRun:
+    true,
 };
 
 // ── Tests ──────────────────────────────────────────────────────────────────

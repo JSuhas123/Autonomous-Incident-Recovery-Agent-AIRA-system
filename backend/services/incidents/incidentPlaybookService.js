@@ -1,198 +1,777 @@
-'use strict';
+"use strict";
 
 /**
  * Incident Playbook Integration Service
  *
- * Connects the incident lifecycle to the Playbook Matcher and Execution Service.
- * This is the single bridge between incidents and the Playbook Platform V1.
+ * Single bridge between:
  *
- * Architecture invariant: This service calls matchPlaybooks and the
- * PlaybookExecutionService. It never calls ActionHandlerRegistry directly.
+ * Incident
+ *   ↓
+ * Playbook matching
+ *   ↓
+ * Playbook execution
+ *   ↓
+ * Runbook execution
+ *
+ * Canonical ownership boundary:
+ *
+ * tenantId
+ * + organizationId
+ * + environmentId
+ *
+ * This service NEVER calls ActionHandlerRegistry directly.
  */
 
-const { matchPlaybooks, resolveMatchOutcome } = require('../../playbooks/matching/playbookMatcher');
-const { getPlaybookRegistry }                 = require('../../playbooks/registry/playbookRegistry');
-const { getPlaybookExecutionService }         = require('../../playbooks/execution/playbookExecutionService');
-const { PLAYBOOK_LIFECYCLE }                  = require('../../constants/playbook');
-const { EXECUTION_OUTCOME }                   = require('../../constants/executionOutcomes');
+const {
+  matchPlaybooks,
+  resolveMatchOutcome,
+} =
+  require(
+    "../../playbooks/matching/playbookMatcher"
+  );
+
+const {
+  getPlaybookRegistry,
+} =
+  require(
+    "../../playbooks/registry/playbookRegistry"
+  );
+
+const {
+  getPlaybookExecutionService,
+} =
+  require(
+    "../../playbooks/execution/playbookExecutionService"
+  );
+
+const {
+  PLAYBOOK_LIFECYCLE,
+} =
+  require(
+    "../../constants/playbook"
+  );
+
+const {
+  EXECUTION_OUTCOME,
+} =
+  require(
+    "../../constants/executionOutcomes"
+  );
 
 class IncidentPlaybookService {
+  // ==========================================================================
+  // CONTEXT
+  // ==========================================================================
+
+  _resolveScope(
+    incident,
+    options = {}
+  ) {
+    const tenantId =
+      options.tenantId ||
+      incident.tenantId ||
+      null;
+
+    const organizationId =
+      options.organizationId ||
+      incident.organizationId ||
+      null;
+
+    const environmentId =
+      options.environmentId ||
+      incident.environmentId ||
+      null;
+
+    if (!tenantId) {
+      const error =
+        new Error(
+          "tenantId is required for incident playbook operations"
+        );
+
+      error.status =
+        400;
+
+      error.code =
+        "INCIDENT_PLAYBOOK_TENANT_REQUIRED";
+
+      throw error;
+    }
+
+    if (!organizationId) {
+      const error =
+        new Error(
+          "organizationId is required for incident playbook operations"
+        );
+
+      error.status =
+        400;
+
+      error.code =
+        "INCIDENT_PLAYBOOK_ORGANIZATION_REQUIRED";
+
+      throw error;
+    }
+
+    if (!environmentId) {
+      const error =
+        new Error(
+          "environmentId is required for incident playbook operations"
+        );
+
+      error.status =
+        400;
+
+      error.code =
+        "INCIDENT_PLAYBOOK_ENVIRONMENT_REQUIRED";
+
+      throw error;
+    }
+
+    return {
+      tenantId,
+
+      organizationId,
+
+      environmentId,
+
+      incidentId:
+        incident.id ||
+        incident._id ||
+        options.incidentId ||
+        null,
+    };
+  }
+
+  // ==========================================================================
+  // ANALYSE
+  // ==========================================================================
 
   /**
    * Find candidate playbooks for an incident.
-   * Does NOT execute. Returns match analysis only.
    *
-   * @param {object} incident - Incident document (or plain object from API)
-   * @param {object} options  - { tenantId, maxResults, minScore }
-   * @returns {Promise<MatchAnalysis>}
+   * Does NOT execute anything.
    */
-  async analyseIncident(incident, options = {}) {
-    const tenantId = options.tenantId || incident.tenantId;
-    const reg = getPlaybookRegistry();
+  async analyseIncident(
+    incident,
+    options = {}
+  ) {
+    const scope =
+      this._resolveScope(
+        incident,
+        options
+      );
 
-    const activePlaybooks = await reg.list({ tenantId, lifecycle: PLAYBOOK_LIFECYCLE.ACTIVE });
+    const registry =
+      getPlaybookRegistry();
 
-    const incidentCtx = _normaliseIncident(incident);
-    const matchResults = matchPlaybooks(activePlaybooks, incidentCtx, {
-      minScore:   options.minScore,
-      maxResults: options.maxResults,
-    });
+    /**
+     * Tenant-owned playbooks are now environment-scoped.
+     *
+     * The registry will subsequently be updated so this
+     * query returns:
+     *
+     * - global SYSTEM playbooks
+     * - tenant playbooks belonging to this environment
+     *
+     * and nothing from another environment.
+     */
+    const activePlaybooks =
+      await registry.list({
+        tenantId:
+          scope.tenantId,
 
-    const outcome = resolveMatchOutcome(matchResults, incidentCtx);
+        organizationId:
+          scope.organizationId,
 
-    const eligible = matchResults.filter(r => r.eligible);
+        environmentId:
+          scope.environmentId,
+
+        lifecycle:
+          PLAYBOOK_LIFECYCLE
+            .ACTIVE,
+      });
+
+    const incidentContext =
+      _normaliseIncident(
+        incident
+      );
+
+    const matchResults =
+      matchPlaybooks(
+        activePlaybooks,
+        incidentContext,
+        {
+          minScore:
+            options.minScore,
+
+          maxResults:
+            options.maxResults,
+        }
+      );
+
+    const outcome =
+      resolveMatchOutcome(
+        matchResults,
+        incidentContext
+      );
+
+    const eligible =
+      matchResults.filter(
+        (result) =>
+          result.eligible
+      );
 
     return {
-      incidentId:     incident.id || incident._id,
-      candidateCount: matchResults.length,
-      eligibleCount:  eligible.length,
-      outcome:        outcome.outcome,
-      outcomeReason:  outcome.reason || null,
-      candidates:     matchResults.map(_serialiseMatch),
-      eligible:       eligible.map(_serialiseMatch),
-      best:           outcome.best ? _serialiseMatch(outcome.best) : null,
-      disqualifications: outcome.disqualifications || [],
-      missingEvidence:   outcome.missingEvidence   || [],
-      escalationRecommendation: outcome.escalationRecommendation || null,
-      analysedAt:     new Date().toISOString(),
+      incidentId:
+        scope.incidentId,
+
+      organizationId:
+        scope.organizationId,
+
+      environmentId:
+        scope.environmentId,
+
+      candidateCount:
+        matchResults.length,
+
+      eligibleCount:
+        eligible.length,
+
+      outcome:
+        outcome.outcome,
+
+      outcomeReason:
+        outcome.reason ||
+        null,
+
+      candidates:
+        matchResults.map(
+          _serialiseMatch
+        ),
+
+      eligible:
+        eligible.map(
+          _serialiseMatch
+        ),
+
+      best:
+        outcome.best
+          ? _serialiseMatch(
+              outcome.best
+            )
+          : null,
+
+      disqualifications:
+        outcome.disqualifications ||
+        [],
+
+      missingEvidence:
+        outcome.missingEvidence ||
+        [],
+
+      escalationRecommendation:
+        outcome
+          .escalationRecommendation ||
+        null,
+
+      analysedAt:
+        new Date()
+          .toISOString(),
     };
   }
+
+  // ==========================================================================
+  // EXECUTE
+  // ==========================================================================
 
   /**
    * Execute the best matching playbook for an incident.
-   *
-   * @param {object} incident
-   * @param {object} options - { tenantId, correlationId, initiatedBy, dryRun, policyDecision }
-   * @returns {Promise<ExecutionResult>}
    */
-  async executeForIncident(incident, options = {}) {
-    const analysis = await this.analyseIncident(incident, options);
+  async executeForIncident(
+    incident,
+    options = {}
+  ) {
+    const scope =
+      this._resolveScope(
+        incident,
+        options
+      );
 
-    if (analysis.outcome !== EXECUTION_OUTCOME.AUTO_RESOLVED || !analysis.best) {
+    const analysis =
+      await this.analyseIncident(
+        incident,
+        {
+          ...options,
+
+          tenantId:
+            scope.tenantId,
+
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+        }
+      );
+
+    if (
+      analysis.outcome !==
+        EXECUTION_OUTCOME
+          .AUTO_RESOLVED ||
+      !analysis.best
+    ) {
       return {
-        executed:   false,
-        outcome:    analysis.outcome,
-        reason:     analysis.outcomeReason,
+        executed:
+          false,
+
+        outcome:
+          analysis.outcome,
+
+        reason:
+          analysis.outcomeReason,
+
         analysis,
-        execution:  null,
+
+        execution:
+          null,
       };
     }
 
-    const { playbookId, semver } = analysis.best;
-    const svc = getPlaybookExecutionService();
-
-    const execution = await svc.execute(playbookId, semver, _normaliseIncident(incident), {
-      tenantId:       options.tenantId || incident.tenantId,
-      incidentId:     incident.id || incident._id,
-      correlationId:  options.correlationId,
-      initiatedBy:    options.initiatedBy,
-      dryRun:         !!options.dryRun,
-      policyDecision: options.policyDecision,
-    });
-
-    return {
-      executed:   true,
-      outcome:    analysis.outcome,
+    const {
       playbookId,
       semver,
+    } =
+      analysis.best;
+
+    const service =
+      getPlaybookExecutionService();
+
+    const incidentContext =
+      _normaliseIncident(
+        incident
+      );
+
+    /**
+     * Critical ownership propagation.
+     *
+     * From this point onward every execution layer receives
+     * exactly the same organization/environment boundary.
+     */
+    const execution =
+      await service.execute(
+        playbookId,
+        semver,
+        incidentContext,
+        {
+          tenantId:
+            scope.tenantId,
+
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          incidentId:
+            scope.incidentId,
+
+          correlationId:
+            options.correlationId,
+
+          initiatedBy:
+            options.initiatedBy,
+
+          initiatorType:
+            options.initiatorType ||
+            "system",
+
+          dryRun:
+            Boolean(
+              options.dryRun
+            ),
+
+          policyDecision:
+            options.policyDecision,
+
+          approvalId:
+            options.approvalId,
+
+          approver:
+            options.approver,
+
+          context: {
+            ...(
+              options.context ||
+              {}
+            ),
+
+            tenantId:
+              scope.tenantId,
+
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+
+            incidentId:
+              scope.incidentId,
+          },
+        }
+      );
+
+    return {
+      executed:
+        true,
+
+      outcome:
+        analysis.outcome,
+
+      playbookId,
+
+      semver,
+
+      organizationId:
+        scope.organizationId,
+
+      environmentId:
+        scope.environmentId,
+
       analysis,
-      execution:  _serialiseExecution(execution),
+
+      execution:
+        _serialiseExecution(
+          execution
+        ),
     };
   }
 }
 
-// ── Normalisers ────────────────────────────────────────────────────────────
+// ============================================================================
+// INCIDENT NORMALISATION
+// ============================================================================
 
-function _normaliseIncident(incident) {
-  // Map Mongoose Incident doc or plain API object to the format
-  // the Playbook Matcher and Parameter Mapper expect.
+function _normaliseIncident(
+  incident
+) {
   return {
-    id:          incident.id || (incident._id ? incident._id.toString() : undefined),
-    type:        incident.incidentType || incident.type || 'unknown',
-    severity:    incident.severity,
-    provider:    incident.provider || _inferProvider(incident),
-    environment: incident.environment || incident.scope?.environment,
-    resource:    incident.resource || _extractResource(incident),
-    evidence:    incident.evidence || {},
-    signal:      incident.signal   || {},
-    confidence:  incident.confidence || incident.confidenceScore || 0,
-    tags:        incident.tags || [],
-    createdAt:   incident.createdAt,
-    title:       incident.title || '',
-    description: incident.description || '',
+    id:
+      incident.id ||
+      (
+        incident._id
+          ? incident._id
+              .toString()
+          : undefined
+      ),
+
+    organizationId:
+      incident.organizationId,
+
+    environmentId:
+      incident.environmentId,
+
+    serviceId:
+      incident.serviceId,
+
+    monitorId:
+      incident.monitorId,
+
+    type:
+      incident.incidentType ||
+      incident.type ||
+      "unknown",
+
+    severity:
+      incident.severity,
+
+    provider:
+      incident.provider ||
+      _inferProvider(
+        incident
+      ),
+
+    /**
+     * Human-readable environment classification used
+     * by playbook applicability matching.
+     *
+     * environmentId remains the ownership boundary.
+     */
+    environment:
+      incident.environment ||
+      incident.scope
+        ?.environment,
+
+    resource:
+      incident.resource ||
+      _extractResource(
+        incident
+      ),
+
+    evidence:
+      incident.evidence ||
+      {},
+
+    signal:
+      incident.signal ||
+      {},
+
+    confidence:
+      incident.confidence ??
+      incident.confidenceScore ??
+      0,
+
+    tags:
+      incident.tags ||
+      [],
+
+    createdAt:
+      incident.createdAt,
+
+    detectedAt:
+      incident.detectedAt,
+
+    title:
+      incident.title ||
+      "",
+
+    description:
+      incident.description ||
+      "",
   };
 }
 
-function _inferProvider(incident) {
-  if (!incident.tags) return undefined;
-  if (incident.tags.some(t => /^kubernetes|k8s/i.test(t))) return 'kubernetes';
-  if (incident.tags.some(t => /^database|db/i.test(t))) return 'database';
+// ============================================================================
+// PROVIDER / RESOURCE HELPERS
+// ============================================================================
+
+function _inferProvider(
+  incident
+) {
+  if (
+    !Array.isArray(
+      incident.tags
+    )
+  ) {
+    return undefined;
+  }
+
+  if (
+    incident.tags.some(
+      (tag) =>
+        /^kubernetes|k8s/i
+          .test(tag)
+    )
+  ) {
+    return "kubernetes";
+  }
+
+  if (
+    incident.tags.some(
+      (tag) =>
+        /^database|db/i
+          .test(tag)
+    )
+  ) {
+    return "database";
+  }
+
   return undefined;
 }
 
-function _extractResource(incident) {
-  // Try to build resource from evidence or signal fields
+function _extractResource(
+  incident
+) {
   return {
-    pod:        incident.evidence?.pod        || incident.signal?.pod_name,
-    namespace:  incident.evidence?.namespace  || incident.signal?.namespace,
-    deployment: incident.evidence?.deployment || incident.signal?.deployment,
-    cluster:    incident.evidence?.cluster    || incident.signal?.cluster,
-    service:    incident.serviceId            || incident.evidence?.service,
+    pod:
+      incident.evidence
+        ?.pod ||
+      incident.signal
+        ?.pod_name,
+
+    namespace:
+      incident.evidence
+        ?.namespace ||
+      incident.signal
+        ?.namespace,
+
+    deployment:
+      incident.evidence
+        ?.deployment ||
+      incident.signal
+        ?.deployment,
+
+    cluster:
+      incident.evidence
+        ?.cluster ||
+      incident.signal
+        ?.cluster,
+
+    service:
+      incident.serviceId ||
+      incident.evidence
+        ?.service,
   };
 }
 
-// ── Serialisers ─────────────────────────────────────────────────────────────
+// ============================================================================
+// SERIALISERS
+// ============================================================================
 
-function _serialiseMatch(match) {
+function _serialiseMatch(
+  match
+) {
   return {
-    playbookId:        match.playbookId,
-    semver:            match.semver,
-    name:              match.name,
-    score:             match.score,
-    eligible:          match.eligible,
-    approvalMode:      match.approvalMode,
-    riskLevel:         match.riskLevel,
-    matchReasons:      match.matchReasons      || [],
-    disqualifications: match.disqualifications || [],
+    playbookId:
+      match.playbookId,
+
+    semver:
+      match.semver,
+
+    name:
+      match.name,
+
+    score:
+      match.score,
+
+    eligible:
+      match.eligible,
+
+    approvalMode:
+      match.approvalMode,
+
+    riskLevel:
+      match.riskLevel,
+
+    matchReasons:
+      match.matchReasons ||
+      [],
+
+    disqualifications:
+      match.disqualifications ||
+      [],
   };
 }
 
-function _serialiseExecution(exec) {
-  if (!exec) return null;
+function _serialiseExecution(
+  execution
+) {
+  if (!execution) {
+    return null;
+  }
+
   return {
-    executionId:    exec.executionId,
-    playbookId:     exec.playbookId,
-    semver:         exec.semver,
-    status:         exec.status,
-    startedAt:      exec.startedAt,
-    completedAt:    exec.completedAt,
-    durationMs:     exec.durationMs,
-    errorCode:      exec.errorCode    || null,
-    errorMessage:   exec.errorMessage || null,
-    stageExecutions: (exec.stageExecutions || []).map(s => ({
-      stageId:   s.stageId,
-      stageName: s.stageName,
-      stageType: s.stageType,
-      status:    s.status,
-      durationMs: s.durationMs,
-      runbookExecutions: (s.runbookExecutions || []).map(r => ({
-        runbookId:   r.runbookId,
-        executionId: r.executionId,
-        status:      r.status,
-        durationMs:  r.durationMs,
-        error:       r.error || null,
-      })),
-    })),
-    outcome: exec.outcome || null,
+    executionId:
+      execution.executionId,
+
+    playbookId:
+      execution.playbookId,
+
+    /**
+     * PlaybookExecution model stores this as playbookVersion.
+     */
+    semver:
+      execution.playbookVersion ||
+      execution.semver,
+
+    organizationId:
+      execution.organizationId,
+
+    environmentId:
+      execution.environmentId,
+
+    incidentId:
+      execution.incidentId,
+
+    status:
+      execution.status,
+
+    startedAt:
+      execution.startedAt,
+
+    completedAt:
+      execution.completedAt,
+
+    durationMs:
+      execution.durationMs,
+
+    errorCode:
+      execution.errorCode ||
+      null,
+
+    errorMessage:
+      execution.errorMessage ||
+      null,
+
+    stageExecutions:
+      (
+        execution.stageExecutions ||
+        []
+      ).map(
+        (stage) => ({
+          stageId:
+            stage.stageId,
+
+          stageName:
+            stage.stageName,
+
+          stageType:
+            stage.stageType,
+
+          status:
+            stage.status,
+
+          durationMs:
+            stage.durationMs,
+
+          runbookExecutions:
+            (
+              stage.runbookExecutions ||
+              []
+            ).map(
+              (runbook) => ({
+                runbookId:
+                  runbook.runbookId,
+
+                executionId:
+                  runbook.executionId,
+
+                status:
+                  runbook.status,
+
+                durationMs:
+                  runbook.durationMs,
+
+                error:
+                  runbook.error ||
+                  null,
+              })
+            ),
+        })
+      ),
+
+    outcome:
+      execution.outcome ||
+      null,
   };
 }
 
-// ── Singleton ─────────────────────────────────────────────────────────────
+// ============================================================================
+// SINGLETON
+// ============================================================================
 
-let _instance = null;
+let instance =
+  null;
+
 function getIncidentPlaybookService() {
-  if (!_instance) _instance = new IncidentPlaybookService();
-  return _instance;
+  if (!instance) {
+    instance =
+      new IncidentPlaybookService();
+  }
+
+  return instance;
 }
 
-module.exports = { IncidentPlaybookService, getIncidentPlaybookService };
+module.exports = {
+  IncidentPlaybookService,
+  getIncidentPlaybookService,
+};
