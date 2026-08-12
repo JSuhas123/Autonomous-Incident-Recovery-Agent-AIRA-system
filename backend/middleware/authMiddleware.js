@@ -1,177 +1,636 @@
-const TenantConfig = require("../models/TenantConfig");
+"use strict";
+
 const crypto = require("crypto");
 
-function hashWithSecret(value, secret) {
+const TenantConfig = require("../models/TenantConfig");
+const Organization = require("../models/Organization");
+
+const MAX_TIMESTAMP_AGE_MS =
+  5 * 60 * 1000;
+
+/**
+ * SHA-256 helper used for API-key credential verification.
+ *
+ * This matches the hashing scheme currently used by
+ * tenantService when creating/rotating machine credentials.
+ */
+function sha256(value) {
   return crypto
-    .createHmac("sha256", secret || "")
+    .createHash("sha256")
+    .update(String(value))
+    .digest("hex");
+}
+
+/**
+ * Generate HMAC signature for request verification.
+ */
+function createRequestSignature(
+  value,
+  secret
+) {
+  return crypto
+    .createHmac(
+      "sha256",
+      secret
+    )
     .update(value)
     .digest("hex");
 }
 
-function verifyTimestamp(timestamp, maxAgeMs = 5 * 60 * 1000) {
-  const now = Date.now();
-  const age = Math.abs(now - parseInt(timestamp));
+function verifyTimestamp(
+  timestamp,
+  maxAgeMs = MAX_TIMESTAMP_AGE_MS
+) {
+  const parsedTimestamp =
+    Number(timestamp);
+
+  if (
+    !Number.isFinite(parsedTimestamp) ||
+    !Number.isInteger(parsedTimestamp)
+  ) {
+    return false;
+  }
+
+  const age =
+    Math.abs(
+      Date.now() -
+        parsedTimestamp
+    );
+
   return age <= maxAgeMs;
 }
 
-async function authMiddleware(req, res, next) {
-  try {
-    // OPTIONS preflight must never be blocked by authentication
-    if (req.method === "OPTIONS") return next();
+/**
+ * Timing-safe string comparison.
+ *
+ * Returns false instead of throwing when lengths differ.
+ */
+function timingSafeEqualString(
+  left,
+  right
+) {
+  if (
+    typeof left !== "string" ||
+    typeof right !== "string"
+  ) {
+    return false;
+  }
 
-    // Extract tenantId from URL
-    const tenantId = req.params.tenantId;
+  const leftBuffer =
+    Buffer.from(
+      left,
+      "utf8"
+    );
+
+  const rightBuffer =
+    Buffer.from(
+      right,
+      "utf8"
+    );
+
+  if (
+    leftBuffer.length !==
+    rightBuffer.length
+  ) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    leftBuffer,
+    rightBuffer
+  );
+}
+
+async function authMiddleware(
+  req,
+  res,
+  next
+) {
+  try {
+    /*
+     * CORS preflight requests must not
+     * be blocked by authentication.
+     */
+    if (req.method === "OPTIONS") {
+      return next();
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * TENANT IDENTIFICATION
+     * ----------------------------------------------------------------
+     *
+     * Legacy machine-auth routes currently identify
+     * the tenant using:
+     *
+     * /tenants/:tenantId/...
+     */
+    const tenantId =
+      req.params.tenantId;
+
     if (!tenantId) {
       return res.status(400).json({
-        error: "Missing tenantId in URL path",
-        code: "MISSING_TENANT_ID",
+        error:
+          "Missing tenantId in URL path",
+        code:
+          "MISSING_TENANT_ID",
       });
     }
 
-    // Get Authorization header
-    const authHeader = req.headers["authorization"];
+    /*
+     * ----------------------------------------------------------------
+     * AUTHORIZATION HEADER
+     * ----------------------------------------------------------------
+     *
+     * Current protocol:
+     *
+     * Authorization: Bearer keyId:secret
+     *
+     * The supplied secret is verified against
+     * TenantConfig.apiKeys.secretHash below.
+     */
+    const authHeader =
+      req.headers.authorization;
+
     if (!authHeader) {
       return res.status(401).json({
-        error: "Missing Authorization header",
-        code: "MISSING_AUTH_HEADER",
+        error:
+          "Missing Authorization header",
+        code:
+          "MISSING_AUTH_HEADER",
       });
     }
 
-    // Parse "Bearer keyId:secret" format
-    const [scheme, credentials] = authHeader.split(" ");
+    const firstSpaceIndex =
+      authHeader.indexOf(" ");
+
+    if (firstSpaceIndex === -1) {
+      return res.status(401).json({
+        error:
+          "Malformed Authorization header",
+        code:
+          "MALFORMED_AUTH_HEADER",
+      });
+    }
+
+    const scheme =
+      authHeader.slice(
+        0,
+        firstSpaceIndex
+      );
+
+    const credentials =
+      authHeader
+        .slice(
+          firstSpaceIndex + 1
+        )
+        .trim();
+
     if (scheme !== "Bearer") {
       return res.status(401).json({
-        error: `Invalid auth scheme "${scheme}", expected "Bearer"`,
-        code: "INVALID_AUTH_SCHEME",
+        error:
+          `Invalid auth scheme "${scheme}", expected "Bearer"`,
+        code:
+          "INVALID_AUTH_SCHEME",
       });
     }
 
-    if (!credentials || !credentials.includes(":")) {
+    if (
+      !credentials ||
+      !credentials.includes(":")
+    ) {
       return res.status(401).json({
-        error: "Malformed credentials: expected keyId:secret",
-        code: "MALFORMED_CREDENTIALS",
+        error:
+          "Malformed credentials: expected keyId:secret",
+        code:
+          "MALFORMED_CREDENTIALS",
       });
     }
 
-    const [keyId, secret] = credentials.split(":");
+    /*
+     * Split only on the first colon so secrets
+     * containing colons are not truncated.
+     */
+    const separatorIndex =
+      credentials.indexOf(":");
+
+    const keyId =
+      credentials
+        .slice(
+          0,
+          separatorIndex
+        )
+        .trim();
+
+    const secret =
+      credentials.slice(
+        separatorIndex + 1
+      );
+
     if (!keyId || !secret) {
       return res.status(401).json({
-        error: "Missing keyId or secret",
-        code: "MISSING_CREDENTIALS",
+        error:
+          "Missing keyId or secret",
+        code:
+          "MISSING_CREDENTIALS",
       });
     }
 
-    // Verify timestamp freshness
-    const timestamp = req.headers["x-timestamp"];
+    /*
+     * ----------------------------------------------------------------
+     * TIMESTAMP / REPLAY WINDOW
+     * ----------------------------------------------------------------
+     */
+    const timestamp =
+      req.headers["x-timestamp"];
+
     if (!timestamp) {
       return res.status(400).json({
-        error: "Missing X-Timestamp header",
-        code: "MISSING_TIMESTAMP",
+        error:
+          "Missing X-Timestamp header",
+        code:
+          "MISSING_TIMESTAMP",
       });
     }
 
-    if (!verifyTimestamp(timestamp)) {
+    if (
+      !verifyTimestamp(
+        timestamp
+      )
+    ) {
       return res.status(401).json({
-        error: "Request timestamp too old (max 5 minutes)",
-        code: "STALE_TIMESTAMP",
+        error:
+          "Invalid or stale request timestamp",
+        code:
+          "STALE_TIMESTAMP",
       });
     }
 
-    // Verify idempotency key (required only for state-changing methods)
-    const idempotencyKey = req.headers["x-idempotency-key"];
-    if (!idempotencyKey && !["GET", "HEAD"].includes(req.method)) {
+    const parsedTimestamp =
+      Number(timestamp);
+
+    /*
+     * ----------------------------------------------------------------
+     * IDEMPOTENCY
+     * ----------------------------------------------------------------
+     *
+     * State-changing machine operations require
+     * an idempotency key.
+     */
+    const idempotencyKey =
+      req.headers[
+        "x-idempotency-key"
+      ];
+
+    const isReadOnlyMethod =
+      ["GET", "HEAD"].includes(
+        req.method
+      );
+
+    if (
+      !isReadOnlyMethod &&
+      !idempotencyKey
+    ) {
       return res.status(400).json({
-        error: "Missing X-Idempotency-Key header",
-        code: "MISSING_IDEMPOTENCY_KEY",
+        error:
+          "Missing X-Idempotency-Key header",
+        code:
+          "MISSING_IDEMPOTENCY_KEY",
       });
     }
 
-    // Look up tenant
-    const tenant = await TenantConfig.findOne({
-      tenantId,
-      status: "active",
-    });
+    /*
+     * ----------------------------------------------------------------
+     * TENANT CONFIG
+     * ----------------------------------------------------------------
+     */
+    const tenant =
+      await TenantConfig.findOne({
+        tenantId,
+        status: "active",
+      });
 
     if (!tenant) {
       return res.status(403).json({
-        error: `Tenant "${tenantId}" not found or inactive`,
-        code: "TENANT_NOT_FOUND",
+        error:
+          "Tenant not found or inactive",
+        code:
+          "TENANT_NOT_FOUND",
       });
     }
 
-    // Find API key
-    const apiKey = tenant.apiKeys.find((k) => k.keyId === keyId && k.active);
+    /*
+     * ----------------------------------------------------------------
+     * CANONICAL ORGANIZATION
+     * ----------------------------------------------------------------
+     *
+     * Organization._id is now the canonical enterprise
+     * ownership boundary.
+     *
+     * tenantId remains for backwards-compatible
+     * machine APIs.
+     */
+    const organization =
+      await Organization.findOne({
+        tenantId,
+        status: "active",
+      });
+
+    if (!organization) {
+      return res.status(403).json({
+        error:
+          "Organization not found or inactive",
+        code:
+          "ORGANIZATION_NOT_FOUND",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * API KEY LOOKUP
+     * ----------------------------------------------------------------
+     */
+    const apiKey =
+      tenant.apiKeys?.find(
+        (key) =>
+          key.keyId === keyId &&
+          key.active === true &&
+          key.status !== "retired"
+      );
+
     if (!apiKey) {
       return res.status(401).json({
-        error: `API key "${keyId}" not found or inactive`,
-        code: "API_KEY_NOT_FOUND",
+        error:
+          "API key not found or inactive",
+        code:
+          "API_KEY_NOT_FOUND",
       });
     }
 
-    // Check key rotation deadline
-    if (apiKey.rotationDeadline && new Date() > apiKey.rotationDeadline) {
+    /*
+     * ----------------------------------------------------------------
+     * KEY-ID HASH VERIFICATION
+     * ----------------------------------------------------------------
+     *
+     * keyHash protects against inconsistent/tampered
+     * API-key records.
+     */
+    const suppliedKeyHash =
+      sha256(keyId);
+
+    if (
+      !timingSafeEqualString(
+        suppliedKeyHash,
+        apiKey.keyHash
+      )
+    ) {
+      console.warn(
+        `[auth] API key hash mismatch | tenant=${tenantId} | key=${keyId}`
+      );
+
       return res.status(401).json({
-        error: "API key has rotated; please use new key",
-        code: "API_KEY_ROTATED",
+        error:
+          "Invalid API credentials",
+        code:
+          "INVALID_API_CREDENTIALS",
       });
     }
 
-    // Verify signature
-    // For GET requests or empty bodies, use empty string for consistency
-    let body = "";
-    if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
-      // Only stringify if there's actual content
-      body = JSON.stringify(req.body);
+    /*
+     * ----------------------------------------------------------------
+     * SECRET VERIFICATION
+     * ----------------------------------------------------------------
+     *
+     * This is the critical authentication check.
+     *
+     * The plaintext secret sent by the client must
+     * hash to the secretHash stored in MongoDB.
+     */
+    const suppliedSecretHash =
+      sha256(secret);
+
+    if (
+      !timingSafeEqualString(
+        suppliedSecretHash,
+        apiKey.secretHash
+      )
+    ) {
+      console.warn(
+        `[auth] API secret verification failed | tenant=${tenantId} | key=${keyId}`
+      );
+
+      return res.status(401).json({
+        error:
+          "Invalid API credentials",
+        code:
+          "INVALID_API_CREDENTIALS",
+      });
     }
-    const messageToSign = body + timestamp;
-    const expectedSignature = hashWithSecret(messageToSign, secret);
-    const providedSignature = req.headers["x-signature"];
+
+    /*
+     * ----------------------------------------------------------------
+     * ROTATION DEADLINE
+     * ----------------------------------------------------------------
+     */
+    if (
+      apiKey.rotationDeadline &&
+      new Date() >
+        new Date(
+          apiKey.rotationDeadline
+        )
+    ) {
+      return res.status(401).json({
+        error:
+          "API key rotation deadline has passed",
+        code:
+          "API_KEY_ROTATED",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * REQUEST SIGNATURE
+     * ----------------------------------------------------------------
+     *
+     * Existing signing protocol:
+     *
+     * HMAC_SHA256(
+     *   JSON(body) + timestamp,
+     *   secret
+     * )
+     */
+    let body = "";
+
+    if (
+      req.body &&
+      typeof req.body ===
+        "object" &&
+      Object.keys(req.body)
+        .length > 0
+    ) {
+      body =
+        JSON.stringify(
+          req.body
+        );
+    }
+
+    const messageToSign =
+      body + timestamp;
+
+    const expectedSignature =
+      createRequestSignature(
+        messageToSign,
+        secret
+      );
+
+    const providedSignature =
+      req.headers[
+        "x-signature"
+      ];
 
     if (!providedSignature) {
       return res.status(401).json({
-        error: "Missing X-Signature header",
-        code: "MISSING_SIGNATURE",
+        error:
+          "Missing X-Signature header",
+        code:
+          "MISSING_SIGNATURE",
       });
     }
 
-    // Use timing-safe comparison to prevent timing attacks
-    const signatureMatches = crypto.timingSafeEqual(
-      Buffer.from(expectedSignature),
-      Buffer.from(providedSignature)
-    );
-
-    if (!signatureMatches) {
+    if (
+      !timingSafeEqualString(
+        expectedSignature,
+        providedSignature
+      )
+    ) {
       console.warn(
-        `[auth] Signature mismatch for tenant ${tenantId} key ${keyId}`
+        `[auth] Signature mismatch | tenant=${tenantId} | key=${keyId}`
       );
+
       return res.status(401).json({
-        error: "Invalid signature",
-        code: "INVALID_SIGNATURE",
+        error:
+          "Invalid signature",
+        code:
+          "INVALID_SIGNATURE",
       });
     }
 
-    // Attach tenant context to request
+    /*
+     * ----------------------------------------------------------------
+     * LEGACY TENANT CONTEXT
+     * ----------------------------------------------------------------
+     *
+     * Existing playbook/runbook/execution code still
+     * consumes req.tenant, so preserve it during
+     * Phase 1 migration.
+     */
     req.tenant = {
-      id: tenantId,
-      config: tenant,
+      id:
+        tenantId,
+
+      config:
+        tenant,
+
       keyId,
-      timestamp: parseInt(timestamp),
-      idempotencyKey: idempotencyKey || null,
+
+      scopes:
+        Array.isArray(
+          apiKey.scopes
+        )
+          ? [...apiKey.scopes]
+          : [],
+
+      timestamp:
+        parsedTimestamp,
+
+      idempotencyKey:
+        idempotencyKey || null,
     };
 
-    // Audit log this request
+    /*
+     * ----------------------------------------------------------------
+     * CANONICAL AUTH CONTEXT
+     * ----------------------------------------------------------------
+     *
+     * Browser and machine identities now both
+     * produce req.auth.
+     */
+    req.auth = {
+      authenticationType:
+        "machine_hmac",
+
+      userId:
+        null,
+
+      sessionId:
+        null,
+
+      organizationId:
+        organization._id,
+
+      tenantId:
+        organization.tenantId,
+
+      membershipId:
+        null,
+
+      role:
+        null,
+
+      assuranceLevel:
+        "machine",
+
+      machineKeyId:
+        keyId,
+
+      scopes:
+        Array.isArray(
+          apiKey.scopes
+        )
+          ? [...apiKey.scopes]
+          : [],
+
+      /*
+       * Internal references.
+       * Never serialize directly to API clients.
+       */
+      _organization:
+        organization,
+
+      _tenantConfig:
+        tenant,
+
+      _apiKey:
+        apiKey,
+    };
+
+    /*
+     * Never log:
+     *
+     * - secret
+     * - secretHash
+     * - Authorization
+     * - request signature
+     */
     console.log(
-      `[auth] ✓ ${req.method} ${req.path} | tenant=${tenantId} | key=${keyId}`
+      `[auth] ✓ ${req.method} ${req.path} | tenant=${tenantId} | org=${organization._id} | key=${keyId}`
     );
 
-    next();
+    return next();
   } catch (error) {
-    console.error("[auth] Middleware error:", error.message);
-    res.status(500).json({
-      error: "Authentication service error",
-      code: "AUTH_ERROR",
+    console.error(
+      "[auth] Middleware error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      error:
+        "Authentication service error",
+      code:
+        "AUTH_ERROR",
     });
   }
 }
 
-module.exports = authMiddleware;
+module.exports =
+  authMiddleware;

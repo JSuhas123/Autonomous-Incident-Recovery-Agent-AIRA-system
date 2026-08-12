@@ -1,84 +1,360 @@
+"use strict";
+
 /**
- * Tenant Isolation Middleware
- * Enforces multi-tenant data isolation by:
- * 1. Verifying tenantId matches between URL and request body
- * 2. Attaching tenantId to request context
- * 3. Providing utilities for safe database queries
+ * Legacy tenant isolation middleware.
+ *
+ * This middleware primarily protects machine-authenticated
+ * routes that still use:
+ *
+ *   /tenants/:tenantId/...
+ *
+ * Enterprise ownership is moving toward:
+ *
+ *   Organization._id  -> canonical ownership boundary
+ *   tenantId          -> legacy/external tenant identifier
+ *
+ * authMiddleware MUST run before this middleware.
  */
 
-function tenantIsolationMiddleware(req, res, next) {
+function tenantIsolationMiddleware(
+  req,
+  res,
+  next
+) {
   try {
-    // tenantId should already be attached by authMiddleware
-    if (!req.tenant) {
-      return res.status(401).json({
-        error: "Not authenticated",
-        code: "NOT_AUTHENTICATED",
-      });
+    /*
+     * Machine authentication currently creates both:
+     *
+     * req.tenant -> legacy tenant context
+     * req.auth   -> canonical authentication context
+     */
+    if (!req.tenant || !req.auth) {
+      return res
+        .status(401)
+        .json({
+          error:
+            "Not authenticated",
+
+          code:
+            "NOT_AUTHENTICATED",
+        });
     }
 
-    const tenantIdFromAuth = req.tenant.id;
-    const tenantIdFromUrl = req.params.tenantId;
+    const tenantIdFromAuth =
+      req.tenant.id;
 
-    // Verify tenantId matches
-    if (tenantIdFromUrl && tenantIdFromUrl !== tenantIdFromAuth) {
-      console.warn(
-        `[tenant-isolation] Tenant ID mismatch: URL=${tenantIdFromUrl} vs Auth=${tenantIdFromAuth}`
+    const tenantIdFromCanonicalAuth =
+      req.auth.tenantId;
+
+    const organizationId =
+      req.auth.organizationId;
+
+    const tenantIdFromUrl =
+      req.params.tenantId ||
+      null;
+
+    /*
+     * ----------------------------------------------------------------
+     * INTERNAL AUTH CONTEXT CONSISTENCY
+     * ----------------------------------------------------------------
+     *
+     * req.tenant and req.auth are produced by the same
+     * authentication boundary and must always agree.
+     */
+    if (
+      !tenantIdFromAuth ||
+      !tenantIdFromCanonicalAuth ||
+      tenantIdFromAuth !==
+        tenantIdFromCanonicalAuth
+    ) {
+      console.error(
+        "[tenant-isolation] Authentication context mismatch",
+        {
+          legacyTenantId:
+            tenantIdFromAuth ||
+            null,
+
+          canonicalTenantId:
+            tenantIdFromCanonicalAuth ||
+            null,
+
+          organizationId:
+            organizationId
+              ? organizationId.toString()
+              : null,
+        }
       );
-      return res.status(403).json({
-        error: "Access denied: tenant ID mismatch",
-        code: "TENANT_MISMATCH",
-      });
+
+      return res
+        .status(403)
+        .json({
+          error:
+            "Tenant context invalid",
+
+          code:
+            "TENANT_CONTEXT_MISMATCH",
+        });
     }
 
-    // Verify tenantId in request body doesn't differ
-    if (req.body && req.body.tenantId && req.body.tenantId !== tenantIdFromAuth) {
-      console.warn(
-        `[tenant-isolation] Tenant ID mismatch in body: Body=${req.body.tenantId} vs Auth=${tenantIdFromAuth}`
+    /*
+     * Canonical enterprise ownership must now exist.
+     *
+     * A machine tenant without an Organization mapping
+     * is not allowed to perform tenant-scoped operations.
+     */
+    if (!organizationId) {
+      console.error(
+        `[tenant-isolation] Missing organization mapping | tenant=${tenantIdFromAuth}`
       );
-      return res.status(403).json({
-        error: "Access denied: tenant ID in body does not match auth",
-        code: "TENANT_MISMATCH",
-      });
+
+      return res
+        .status(403)
+        .json({
+          error:
+            "Organization context unavailable",
+
+          code:
+            "ORGANIZATION_CONTEXT_MISSING",
+        });
     }
 
-    // Create safe database query helper
-    req.withTenantId = (query = {}) => {
-      return {
+    /*
+     * ----------------------------------------------------------------
+     * URL TENANT BINDING
+     * ----------------------------------------------------------------
+     *
+     * The URL may identify the tenant, but it must never
+     * be allowed to override the authenticated tenant.
+     */
+    if (
+      tenantIdFromUrl &&
+      tenantIdFromUrl !==
+        tenantIdFromAuth
+    ) {
+      console.warn(
+        `[tenant-isolation] Cross-tenant URL attempt | auth=${tenantIdFromAuth} | requested=${tenantIdFromUrl}`
+      );
+
+      /*
+       * Return 404 externally to avoid revealing whether
+       * the requested tenant exists.
+       */
+      return res
+        .status(404)
+        .json({
+          error:
+            "Resource not found",
+
+          code:
+            "RESOURCE_NOT_FOUND",
+        });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * BODY OWNERSHIP PROTECTION
+     * ----------------------------------------------------------------
+     *
+     * Clients must never be allowed to switch ownership
+     * by supplying tenantId or organizationId in the body.
+     */
+
+    if (
+      req.body &&
+      req.body.tenantId &&
+      req.body.tenantId !==
+        tenantIdFromAuth
+    ) {
+      console.warn(
+        `[tenant-isolation] Cross-tenant body attempt | auth=${tenantIdFromAuth}`
+      );
+
+      return res
+        .status(404)
+        .json({
+          error:
+            "Resource not found",
+
+          code:
+            "RESOURCE_NOT_FOUND",
+        });
+    }
+
+    if (
+      req.body &&
+      req.body.organizationId &&
+      req.body.organizationId.toString() !==
+        organizationId.toString()
+    ) {
+      console.warn(
+        `[tenant-isolation] Cross-organization body attempt | tenant=${tenantIdFromAuth}`
+      );
+
+      return res
+        .status(404)
+        .json({
+          error:
+            "Resource not found",
+
+          code:
+            "RESOURCE_NOT_FOUND",
+        });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * LEGACY QUERY HELPER
+     * ----------------------------------------------------------------
+     *
+     * Existing tenantId-owned models can continue using:
+     *
+     *   Model.find(req.withTenantId({ ... }))
+     */
+    req.withTenantId =
+      (query = {}) => ({
         ...query,
-        tenantId: tenantIdFromAuth,
-      };
-    };
 
-    // Create safe update helper
-    req.withTenantUpdate = (update = {}) => {
-      return {
-        $set: {
+        /*
+         * Ownership always wins over caller input.
+         */
+        tenantId:
+          tenantIdFromAuth,
+      });
+
+    /*
+     * ----------------------------------------------------------------
+     * CANONICAL ORGANIZATION QUERY HELPER
+     * ----------------------------------------------------------------
+     *
+     * Newer models should prefer organization ownership.
+     */
+    req.withOrganizationId =
+      (query = {}) => ({
+        ...query,
+
+        organizationId:
+          organizationId,
+      });
+
+    /*
+     * Temporary migration helper for models carrying both
+     * organizationId and tenantId during Phase 1.
+     */
+    req.withTenantOwnership =
+      (query = {}) => ({
+        ...query,
+
+        organizationId:
+          organizationId,
+
+        tenantId:
+          tenantIdFromAuth,
+      });
+
+    /*
+     * ----------------------------------------------------------------
+     * SAFE LEGACY UPDATE HELPER
+     * ----------------------------------------------------------------
+     */
+    req.withTenantUpdate =
+      (update = {}) => {
+        const safeUpdate = {
           ...update,
-          // Ensure tenantId cannot be overwritten
-          tenantId: tenantIdFromAuth,
-        },
+        };
+
+        /*
+         * Prevent caller-controlled ownership mutation.
+         */
+        delete safeUpdate.tenantId;
+        delete safeUpdate.organizationId;
+
+        return {
+          $set: {
+            ...safeUpdate,
+
+            tenantId:
+              tenantIdFromAuth,
+
+            organizationId:
+              organizationId,
+          },
+        };
       };
-    };
+
+    /*
+     * If canonical req.context has already been built,
+     * verify consistency rather than overwriting it.
+     */
+    if (req.context) {
+      if (
+        req.context.tenantId &&
+        req.context.tenantId !==
+          tenantIdFromAuth
+      ) {
+        return res
+          .status(403)
+          .json({
+            error:
+              "Tenant context invalid",
+
+            code:
+              "REQUEST_CONTEXT_MISMATCH",
+          });
+      }
+
+      if (
+        req.context.organizationId &&
+        req.context.organizationId !==
+          organizationId.toString()
+      ) {
+        return res
+          .status(403)
+          .json({
+            error:
+              "Organization context invalid",
+
+            code:
+              "REQUEST_CONTEXT_MISMATCH",
+          });
+      }
+    }
 
     console.log(
-      `[tenant-isolation] ✓ Verified tenant=${tenantIdFromAuth} | ${req.method} ${req.path}`
+      `[tenant-isolation] ✓ tenant=${tenantIdFromAuth} | org=${organizationId} | ${req.method} ${req.path}`
     );
 
-    next();
+    return next();
   } catch (error) {
-    console.error("[tenant-isolation] Middleware error:", error.message);
-    res.status(500).json({
-      error: "Tenant isolation check failed",
-      code: "ISOLATION_ERROR",
-    });
+    console.error(
+      "[tenant-isolation] Middleware error:",
+      error.message
+    );
+
+    return res
+      .status(500)
+      .json({
+        error:
+          "Tenant isolation check failed",
+
+        code:
+          "ISOLATION_ERROR",
+      });
   }
 }
 
 /**
- * Utility function to safely query tenants
- * Ensures all queries include tenantId filter
+ * Legacy utility for tenantId-owned models.
  */
-function createTenantAwareQuery(tenantId, baseQuery = {}) {
+function createTenantAwareQuery(
+  tenantId,
+  baseQuery = {}
+) {
+  if (!tenantId) {
+    throw new Error(
+      "tenantId is required"
+    );
+  }
+
   return {
     ...baseQuery,
     tenantId,
@@ -86,78 +362,245 @@ function createTenantAwareQuery(tenantId, baseQuery = {}) {
 }
 
 /**
- * Utility function for multi-tenant aggregation pipelines (advanced)
- * Filters at the first stage to prevent data leakage
+ * Canonical utility for organization-owned models.
  */
-function createTenantAwarePipeline(tenantId, stages = []) {
+function createOrganizationAwareQuery(
+  organizationId,
+  baseQuery = {}
+) {
+  if (!organizationId) {
+    throw new Error(
+      "organizationId is required"
+    );
+  }
+
+  return {
+    ...baseQuery,
+    organizationId,
+  };
+}
+
+/**
+ * Utility for models that temporarily carry both
+ * organizationId and tenantId during migration.
+ */
+function createTenantOwnershipQuery(
+  {
+    organizationId,
+    tenantId,
+  },
+  baseQuery = {}
+) {
+  if (!organizationId) {
+    throw new Error(
+      "organizationId is required"
+    );
+  }
+
+  if (!tenantId) {
+    throw new Error(
+      "tenantId is required"
+    );
+  }
+
+  return {
+    ...baseQuery,
+    organizationId,
+    tenantId,
+  };
+}
+
+/**
+ * Legacy multi-tenant aggregation helper.
+ *
+ * Tenant filtering is always inserted as the first stage.
+ */
+function createTenantAwarePipeline(
+  tenantId,
+  stages = []
+) {
+  if (!tenantId) {
+    throw new Error(
+      "tenantId is required"
+    );
+  }
+
   return [
-    // First stage MUST filter by tenantId
     {
       $match: {
         tenantId,
       },
     },
-    // Then apply any additional stages
+
     ...stages,
   ];
 }
 
 /**
- * Middleware to prevent bulk operations across tenants
+ * Canonical organization aggregation helper.
  */
-function preventCrossTenantOperations(req, res, next) {
+function createOrganizationAwarePipeline(
+  organizationId,
+  stages = []
+) {
+  if (!organizationId) {
+    throw new Error(
+      "organizationId is required"
+    );
+  }
+
+  return [
+    {
+      $match: {
+        organizationId,
+      },
+    },
+
+    ...stages,
+  ];
+}
+
+/**
+ * Prevent obviously dangerous bulk operations.
+ *
+ * IMPORTANT:
+ * This is only a secondary guard.
+ * Actual services/repositories must still scope every
+ * database operation by ownership.
+ */
+function preventCrossTenantOperations(
+  req,
+  res,
+  next
+) {
   try {
-    // Block multi-document delete if not explicitly scoped
-    if (req.method === "DELETE" && !req.params.id && !req.query.singleTenant) {
-      return res.status(400).json({
-        error: "Bulk delete not allowed. Use ?singleTenant=true to confirm single-tenant scope",
-        code: "BULK_DELETE_BLOCKED",
-      });
+    if (
+      req.method === "DELETE" &&
+      !req.params.id &&
+      req.query.singleTenant !==
+        "true"
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            "Bulk delete not allowed. Use ?singleTenant=true to confirm single-tenant scope",
+
+          code:
+            "BULK_DELETE_BLOCKED",
+        });
     }
 
-    next();
+    return next();
   } catch (error) {
-    console.error("[prevent-cross-tenant] Middleware error:", error.message);
-    res.status(500).json({
-      error: "Cross-tenant prevention check failed",
-      code: "PREVENTION_ERROR",
-    });
+    console.error(
+      "[prevent-cross-tenant] Middleware error:",
+      error.message
+    );
+
+    return res
+      .status(500)
+      .json({
+        error:
+          "Cross-tenant prevention check failed",
+
+        code:
+          "PREVENTION_ERROR",
+      });
   }
 }
 
 /**
- * Audit middleware to log all data access
+ * Lightweight data-access logging middleware.
+ *
+ * This is operational logging only.
+ * Compliance-grade audit persistence is handled separately.
  */
-async function auditDataAccessMiddleware(req, res, next) {
+function auditDataAccessMiddleware(
+  req,
+  res,
+  next
+) {
   try {
-    const startTime = Date.now();
+    const startTime =
+      Date.now();
 
-    // Capture original send function
-    const originalSend = res.send;
+    /*
+     * 'finish' avoids monkey-patching res.send and catches
+     * responses generated through json(), send(), end(), etc.
+     */
+    res.on(
+      "finish",
+      () => {
+        const duration =
+          Date.now() -
+          startTime;
 
-    // Wrap send to log response
-    res.send = function (data) {
-      const duration = Date.now() - startTime;
+        const tenantId =
+          req.context
+            ?.tenantId ||
+          req.auth
+            ?.tenantId ||
+          req.tenant
+            ?.id ||
+          null;
 
-      console.log(
-        `[audit-access] ${req.method} ${req.path} | status=${res.statusCode} | duration=${duration}ms | tenant=${req.tenant?.id}`
-      );
+        const organizationId =
+          req.context
+            ?.organizationId ||
+          req.auth
+            ?.organizationId
+            ?.toString?.() ||
+          null;
 
-      // Call original send
-      return originalSend.call(this, data);
-    };
+        const environmentId =
+          req.context
+            ?.environmentId ||
+          null;
 
-    next();
+        console.log(
+          [
+            "[audit-access]",
+            `${req.method} ${req.path}`,
+            `status=${res.statusCode}`,
+            `duration=${duration}ms`,
+            `tenant=${tenantId || "-"}`,
+            `org=${organizationId || "-"}`,
+            `env=${environmentId || "-"}`,
+          ].join(" | ")
+        );
+      }
+    );
+
+    return next();
   } catch (error) {
-    console.error("[audit-access] Middleware error:", error.message);
-    next();
+    console.error(
+      "[audit-access] Middleware error:",
+      error.message
+    );
+
+    /*
+     * Audit instrumentation failure should not
+     * unexpectedly block the request here.
+     */
+    return next();
   }
 }
 
 module.exports = {
   tenantIsolationMiddleware,
+
   preventCrossTenantOperations,
+
   auditDataAccessMiddleware,
+
   createTenantAwareQuery,
+
+  createOrganizationAwareQuery,
+
+  createTenantOwnershipQuery,
+
   createTenantAwarePipeline,
+
+  createOrganizationAwarePipeline,
 };

@@ -1,61 +1,213 @@
 "use strict";
 
-// Accepts either a valid browser session cookie OR a machine HMAC Authorization header.
-// Sets req.auth with authenticationType: "user_session" | "machine_hmac".
+/**
+ * Accepts either:
+ *
+ * 1. A valid browser session cookie
+ * 2. A valid machine HMAC Authorization header
+ *
+ * Browser session authentication is attempted first.
+ * If no valid browser session exists, authentication falls
+ * back to the existing HMAC machine authentication middleware.
+ *
+ * Successful authentication populates req.auth.
+ */
 
-const { extractRawToken, validateSession } = require("../services/identity/sessionService");
+const {
+  extractRawToken,
+  validateSession,
+} = require("../services/identity/sessionService");
+
 const User = require("../models/User");
 const Organization = require("../models/Organization");
-const OrganizationMembership = require("../models/OrganizationMembership");
+const OrganizationMembership = require(
+  "../models/OrganizationMembership"
+);
+
 const authMiddleware = require("./authMiddleware");
 
+/**
+ * Attempt browser session authentication.
+ *
+ * Returns:
+ *   true  -> session authentication succeeded
+ *   false -> session authentication unavailable/invalid
+ *
+ * This function does not send responses because the caller
+ * may still fall back to machine authentication.
+ */
 async function trySessionAuth(req) {
   let rawToken;
-  try { rawToken = extractRawToken(req); } catch { return false; }
-  if (!rawToken) return false;
+
+  try {
+    rawToken = extractRawToken(req);
+  } catch {
+    return false;
+  }
+
+  if (!rawToken) {
+    return false;
+  }
 
   let result;
-  try { result = await validateSession(rawToken); } catch { return false; }
-  if (!result.valid) return false;
+
+  try {
+    result = await validateSession(rawToken);
+  } catch {
+    return false;
+  }
+
+  if (!result.valid) {
+    return false;
+  }
 
   const { session } = result;
-  const user = await User.findById(session.userId);
-  if (!user || user.status === "suspended" || user.status === "disabled") return false;
+
+  let user;
+
+  try {
+    user = await User.findById(session.userId);
+  } catch {
+    return false;
+  }
+
+  if (!user) {
+    return false;
+  }
+
+  if (
+    user.status === "suspended" ||
+    user.status === "disabled"
+  ) {
+    return false;
+  }
 
   let membership = null;
   let organization = null;
+
+  /*
+   * If the session has an active organization,
+   * independently verify both:
+   *
+   * 1. The user's membership is still active.
+   * 2. The organization itself is still active.
+   */
   if (session.activeOrganizationId) {
-    [membership, organization] = await Promise.all([
-      OrganizationMembership.findOne({ userId: user._id, organizationId: session.activeOrganizationId }),
-      Organization.findById(session.activeOrganizationId),
-    ]);
+    try {
+      [membership, organization] =
+        await Promise.all([
+          OrganizationMembership.findOne({
+            userId: user._id,
+            organizationId:
+              session.activeOrganizationId,
+            status: "active",
+          }),
+
+          Organization.findOne({
+            _id: session.activeOrganizationId,
+            status: "active",
+          }),
+        ]);
+    } catch {
+      return false;
+    }
+
+    /*
+     * Fail closed.
+     *
+     * A previously valid session must not retain
+     * organization access after:
+     *
+     * - membership suspension
+     * - membership removal
+     * - organization suspension
+     * - organization deactivation
+     */
+    if (!membership || !organization) {
+      return false;
+    }
   }
 
   req.auth = {
     authenticationType: "user_session",
+
     userId: user._id.toString(),
+
     sessionId: session._id.toString(),
-    organizationId: session.activeOrganizationId?.toString() ?? null,
-    tenantId: organization?.tenantId ?? null,
-    membershipId: membership?._id?.toString() ?? null,
-    role: membership?.role ?? null,
+
+    organizationId:
+      organization?._id?.toString() ?? null,
+
+    tenantId:
+      organization?.tenantId ?? null,
+
+    membershipId:
+      membership?._id?.toString() ?? null,
+
+    role:
+      membership?.role ?? null,
+
+    assuranceLevel:
+      session.assuranceLevel ?? null,
+
+    /*
+     * Internal references.
+     *
+     * These are available to downstream middleware
+     * and services but must never be serialized
+     * directly to API clients.
+     */
     _session: session,
     _user: user,
     _organization: organization,
     _membership: membership,
   };
+
   return true;
 }
 
-async function dualAuthMiddleware(req, res, next) {
-  if (req.method === "OPTIONS") return next();
+async function dualAuthMiddleware(
+  req,
+  res,
+  next
+) {
+  if (req.method === "OPTIONS") {
+    return next();
+  }
 
-  // Try session cookie first (browser users)
-  const sessionOk = await trySessionAuth(req);
-  if (sessionOk) return next();
+  try {
+    /*
+     * Browser authentication takes precedence.
+     */
+    const sessionAuthenticated =
+      await trySessionAuth(req);
 
-  // Fall back to HMAC machine auth
-  return authMiddleware(req, res, next);
+    if (sessionAuthenticated) {
+      return next();
+    }
+
+    /*
+     * No usable browser session.
+     *
+     * Fall back to the existing machine HMAC
+     * authentication middleware.
+     */
+    return authMiddleware(
+      req,
+      res,
+      next
+    );
+  } catch (error) {
+    console.error(
+      "[dual-auth] Authentication failed:",
+      error.message
+    );
+
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
 }
 
 module.exports = dualAuthMiddleware;

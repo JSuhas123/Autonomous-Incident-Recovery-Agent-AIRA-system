@@ -7,6 +7,7 @@ const User = require("../../models/User");
 const PasswordCredential = require("../../models/PasswordCredential");
 const Organization = require("../../models/Organization");
 const OrganizationMembership = require("../../models/OrganizationMembership");
+const OrganizationBootstrapService =require("../core/organizationBootstrapService");
 const TenantConfig = require("../../models/TenantConfig");
 const { hashPassword, verifyPassword, needsRehash } = require("./passwordService");
 const { createSession } = require("./sessionService");

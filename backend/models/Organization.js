@@ -13,6 +13,18 @@ const organizationSettingsSchema = new mongoose.Schema(
       enum: ["auto", "approval", "suggest_only"],
       default: "approval",
     },
+     dataRetentionDays: {
+      type: Number,
+      min: 1,
+      max: 3650,
+      default: 90,
+    },
+
+    defaultEnvironmentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Environment",
+      default: null,
+    },
   },
   { _id: false }
 );

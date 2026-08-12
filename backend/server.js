@@ -64,6 +64,8 @@ const cookieParser = require("cookie-parser");
 const authRoutes = require("./routes/authRoutes");
 const { csrfProtection } = require("./middleware/csrfMiddleware");
 const { sessionAuthMiddleware } = require("./middleware/sessionAuthMiddleware");
+const {requestContextMiddleware,} = require("./middleware/requestContextMiddleware");
+const {environmentContextMiddleware,} = require("./middleware/environmentContextMiddleware");
 const { rateLimitingMiddleware } = require("./middleware/rateLimitingMiddleware");
 const { validateInput } = require("./middleware/inputValidationMiddleware");
 
@@ -121,17 +123,24 @@ const corsOptions = {
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: [
-    "Authorization",
-    "Content-Type",
-    "X-Idempotency-Key",
-    "X-Signature",
-    "X-Timestamp",
-    "X-Request-Id",
-    "X-CSRF-Token",
-    "Accept",
-  ],
-  exposedHeaders: ["X-Request-Id", "Retry-After", "X-Correlation-ID"],
+ allowedHeaders: [
+  "Authorization",
+  "Content-Type",
+  "X-Idempotency-Key",
+  "X-Signature",
+  "X-Timestamp",
+  "X-Request-Id",
+  "X-CSRF-Token",
+  "X-AIRA-Environment-Id",
+  "Accept",
+],
+
+exposedHeaders: [
+  "X-Request-Id",
+  "Retry-After",
+  "X-Correlation-ID",
+  "X-AIRA-Environment-Id",
+],
   optionsSuccessStatus: 204,
   maxAge: 86400,
 };
@@ -326,7 +335,31 @@ app.post("/api/v1/tenants/:tenantId/actions/:id/dry-run",
 const { requireOrgAccess } = require("./middleware/orgAuthMiddleware");
 const browserTenantAuth = [
   sessionAuthMiddleware,
+
+  /*
+   * Verifies that the URL tenant belongs to the
+   * organization selected by the authenticated session.
+   */
   requireOrgAccess(),
+
+  /*
+   * Convert authentication state into AIRA's canonical
+   * organization request context.
+   */
+  requestContextMiddleware,
+
+  /*
+   * Resolve the active/default environment for this request.
+   *
+   * From this point onward tenant-scoped browser routes can use:
+   *
+   * req.context.organizationId
+   * req.context.tenantId
+   * req.context.environmentId
+   * req.context.environment
+   */
+  environmentContextMiddleware,
+
   rateLimitingMiddleware("api"),
 ];
 

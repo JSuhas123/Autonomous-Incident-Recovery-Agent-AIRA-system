@@ -36,6 +36,7 @@
     "validate:observability": "node scripts/validate-observability-pipeline.js --suite=all",
     "generate:samples": "node scripts/generate-observability-samples.js --count=20 --tenant=demo-tenant",
     "simulate": "node run-simulation.js",
+    "bootstrap:organizations": "node scripts/bootstrap-organizations.js",
     "simulate:clean": "rm -rf simulation/results/* && npm run simulate"
   },
   "engines": {
