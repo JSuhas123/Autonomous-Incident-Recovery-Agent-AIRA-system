@@ -1,47 +1,82 @@
 "use strict";
 
-const express = require("express");
-const Joi = require("joi");
-const mongoose = require("mongoose");
+const express =
+  require("express");
+
+const Joi =
+  require("joi");
+
+const mongoose =
+  require("mongoose");
 
 const {
   Incident,
   INCIDENT_STATUSES,
   INCIDENT_SEVERITIES,
-} = require("../models/Incident");
+} =
+  require(
+    "../models/Incident"
+  );
 
 const incidentService =
-  require("../services/incidents/incidentService");
+  require(
+    "../services/incidents/incidentService"
+  );
+
+const incidentDetailService =
+  require(
+    "../services/incidents/incidentDetailService"
+  );
+
+const incidentEventService =
+  require(
+    "../services/incidents/incidentEventService"
+  );
 
 const {
   getIncidentPlaybookService,
-} = require(
-  "../services/incidents/incidentPlaybookService"
-);
+} =
+  require(
+    "../services/incidents/incidentPlaybookService"
+  );
 
 const {
-  record: auditRecord,
-} = require(
-  "../services/identity/identityAuditService"
-);
+  record:
+    auditRecord,
+} =
+  require(
+    "../services/identity/identityAuditService"
+  );
 
 const {
   AUTH_EVENT_TYPES,
   AUTH_EVENT_OUTCOMES,
-} = require("../constants/authEvents");
+} =
+  require(
+    "../constants/authEvents"
+  );
 
-const router = express.Router();
+const router =
+  express.Router();
 
-const PAGE_LIMIT = 100;
+const PAGE_LIMIT =
+  100;
 
-/* -------------------------------------------------------------------------- */
-/* Serialization                                                              */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// SERIALIZATION
+// ============================================================================
 
-function safeIncident(doc) {
+function safeIncident(
+  doc
+) {
+  if (!doc) {
+    return null;
+  }
+
   return {
     id:
-      doc._id?.toString?.() ??
+      doc._id
+        ?.toString?.() ??
       doc._id,
 
     organizationId:
@@ -67,14 +102,69 @@ function safeIncident(doc) {
         ?.toString?.() ??
       null,
 
+    // ------------------------------------------------------------------------
+    // SOURCE / DETECTION
+    // ------------------------------------------------------------------------
+
     source:
       doc.source,
 
     sourceEventId:
       doc.sourceEventId,
 
+    detectionMethod:
+      doc.detectionMethod,
+
     fingerprint:
       doc.fingerprint,
+
+    // ------------------------------------------------------------------------
+    // SIGNAL PROVENANCE
+    // ------------------------------------------------------------------------
+
+    correlationGroupId:
+      doc
+        .correlationGroupId ??
+      null,
+
+    primarySignalId:
+      doc
+        .primarySignalId ??
+      null,
+
+    signalIds:
+      doc.signalIds ??
+      [],
+
+    signalFingerprint:
+      doc
+        .signalFingerprint ??
+      null,
+
+    providers:
+      doc.providers ??
+      [],
+
+    providerCount:
+      doc.providerCount ??
+      0,
+
+    evidenceCount:
+      doc.evidenceCount ??
+      0,
+
+    correlationConfidence:
+      doc
+        .correlationConfidence ??
+      null,
+
+    lastSignalAt:
+      doc.lastSignalAt ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // DESCRIPTION
+    // ------------------------------------------------------------------------
 
     title:
       doc.title,
@@ -91,6 +181,10 @@ function safeIncident(doc) {
     impact:
       doc.impact,
 
+    // ------------------------------------------------------------------------
+    // TIMING
+    // ------------------------------------------------------------------------
+
     startedAt:
       doc.startedAt,
 
@@ -103,25 +197,93 @@ function safeIncident(doc) {
     resolvedAt:
       doc.resolvedAt,
 
+    closedAt:
+      doc.closedAt,
+
     lastObservedAt:
       doc.lastObservedAt,
+
+    // ------------------------------------------------------------------------
+    // RECURRENCE
+    // ------------------------------------------------------------------------
 
     occurrenceCount:
       doc.occurrenceCount,
 
+    reopenCount:
+      doc.reopenCount ??
+      0,
+
+    lastReopenedAt:
+      doc
+        .lastReopenedAt ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // EVIDENCE
+    // ------------------------------------------------------------------------
+
     evidence:
-      doc.evidence ?? [],
+      doc.evidence ??
+      [],
+
+    // ------------------------------------------------------------------------
+    // ASSIGNMENT
+    // ------------------------------------------------------------------------
 
     assignedTo:
       doc.assignedTo
         ?.toString?.() ??
       null,
 
+    assignedAt:
+      doc.assignedAt ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // RESOLUTION
+    // ------------------------------------------------------------------------
+
     resolution:
       doc.resolution,
 
+    resolutionType:
+      doc.resolutionType ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // IMPACT ANALYSIS
+    // ------------------------------------------------------------------------
+
+    impactAnalysis:
+      doc.impactAnalysis ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // AGENT INTELLIGENCE HANDOFF
+    // ------------------------------------------------------------------------
+
+    analysisStatus:
+      doc.analysisStatus ??
+      "not_started",
+
+    analysisStartedAt:
+      doc
+        .analysisStartedAt ??
+      null,
+
+    analysisCompletedAt:
+      doc
+        .analysisCompletedAt ??
+      null,
+
+    // ------------------------------------------------------------------------
+    // OTHER
+    // ------------------------------------------------------------------------
+
     tags:
-      doc.tags ?? [],
+      doc.tags ??
+      [],
 
     createdAt:
       doc.createdAt,
@@ -131,14 +293,18 @@ function safeIncident(doc) {
   };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Environment helpers                                                        */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// ENVIRONMENT HELPERS
+// ============================================================================
 
-function getEnvironmentId(req) {
+function getEnvironmentId(
+  req
+) {
   return (
-    req.context?.environmentId ||
-    req.auth?.environmentId ||
+    req.context
+      ?.environmentId ||
+    req.auth
+      ?.environmentId ||
     null
   );
 }
@@ -148,16 +314,24 @@ function requireEnvironment(
   res
 ) {
   const environmentId =
-    getEnvironmentId(req);
+    getEnvironmentId(
+      req
+    );
 
-  if (!environmentId) {
-    res.status(400).json({
-      error:
-        "No active environment selected",
+  if (
+    !environmentId
+  ) {
+    res
+      .status(
+        400
+      )
+      .json({
+        error:
+          "No active environment selected",
 
-      code:
-        "ENVIRONMENT_REQUIRED",
-    });
+        code:
+          "ENVIRONMENT_REQUIRED",
+      });
 
     return null;
   }
@@ -165,25 +339,55 @@ function requireEnvironment(
   return environmentId;
 }
 
-/**
- * Load incident using the complete ownership boundary.
- *
- * We query directly by:
- *
- * incidentId
- * + organizationId
- * + environmentId
- *
- * so an incident from another environment is indistinguishable
- * from a nonexistent incident.
- */
+// ============================================================================
+// REQUEST CONTEXT
+// ============================================================================
+
+function incidentContext(
+  req,
+  environmentId = null
+) {
+  return {
+    organizationId:
+      req.auth
+        ?.organizationId ||
+      req.context
+        ?.organizationId,
+
+    environmentId:
+      environmentId ||
+      getEnvironmentId(
+        req
+      ),
+
+    userId:
+      req.auth
+        ?.userId ||
+      req.context
+        ?.userId ||
+      null,
+
+    tenantId:
+      req.auth
+        ?.tenantId ||
+      req.context
+        ?.tenantId ||
+      null,
+  };
+}
+
+// ============================================================================
+// INCIDENT LOADER
+// ============================================================================
+
 async function loadIncident(
   req,
   res
 ) {
   const {
     incidentId,
-  } = req.params;
+  } =
+    req.params;
 
   const environmentId =
     requireEnvironment(
@@ -191,45 +395,64 @@ async function loadIncident(
       res
     );
 
-  if (!environmentId) {
+  if (
+    !environmentId
+  ) {
     return null;
   }
 
   if (
-    !mongoose.Types.ObjectId.isValid(
-      incidentId
-    )
+    !mongoose.Types.ObjectId
+      .isValid(
+        incidentId
+      )
   ) {
-    res.status(404).json({
-      error:
-        "Incident not found",
+    res
+      .status(
+        404
+      )
+      .json({
+        error:
+          "Incident not found",
 
-      code:
-        "INCIDENT_NOT_FOUND",
-    });
+        code:
+          "INCIDENT_NOT_FOUND",
+      });
 
     return null;
   }
 
+  const organizationId =
+    req.auth
+      ?.organizationId ||
+    req.context
+      ?.organizationId;
+
   const incident =
-    await Incident.findOne({
-      _id:
-        incidentId,
+    await Incident
+      .findOne({
+        _id:
+          incidentId,
 
-      organizationId:
-        req.auth.organizationId,
+        organizationId,
 
-      environmentId,
-    });
+        environmentId,
+      });
 
-  if (!incident) {
-    res.status(404).json({
-      error:
-        "Incident not found",
+  if (
+    !incident
+  ) {
+    res
+      .status(
+        404
+      )
+      .json({
+        error:
+          "Incident not found",
 
-      code:
-        "INCIDENT_NOT_FOUND",
-    });
+        code:
+          "INCIDENT_NOT_FOUND",
+      });
 
     return null;
   }
@@ -237,16 +460,20 @@ async function loadIncident(
   return incident;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Validation                                                                 */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// VALIDATION
+// ============================================================================
 
 const acknowledgeSchema =
   Joi.object({
     note:
       Joi.string()
-        .max(512)
-        .allow("")
+        .max(
+          512
+        )
+        .allow(
+          ""
+        )
         .optional(),
   });
 
@@ -254,8 +481,25 @@ const resolveSchema =
   Joi.object({
     resolution:
       Joi.string()
-        .max(2048)
-        .allow("")
+        .max(
+          2048
+        )
+        .allow(
+          ""
+        )
+        .optional(),
+  });
+
+const reasonSchema =
+  Joi.object({
+    reason:
+      Joi.string()
+        .max(
+          1024
+        )
+        .allow(
+          ""
+        )
         .optional(),
   });
 
@@ -263,8 +507,12 @@ const reopenSchema =
   Joi.object({
     reason:
       Joi.string()
-        .max(512)
-        .allow("")
+        .max(
+          512
+        )
+        .allow(
+          ""
+        )
         .optional(),
   });
 
@@ -272,19 +520,77 @@ const assignSchema =
   Joi.object({
     assigneeId:
       Joi.string()
-        .allow(null)
+        .allow(
+          null
+        )
         .optional(),
 
     note:
       Joi.string()
-        .max(512)
-        .allow("")
+        .max(
+          512
+        )
+        .allow(
+          ""
+        )
         .optional(),
   });
 
-/* -------------------------------------------------------------------------- */
-/* GET /                                                                      */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// VALIDATION HELPER
+// ============================================================================
+
+function validateBody(
+  schema,
+  req,
+  res
+) {
+  const {
+    error,
+    value,
+  } =
+    schema.validate(
+      req.body ||
+      {}
+    );
+
+  if (
+    error
+  ) {
+    res
+      .status(
+        422
+      )
+      .json({
+        error:
+          error
+            .details[0]
+            .message,
+
+        code:
+          "VALIDATION_ERROR",
+      });
+
+    return {
+      valid:
+        false,
+
+      value:
+        null,
+    };
+  }
+
+  return {
+    valid:
+      true,
+
+    value,
+  };
+}
+
+// ============================================================================
+// GET /
+// ============================================================================
 
 router.get(
   "/",
@@ -300,25 +606,33 @@ router.get(
           res
         );
 
-      if (!environmentId) {
+      if (
+        !environmentId
+      ) {
         return;
       }
 
       const q =
         req.query;
 
+      const organizationId =
+        req.auth
+          ?.organizationId ||
+        req.context
+          ?.organizationId;
+
       const filter = {
-        organizationId:
-          req.auth.organizationId,
+        organizationId,
 
         environmentId,
       };
 
       if (
         q.status &&
-        INCIDENT_STATUSES.includes(
-          q.status
-        )
+        INCIDENT_STATUSES
+          .includes(
+            q.status
+          )
       ) {
         filter.status =
           q.status;
@@ -326,9 +640,10 @@ router.get(
 
       if (
         q.severity &&
-        INCIDENT_SEVERITIES.includes(
-          q.severity
-        )
+        INCIDENT_SEVERITIES
+          .includes(
+            q.severity
+          )
       ) {
         filter.severity =
           q.severity;
@@ -336,9 +651,10 @@ router.get(
 
       if (
         q.serviceId &&
-        mongoose.Types.ObjectId.isValid(
-          q.serviceId
-        )
+        mongoose.Types.ObjectId
+          .isValid(
+            q.serviceId
+          )
       ) {
         filter.serviceId =
           q.serviceId;
@@ -346,12 +662,46 @@ router.get(
 
       if (
         q.monitorId &&
-        mongoose.Types.ObjectId.isValid(
-          q.monitorId
-        )
+        mongoose.Types.ObjectId
+          .isValid(
+            q.monitorId
+          )
       ) {
         filter.monitorId =
           q.monitorId;
+      }
+
+      if (
+        q.correlationGroupId
+      ) {
+        filter
+          .correlationGroupId =
+          q
+            .correlationGroupId;
+      }
+
+      if (
+        q.provider
+      ) {
+        filter.providers =
+          q.provider;
+      }
+
+      if (
+        q.analysisStatus
+      ) {
+        filter.analysisStatus =
+          q.analysisStatus;
+      }
+
+      if (
+        q.userFacing ===
+        "true"
+      ) {
+        filter[
+          "impactAnalysis.summary.userFacingImpact"
+        ] =
+          true;
       }
 
       if (
@@ -361,7 +711,9 @@ router.get(
         filter.detectedAt =
           {};
 
-        if (q.from) {
+        if (
+          q.from
+        ) {
           const from =
             new Date(
               q.from
@@ -369,11 +721,14 @@ router.get(
 
           if (
             Number.isNaN(
-              from.getTime()
+              from
+                .getTime()
             )
           ) {
             return res
-              .status(400)
+              .status(
+                400
+              )
               .json({
                 error:
                   "Invalid from date",
@@ -383,11 +738,15 @@ router.get(
               });
           }
 
-          filter.detectedAt.$gte =
+          filter
+            .detectedAt
+            .$gte =
             from;
         }
 
-        if (q.to) {
+        if (
+          q.to
+        ) {
           const to =
             new Date(
               q.to
@@ -395,11 +754,14 @@ router.get(
 
           if (
             Number.isNaN(
-              to.getTime()
+              to
+                .getTime()
             )
           ) {
             return res
-              .status(400)
+              .status(
+                400
+              )
               .json({
                 error:
                   "Invalid to date",
@@ -409,14 +771,17 @@ router.get(
               });
           }
 
-          filter.detectedAt.$lte =
+          filter
+            .detectedAt
+            .$lte =
             to;
         }
       }
 
       const parsedLimit =
-        parseInt(
-          q.limit ?? "50",
+        Number.parseInt(
+          q.limit ??
+          "50",
           10
         );
 
@@ -433,7 +798,9 @@ router.get(
             )
           : 50;
 
-      if (q.before) {
+      if (
+        q.before
+      ) {
         const before =
           new Date(
             q.before
@@ -441,11 +808,14 @@ router.get(
 
         if (
           Number.isNaN(
-            before.getTime()
+            before
+              .getTime()
           )
         ) {
           return res
-            .status(400)
+            .status(
+              400
+            )
             .json({
               error:
                 "Invalid before date",
@@ -462,130 +832,75 @@ router.get(
       }
 
       const incidents =
-        await Incident.find(
-          filter
-        )
+        await Incident
+          .find(
+            filter
+          )
           .sort({
             createdAt:
               -1,
           })
-          .limit(limit)
+          .limit(
+            limit
+          )
           .lean();
 
       return res.json({
         incidents:
-          incidents.map(
-            safeIncident
-          ),
+          incidents
+            .map(
+              safeIncident
+            ),
 
         count:
-          incidents.length,
+          incidents
+            .length,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/* GET /:incidentId                                                           */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// GET /:incidentId/detail
+// ============================================================================
 
 router.get(
-  "/:incidentId",
+  "/:incidentId/detail",
   async (
     req,
     res,
     next
   ) => {
     try {
-      const incident =
-        await loadIncident(
+      const environmentId =
+        requireEnvironment(
           req,
           res
         );
 
-      if (!incident) {
+      if (
+        !environmentId
+      ) {
         return;
       }
 
-      return res.json({
-        incident:
-          safeIncident(
-            incident
-          ),
-      });
-    } catch (error) {
-      return next(error);
-    }
-  }
-);
-
-/* -------------------------------------------------------------------------- */
-/* POST /:incidentId/acknowledge                                               */
-/* -------------------------------------------------------------------------- */
-
-router.post(
-  "/:incidentId/acknowledge",
-  async (
-    req,
-    res,
-    next
-  ) => {
-    try {
-      const incident =
-        await loadIncident(
-          req,
-          res
-        );
-
-      if (!incident) {
-        return;
-      }
-
-      const {
-        error,
-        value,
-      } =
-        acknowledgeSchema.validate(
-          req.body || {}
-        );
-
-      if (error) {
+      if (
+        !mongoose.Types.ObjectId
+          .isValid(
+            req.params
+              .incidentId
+          )
+      ) {
         return res
-          .status(422)
-          .json({
-            error:
-              error.details[0]
-                .message,
-
-            code:
-              "VALIDATION_ERROR",
-          });
-      }
-
-      const updated =
-        await incidentService
-          .acknowledge(
-            incident._id,
-            {
-              organizationId:
-                req.auth.organizationId,
-
-              environmentId:
-                incident.environmentId,
-
-              userId:
-                req.auth.userId,
-
-              note:
-                value.note,
-            }
-          );
-
-      if (!updated) {
-        return res
-          .status(404)
+          .status(
+            404
+          )
           .json({
             error:
               "Incident not found",
@@ -595,51 +910,55 @@ router.post(
           });
       }
 
-      await auditRecord(
-        AUTH_EVENT_TYPES
-          .INCIDENT_ACKNOWLEDGED,
+      const context =
+        incidentContext(
+          req,
+          environmentId
+        );
 
-        AUTH_EVENT_OUTCOMES
-          .SUCCESS,
+      const detail =
+        await incidentDetailService
+          .getDetail(
+            context,
+            req.params
+              .incidentId
+          );
 
-        {
-          userId:
-            req.auth.userId,
+      if (
+        !detail
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
 
-          organizationId:
-            req.auth.organizationId,
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
 
-          tenantId:
-            req.auth.tenantId,
-
-          metadata: {
-            incidentId:
-              incident._id,
-
-            environmentId:
-              incident.environmentId,
-          },
-        }
-      ).catch(() => {});
-
-      return res.json({
-        incident:
-          safeIncident(
-            updated
-          ),
-      });
-    } catch (error) {
-      return next(error);
+      return res.json(
+        detail
+      );
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/* POST /:incidentId/resolve                                                   */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// GET /:incidentId/events
+// ============================================================================
 
-router.post(
-  "/:incidentId/resolve",
+router.get(
+  "/:incidentId/events",
   async (
     req,
     res,
@@ -652,336 +971,70 @@ router.post(
           res
         );
 
-      if (!incident) {
+      if (
+        !incident
+      ) {
         return;
       }
 
-      const {
-        error,
-        value,
-      } =
-        resolveSchema.validate(
-          req.body || {}
+      const parsedLimit =
+        Number.parseInt(
+          req.query
+            .limit ??
+          "200",
+          10
         );
 
-      if (error) {
-        return res
-          .status(422)
-          .json({
-            error:
-              error.details[0]
-                .message,
+      const limit =
+        Number.isFinite(
+          parsedLimit
+        )
+          ? Math.min(
+              Math.max(
+                parsedLimit,
+                1
+              ),
+              1000
+            )
+          : 200;
 
-            code:
-              "VALIDATION_ERROR",
-          });
-      }
-
-      const updated =
-        await incidentService
-          .resolveManually(
-            incident._id,
+      const events =
+        await incidentEventService
+          .listForIncident(
             {
               organizationId:
-                req.auth.organizationId,
+                incident
+                  .organizationId,
 
               environmentId:
-                incident.environmentId,
+                incident
+                  .environmentId,
+            },
 
-              userId:
-                req.auth.userId,
+            incident._id,
 
-              resolution:
-                value.resolution,
-            }
+            limit
           );
 
-      if (!updated) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Incident not found",
-
-            code:
-              "INCIDENT_NOT_FOUND",
-          });
-      }
-
-      await auditRecord(
-        AUTH_EVENT_TYPES
-          .INCIDENT_RESOLVED,
-
-        AUTH_EVENT_OUTCOMES
-          .SUCCESS,
-
-        {
-          userId:
-            req.auth.userId,
-
-          organizationId:
-            req.auth.organizationId,
-
-          tenantId:
-            req.auth.tenantId,
-
-          metadata: {
-            incidentId:
-              incident._id,
-
-            environmentId:
-              incident.environmentId,
-          },
-        }
-      ).catch(() => {});
-
       return res.json({
-        incident:
-          safeIncident(
-            updated
-          ),
+        events,
+
+        count:
+          events.length,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/* POST /:incidentId/reopen                                                    */
-/* -------------------------------------------------------------------------- */
-
-router.post(
-  "/:incidentId/reopen",
-  async (
-    req,
-    res,
-    next
-  ) => {
-    try {
-      const incident =
-        await loadIncident(
-          req,
-          res
-        );
-
-      if (!incident) {
-        return;
-      }
-
-      const {
-        error,
-        value,
-      } =
-        reopenSchema.validate(
-          req.body || {}
-        );
-
-      if (error) {
-        return res
-          .status(422)
-          .json({
-            error:
-              error.details[0]
-                .message,
-
-            code:
-              "VALIDATION_ERROR",
-          });
-      }
-
-      const updated =
-        await incidentService
-          .reopen(
-            incident._id,
-            {
-              organizationId:
-                req.auth.organizationId,
-
-              environmentId:
-                incident.environmentId,
-
-              userId:
-                req.auth.userId,
-
-              reason:
-                value.reason,
-            }
-          );
-
-      if (!updated) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Incident not found",
-
-            code:
-              "INCIDENT_NOT_FOUND",
-          });
-      }
-
-      await auditRecord(
-        AUTH_EVENT_TYPES
-          .INCIDENT_REOPENED,
-
-        AUTH_EVENT_OUTCOMES
-          .SUCCESS,
-
-        {
-          userId:
-            req.auth.userId,
-
-          organizationId:
-            req.auth.organizationId,
-
-          tenantId:
-            req.auth.tenantId,
-
-          metadata: {
-            incidentId:
-              incident._id,
-
-            environmentId:
-              incident.environmentId,
-          },
-        }
-      ).catch(() => {});
-
-      return res.json({
-        incident:
-          safeIncident(
-            updated
-          ),
-      });
-    } catch (error) {
-      return next(error);
-    }
-  }
-);
-
-/* -------------------------------------------------------------------------- */
-/* PATCH /:incidentId/assignment                                               */
-/* -------------------------------------------------------------------------- */
-
-router.patch(
-  "/:incidentId/assignment",
-  async (
-    req,
-    res,
-    next
-  ) => {
-    try {
-      const incident =
-        await loadIncident(
-          req,
-          res
-        );
-
-      if (!incident) {
-        return;
-      }
-
-      const {
-        error,
-        value,
-      } =
-        assignSchema.validate(
-          req.body || {}
-        );
-
-      if (error) {
-        return res
-          .status(422)
-          .json({
-            error:
-              error.details[0]
-                .message,
-
-            code:
-              "VALIDATION_ERROR",
-          });
-      }
-
-      const updated =
-        await incidentService
-          .assign(
-            incident._id,
-            {
-              organizationId:
-                req.auth.organizationId,
-
-              environmentId:
-                incident.environmentId,
-
-              userId:
-                req.auth.userId,
-
-              assigneeId:
-                value.assigneeId,
-
-              note:
-                value.note,
-            }
-          );
-
-      if (!updated) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Incident not found",
-
-            code:
-              "INCIDENT_NOT_FOUND",
-          });
-      }
-
-      await auditRecord(
-        AUTH_EVENT_TYPES
-          .INCIDENT_ASSIGNED,
-
-        AUTH_EVENT_OUTCOMES
-          .SUCCESS,
-
-        {
-          userId:
-            req.auth.userId,
-
-          organizationId:
-            req.auth.organizationId,
-
-          tenantId:
-            req.auth.tenantId,
-
-          metadata: {
-            incidentId:
-              incident._id,
-
-            environmentId:
-              incident.environmentId,
-
-            assigneeId:
-              value.assigneeId,
-          },
-        }
-      ).catch(() => {});
-
-      return res.json({
-        incident:
-          safeIncident(
-            updated
-          ),
-      });
-    } catch (error) {
-      return next(error);
-    }
-  }
-);
-
-/* -------------------------------------------------------------------------- */
-/* GET /:incidentId/timeline                                                   */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// GET /:incidentId/timeline
+// ============================================================================
 
 router.get(
   "/:incidentId/timeline",
@@ -997,47 +1050,64 @@ router.get(
           res
         );
 
-      if (!incident) {
+      if (
+        !incident
+      ) {
         return;
       }
 
-      const timeline = [
-        ...(incident.timeline ??
-          []),
-      ]
-        .sort(
-          (a, b) =>
-            new Date(
-              a.occurredAt
-            ) -
-            new Date(
-              b.occurredAt
-            )
-        )
-        .map(
-          (event) => ({
-            id:
-              event._id,
+      const timeline =
+        [
+          ...(
+            incident.timeline ||
+            []
+          ),
+        ]
+          .sort(
+            (
+              first,
+              second
+            ) =>
+              new Date(
+                first
+                  .occurredAt
+              ) -
+              new Date(
+                second
+                  .occurredAt
+              )
+          )
+          .map(
+            (
+              event
+            ) => ({
+              id:
+                event._id,
 
-            occurredAt:
-              event.occurredAt,
+              occurredAt:
+                event
+                  .occurredAt,
 
-            eventType:
-              event.eventType,
+              eventType:
+                event
+                  .eventType,
 
-            actor:
-              event.actor,
+              actor:
+                event.actor,
 
-            actorId:
-              event.actorId,
+              actorId:
+                event
+                  .actorId,
 
-            description:
-              event.description,
+              description:
+                event
+                  .description,
 
-            metadata:
-              event.metadata,
-          })
-        );
+              metadata:
+                event
+                  .metadata,
+            })
+          );
 
       return res.json({
         timeline,
@@ -1045,15 +1115,19 @@ router.get(
         count:
           timeline.length,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/* GET /:incidentId/playbooks                                                  */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// GET /:incidentId/playbooks
+// ============================================================================
 
 router.get(
   "/:incidentId/playbooks",
@@ -1069,13 +1143,17 @@ router.get(
           res
         );
 
-      if (!incident) {
+      if (
+        !incident
+      ) {
         return;
       }
 
       const tenantId =
-        req.auth?.tenantId ||
-        incident.tenantId;
+        req.auth
+          ?.tenantId ||
+        incident
+          .tenantId;
 
       const analysis =
         await getIncidentPlaybookService()
@@ -1085,25 +1163,931 @@ router.get(
               tenantId,
 
               organizationId:
-                incident.organizationId,
+                incident
+                  .organizationId,
 
               environmentId:
-                incident.environmentId,
+                incident
+                  .environmentId,
             }
           );
 
       return res.json(
         analysis
       );
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-/* -------------------------------------------------------------------------- */
-/* POST /:incidentId/playbooks/execute                                         */
-/* -------------------------------------------------------------------------- */
+// ============================================================================
+// GET /:incidentId
+// ============================================================================
+
+router.get(
+  "/:incidentId",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            incident
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/acknowledge
+// ============================================================================
+
+router.post(
+  "/:incidentId/acknowledge",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          acknowledgeSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .acknowledge(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              note:
+                validation
+                  .value
+                  .note,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      if (
+        AUTH_EVENT_TYPES
+          ?.INCIDENT_ACKNOWLEDGED
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .INCIDENT_ACKNOWLEDGED,
+
+          AUTH_EVENT_OUTCOMES
+            .SUCCESS,
+
+          {
+            userId:
+              req.auth
+                ?.userId,
+
+            organizationId:
+              incident
+                .organizationId,
+
+            tenantId:
+              incident
+                .tenantId,
+
+            metadata: {
+              incidentId:
+                incident._id,
+
+              environmentId:
+                incident
+                  .environmentId,
+            },
+          }
+        )
+          .catch(
+            () => {}
+          );
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/investigate
+// ============================================================================
+
+router.post(
+  "/:incidentId/investigate",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          reasonSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .startInvestigation(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              reason:
+                validation
+                  .value
+                  .reason ||
+                null,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/recover
+// ============================================================================
+
+router.post(
+  "/:incidentId/recover",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          reasonSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .startRecovery(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              reason:
+                validation
+                  .value
+                  .reason ||
+                null,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/resolve
+// ============================================================================
+
+router.post(
+  "/:incidentId/resolve",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          resolveSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .resolveManually(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              resolution:
+                validation
+                  .value
+                  .resolution,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      if (
+        AUTH_EVENT_TYPES
+          ?.INCIDENT_RESOLVED
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .INCIDENT_RESOLVED,
+
+          AUTH_EVENT_OUTCOMES
+            .SUCCESS,
+
+          {
+            userId:
+              req.auth
+                ?.userId,
+
+            organizationId:
+              incident
+                .organizationId,
+
+            tenantId:
+              incident
+                .tenantId,
+
+            metadata: {
+              incidentId:
+                incident._id,
+
+              environmentId:
+                incident
+                  .environmentId,
+            },
+          }
+        )
+          .catch(
+            () => {}
+          );
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/reopen
+// ============================================================================
+
+router.post(
+  "/:incidentId/reopen",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          reopenSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .reopen(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              reason:
+                validation
+                  .value
+                  .reason,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      if (
+        AUTH_EVENT_TYPES
+          ?.INCIDENT_REOPENED
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .INCIDENT_REOPENED,
+
+          AUTH_EVENT_OUTCOMES
+            .SUCCESS,
+
+          {
+            userId:
+              req.auth
+                ?.userId,
+
+            organizationId:
+              incident
+                .organizationId,
+
+            tenantId:
+              incident
+                .tenantId,
+
+            metadata: {
+              incidentId:
+                incident._id,
+
+              environmentId:
+                incident
+                  .environmentId,
+            },
+          }
+        )
+          .catch(
+            () => {}
+          );
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/close
+// ============================================================================
+
+router.post(
+  "/:incidentId/close",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          reasonSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const updated =
+        await incidentService
+          .close(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              reason:
+                validation
+                  .value
+                  .reason ||
+                null,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// PATCH /:incidentId/assignment
+// ============================================================================
+
+router.patch(
+  "/:incidentId/assignment",
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const incident =
+        await loadIncident(
+          req,
+          res
+        );
+
+      if (
+        !incident
+      ) {
+        return;
+      }
+
+      const validation =
+        validateBody(
+          assignSchema,
+          req,
+          res
+        );
+
+      if (
+        !validation.valid
+      ) {
+        return;
+      }
+
+      const {
+        assigneeId,
+        note,
+      } =
+        validation.value;
+
+      if (
+        assigneeId !==
+          null &&
+        assigneeId !==
+          undefined &&
+        !mongoose.Types.ObjectId
+          .isValid(
+            assigneeId
+          )
+      ) {
+        return res
+          .status(
+            422
+          )
+          .json({
+            error:
+              "assigneeId must be a valid identifier or null",
+
+            code:
+              "INVALID_ASSIGNEE_ID",
+          });
+      }
+
+      const updated =
+        await incidentService
+          .assign(
+            incident._id,
+            {
+              organizationId:
+                incident
+                  .organizationId,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              userId:
+                req.auth
+                  ?.userId ||
+                req.context
+                  ?.userId,
+
+              assigneeId:
+                assigneeId ||
+                null,
+
+              note:
+                note ||
+                null,
+            }
+          );
+
+      if (
+        !updated
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "Incident not found",
+
+            code:
+              "INCIDENT_NOT_FOUND",
+          });
+      }
+
+      if (
+        AUTH_EVENT_TYPES
+          ?.INCIDENT_ASSIGNED
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .INCIDENT_ASSIGNED,
+
+          AUTH_EVENT_OUTCOMES
+            .SUCCESS,
+
+          {
+            userId:
+              req.auth
+                ?.userId,
+
+            organizationId:
+              incident
+                .organizationId,
+
+            tenantId:
+              incident
+                .tenantId,
+
+            metadata: {
+              incidentId:
+                incident._id,
+
+              environmentId:
+                incident
+                  .environmentId,
+
+              assigneeId:
+                assigneeId ||
+                null,
+            },
+          }
+        )
+          .catch(
+            () => {}
+          );
+      }
+
+      return res.json({
+        incident:
+          safeIncident(
+            updated
+          ),
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
+  }
+);
+
+// ============================================================================
+// POST /:incidentId/playbooks/execute
+// ============================================================================
 
 router.post(
   "/:incidentId/playbooks/execute",
@@ -1119,19 +2103,24 @@ router.post(
           res
         );
 
-      if (!incident) {
+      if (
+        !incident
+      ) {
         return;
       }
 
       const tenantId =
-        req.auth?.tenantId ||
-        incident.tenantId;
+        req.auth
+          ?.tenantId ||
+        incident
+          .tenantId;
 
       const {
         dryRun,
         correlationId,
       } =
-        req.body || {};
+        req.body ||
+        {};
 
       const result =
         await getIncidentPlaybookService()
@@ -1141,15 +2130,18 @@ router.post(
               tenantId,
 
               organizationId:
-                incident.organizationId,
+                incident
+                  .organizationId,
 
               environmentId:
-                incident.environmentId,
+                incident
+                  .environmentId,
 
               correlationId,
 
               initiatedBy:
-                req.auth?.userId,
+                req.auth
+                  ?.userId,
 
               dryRun:
                 Boolean(
@@ -1164,12 +2156,25 @@ router.post(
           : 202;
 
       return res
-        .status(status)
-        .json(result);
-    } catch (error) {
-      return next(error);
+        .status(
+          status
+        )
+        .json(
+          result
+        );
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-module.exports = router;
+// ============================================================================
+// EXPORT
+// ============================================================================
+
+module.exports =
+  router;

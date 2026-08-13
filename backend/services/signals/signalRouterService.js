@@ -14,6 +14,11 @@ const {
     "../../models/SignalCorrelation"
   );
 
+const incidentOrchestrationService =
+  require(
+    "../incidents/incidentOrchestrationService"
+  );
+
 const {
   getQueueService,
 } =
@@ -55,10 +60,9 @@ class SignalRouterService {
       );
 
     /*
-     * We cannot create/route a service incident safely if
-     * the signal could not be mapped to an AIRA Service.
+     * We cannot create an incident safely without a resolved AIRA Service.
      *
-     * Keep it as evidence instead of guessing.
+     * Keep the signal as evidence instead of guessing service ownership.
      */
     if (
       candidate &&
@@ -94,9 +98,9 @@ class SignalRouterService {
       };
     }
 
-    // ------------------------------------------------------------------------
+    // ==========================================================================
     // SIGNAL EVENT
-    // ------------------------------------------------------------------------
+    // ==========================================================================
 
     const signalQueue =
       await this
@@ -154,9 +158,9 @@ class SignalRouterService {
           signal
         );
 
-    // ------------------------------------------------------------------------
+    // ==========================================================================
     // NON-INCIDENT SIGNAL
-    // ------------------------------------------------------------------------
+    // ==========================================================================
 
     if (!candidate) {
       await this
@@ -185,12 +189,15 @@ class SignalRouterService {
           false,
 
         signalQueue,
+
+        incidentResult:
+          null,
       };
     }
 
-    // ------------------------------------------------------------------------
-    // INCIDENT CANDIDATE
-    // ------------------------------------------------------------------------
+    // ==========================================================================
+    // INCIDENT CANDIDATE PAYLOAD
+    // ==========================================================================
 
     const incidentPayload = {
       organizationId:
@@ -285,16 +292,22 @@ class SignalRouterService {
       },
     };
 
-    const incidentQueue =
-      await this
-        .publishSafely(
-          "INCIDENT_DETECTED",
-          incidentPayload,
-          signal
-        );
+    // ==========================================================================
+    // QUEUE — INCIDENT DETECTED
+    // ==========================================================================
 
+    /*
+     * Keep the existing queue publication for now.
+     *
+     * Phase 5.7 will consolidate lifecycle event ownership so that
+     * incident persistence and event publication cannot diverge.
+     */
     const now =
       new Date();
+
+    // ==========================================================================
+    // MARK SIGNAL AS ROUTED
+    // ==========================================================================
 
     await this
       .markSignal(
@@ -313,6 +326,10 @@ class SignalRouterService {
             null,
         }
       );
+
+    // ==========================================================================
+    // MARK CORRELATION GROUP AS ROUTED
+    // ==========================================================================
 
     if (
       correlationGroup
@@ -342,6 +359,64 @@ class SignalRouterService {
         );
     }
 
+    // ==========================================================================
+    // PHASE 5 — INCIDENT ORCHESTRATION
+    // ==========================================================================
+
+    /*
+     * This is the canonical bridge from Phase 4 into Phase 5.
+     *
+     * The orchestration service:
+     *
+     * 1. evaluates the signal
+     * 2. identifies recovery / ignore / open-or-update
+     * 3. creates or updates the canonical Incident
+     * 4. links Signal -> Incident
+     * 5. links SignalCorrelation -> Incident
+     */
+    let incidentResult =
+      null;
+
+    try {
+      incidentResult =
+        await incidentOrchestrationService
+          .processSignal(
+            signal
+          );
+    } catch (error) {
+      /*
+       * Do NOT lose the canonical Signal merely because downstream
+       * incident orchestration fails.
+       *
+       * Record the error so it can be retried / inspected later.
+       */
+      console.error(
+        "[signal-router] Incident orchestration failed:",
+        error.message
+      );
+
+      await this
+        .markSignal(
+          signal,
+          {
+            processingError:
+              `Incident orchestration failed: ${String(
+                error.message ||
+                "unknown error"
+              ).slice(
+                0,
+                1900
+              )}`,
+          }
+        );
+
+      throw error;
+    }
+
+    // ==========================================================================
+    // RETURN
+    // ==========================================================================
+
     return {
       routed:
         true,
@@ -351,9 +426,9 @@ class SignalRouterService {
 
       signalQueue,
 
-      incidentQueue,
-
       incidentPayload,
+
+      incidentResult,
     };
   }
 
@@ -371,8 +446,7 @@ class SignalRouterService {
         await getQueueService();
 
       /*
-       * Local development may intentionally run without
-       * RabbitMQ.
+       * Local development may intentionally run without RabbitMQ.
        */
       if (
         !queue ||
@@ -439,9 +513,6 @@ class SignalRouterService {
       /*
        * Signal persistence must not disappear merely because
        * RabbitMQ is temporarily unavailable.
-       *
-       * Platform reliability/retry handling is strengthened
-       * later in Concept 17.
        */
       console.error(
         "[signal-router] Queue publication failed:",
@@ -460,6 +531,10 @@ class SignalRouterService {
       };
     }
   }
+
+  // ==========================================================================
+  // PRIORITY
+  // ==========================================================================
 
   priorityForSeverity(
     severity

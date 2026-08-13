@@ -1,28 +1,29 @@
 "use strict";
 
-/**
- * Incident service.
- *
- * Handles opening, deduplicating, updating, resolving,
- * acknowledging, reopening, and assigning incidents.
- *
- * Canonical ownership hierarchy:
- *
- * Organization
- *   -> Environment
- *      -> Service
- *         -> Monitor
- *            -> Incident
- *
- * All incident operations must preserve this ownership boundary.
- */
-
 const crypto = require("crypto");
+
+const incidentStateMachine =
+  require(
+    "./incidentStateMachine"
+  );
 
 const {
   Incident,
   buildFingerprint,
-} = require("../../models/Incident");
+} =
+  require(
+    "../../models/Incident"
+  );
+
+const incidentEventService =
+  require(
+    "./incidentEventService"
+  );
+
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
 
 const OPEN_STATUSES = [
   "open",
@@ -31,29 +32,58 @@ const OPEN_STATUSES = [
   "recovering",
 ];
 
-const MAX_EVIDENCE = 20;
+const MAX_MONITOR_EVIDENCE =
+  20;
 
-// ---------------------------------------------------------------------------
-// Fingerprint
-// ---------------------------------------------------------------------------
+const MAX_SIGNAL_EVIDENCE =
+  250;
 
-/**
- * Derive a short deterministic fingerprint from incident context.
- */
-function fingerprintFor(ctx) {
+const MAX_SIGNAL_IDS =
+  500;
+
+const SEVERITY_RANK =
+  Object.freeze({
+    info:
+      1,
+
+    warning:
+      2,
+
+    critical:
+      3,
+  });
+
+// ============================================================================
+// FINGERPRINT
+// ============================================================================
+
+function fingerprintFor(
+  ctx
+) {
   const raw =
-    buildFingerprint(ctx);
+    buildFingerprint(
+      ctx
+    );
 
   return crypto
-    .createHash("sha256")
-    .update(raw)
-    .digest("hex")
-    .slice(0, 16);
+    .createHash(
+      "sha256"
+    )
+    .update(
+      raw
+    )
+    .digest(
+      "hex"
+    )
+    .slice(
+      0,
+      16
+    );
 }
 
-// ---------------------------------------------------------------------------
-// Severity inference
-// ---------------------------------------------------------------------------
+// ============================================================================
+// SEVERITY
+// ============================================================================
 
 function inferSeverity(
   errorCode,
@@ -65,27 +95,26 @@ function inferSeverity(
       "ECONNREFUSED",
       "ECONNRESET",
       "ETIMEDOUT",
-    ].includes(errorCode)
-  ) {
-    return "critical";
-  }
-
-  if (
-    errorCode ===
-    "CERT_HAS_EXPIRED"
+      "CERT_HAS_EXPIRED",
+    ].includes(
+      errorCode
+    )
   ) {
     return "critical";
   }
 
   if (
     errorCode &&
-    errorCode.startsWith("CERT_")
+    errorCode.startsWith(
+      "CERT_"
+    )
   ) {
     return "warning";
   }
 
   if (
-    occurrenceCount >= 5
+    occurrenceCount >=
+    5
   ) {
     return "critical";
   }
@@ -93,18 +122,43 @@ function inferSeverity(
   return "warning";
 }
 
-// ---------------------------------------------------------------------------
-// Evidence sanitizer
-// ---------------------------------------------------------------------------
+function higherSeverity(
+  current = "info",
+  incoming = "info"
+) {
+  return (
+    (
+      SEVERITY_RANK[
+        incoming
+      ] ||
+      0
+    ) >
+    (
+      SEVERITY_RANK[
+        current
+      ] ||
+      0
+    )
+  )
+    ? incoming
+    : current;
+}
 
-function sanitizeEvidence(check) {
+// ============================================================================
+// MONITOR EVIDENCE
+// ============================================================================
+
+function sanitizeEvidence(
+  check
+) {
   return {
     checkedAt:
       check.checkedAt ??
       new Date(),
 
     status:
-      check.status,
+      check.status ??
+      null,
 
     statusCode:
       check.statusCode ??
@@ -128,16 +182,94 @@ function sanitizeEvidence(check) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Ownership validation
-// ---------------------------------------------------------------------------
+// ============================================================================
+// SIGNAL EVIDENCE
+// ============================================================================
 
-/**
- * Background workers do not pass through browser auth middleware.
- *
- * Therefore incident creation must fail closed if the Monitor
- * does not carry its complete ownership lineage.
- */
+function sanitizeSignalEvidence(
+  signal
+) {
+  return {
+    checkedAt:
+      signal.observedAt ||
+      signal.receivedAt ||
+      new Date(),
+
+    status:
+      signal.eventType ||
+      null,
+
+    statusCode:
+      signal.statusCode ??
+      null,
+
+    responseTimeMs:
+      signal.metric
+        ?.name ===
+        "monitor.response_time"
+        ? signal.metric
+            .value ??
+          null
+        : null,
+
+    errorCode:
+      signal.errorCode ||
+      null,
+
+    sanitizedErrorMessage:
+      signal.errorMessage ||
+      signal.description ||
+      null,
+
+    checkerRegion:
+      signal.resource
+        ?.region ||
+      null,
+
+    signalId:
+      signal.signalId ||
+      null,
+
+    provider:
+      signal.provider ||
+      null,
+
+    signalType:
+      signal.signalType ||
+      null,
+
+    eventType:
+      signal.eventType ||
+      null,
+
+    severity:
+      signal.severity ||
+      null,
+
+    observedAt:
+      signal.observedAt ||
+      null,
+
+    traceId:
+      signal.traceId ||
+      null,
+
+    resourceId:
+      signal.resource
+        ?.resourceId ||
+      null,
+
+    correlationScore:
+      signal
+        .correlationScore ??
+      null,
+  };
+}
+
+// ============================================================================
+// OWNERSHIP
+// ============================================================================
+
 function assertMonitorOwnership(
   monitor
 ) {
@@ -153,7 +285,9 @@ function assertMonitorOwnership(
     );
   }
 
-  if (!monitor.organizationId) {
+  if (
+    !monitor.organizationId
+  ) {
     throw Object.assign(
       new Error(
         "Monitor organizationId is required"
@@ -165,7 +299,9 @@ function assertMonitorOwnership(
     );
   }
 
-  if (!monitor.environmentId) {
+  if (
+    !monitor.environmentId
+  ) {
     throw Object.assign(
       new Error(
         "Monitor environmentId is required"
@@ -177,7 +313,9 @@ function assertMonitorOwnership(
     );
   }
 
-  if (!monitor.serviceId) {
+  if (
+    !monitor.serviceId
+  ) {
     throw Object.assign(
       new Error(
         "Monitor serviceId is required"
@@ -189,7 +327,9 @@ function assertMonitorOwnership(
     );
   }
 
-  if (!monitor._id) {
+  if (
+    !monitor._id
+  ) {
     throw Object.assign(
       new Error(
         "Monitor id is required"
@@ -202,10 +342,39 @@ function assertMonitorOwnership(
   }
 }
 
-/**
- * Build an environment-scoped query for a user-triggered
- * incident operation.
- */
+function assertSignalOwnership(
+  signal
+) {
+  if (!signal) {
+    throw Object.assign(
+      new Error(
+        "Signal is required"
+      ),
+      {
+        code:
+          "INCIDENT_SIGNAL_REQUIRED",
+      }
+    );
+  }
+
+  if (
+    !signal.organizationId ||
+    !signal.environmentId ||
+    !signal.tenantId ||
+    !signal.serviceId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Signal incident ownership context is incomplete"
+      ),
+      {
+        code:
+          "INCIDENT_SIGNAL_CONTEXT_REQUIRED",
+      }
+    );
+  }
+}
+
 function incidentOwnershipQuery(
   incidentId,
   context = {}
@@ -213,28 +382,37 @@ function incidentOwnershipQuery(
   const {
     organizationId,
     environmentId,
-  } = context;
+  } =
+    context;
 
-  if (!organizationId) {
+  if (
+    !organizationId
+  ) {
     throw Object.assign(
       new Error(
         "organizationId is required for incident operation"
       ),
       {
-        status: 400,
+        status:
+          400,
+
         code:
           "ORGANIZATION_CONTEXT_REQUIRED",
       }
     );
   }
 
-  if (!environmentId) {
+  if (
+    !environmentId
+  ) {
     throw Object.assign(
       new Error(
         "environmentId is required for incident operation"
       ),
       {
-        status: 400,
+        status:
+          400,
+
         code:
           "ENVIRONMENT_CONTEXT_REQUIRED",
       }
@@ -251,9 +429,205 @@ function incidentOwnershipQuery(
   };
 }
 
-// ---------------------------------------------------------------------------
-// Open / deduplicate
-// ---------------------------------------------------------------------------
+// ============================================================================
+// ARRAY BOUNDING
+// ============================================================================
+
+function pushBounded(
+  array,
+  value,
+  max
+) {
+  array.push(
+    value
+  );
+
+  if (
+    array.length >
+    max
+  ) {
+    array.splice(
+      0,
+      array.length -
+        max
+    );
+  }
+}
+
+// ============================================================================
+// SOURCE
+// ============================================================================
+
+function normalizeIncidentSource(
+  signal
+) {
+  if (
+    signal.source ===
+    "monitor"
+  ) {
+    return "monitor";
+  }
+
+  if (
+    signal.source ===
+    "manual"
+  ) {
+    return "manual";
+  }
+
+  if (
+    signal.signalType ===
+    "alert"
+  ) {
+    return "alert";
+  }
+
+  return "integration";
+}
+
+// ============================================================================
+// INCIDENT LIFECYCLE EVENT PUBLICATION
+// ============================================================================
+
+async function publishIncidentLifecycle(
+  topicName,
+  incident,
+  extra = {}
+) {
+  const eventTypeMap = {
+    INCIDENT_DETECTED:
+      "incident.detected",
+
+    INCIDENT_UPDATED:
+      "incident.updated",
+
+    INCIDENT_ACKNOWLEDGED:
+      "incident.acknowledged",
+
+    INCIDENT_INVESTIGATING:
+      "incident.investigating",
+
+    INCIDENT_RECOVERING:
+      "incident.recovering",
+
+    INCIDENT_RESOLVED:
+      "incident.resolved",
+
+    INCIDENT_CLOSED:
+      "incident.closed",
+
+    INCIDENT_REOPENED:
+      "incident.reopened",
+
+    INCIDENT_ASSIGNED:
+      "incident.assigned",
+
+    INCIDENT_UNASSIGNED:
+      "incident.unassigned",
+
+    INCIDENT_SEVERITY_ESCALATED:
+      "incident.severity_escalated",
+  };
+
+  const eventType =
+    eventTypeMap[
+      topicName
+    ];
+
+  if (!eventType) {
+    return {
+      published:
+        false,
+
+      reason:
+        "UNKNOWN_INCIDENT_EVENT_TOPIC",
+    };
+  }
+
+  try {
+    const result =
+      await incidentEventService
+        .persistAndPublish({
+          incident,
+
+          eventType,
+
+          topicName,
+
+          changeType:
+            extra.changeType ||
+            null,
+
+          previousStatus:
+            extra.previousStatus ||
+            null,
+
+          newStatus:
+            extra.newStatus ||
+            null,
+
+          signalId:
+            extra.signalId ||
+            null,
+
+          payload:
+            extra,
+
+          metadata: {
+            correlationGroupId:
+              incident
+                .correlationGroupId ||
+              null,
+          },
+
+          occurredAt:
+            incident
+              .lastObservedAt ||
+            new Date(),
+        });
+
+    return {
+      published:
+        result
+          .publication
+          ?.published ===
+        true,
+
+      event:
+        result.event,
+
+      publication:
+        result
+          .publication,
+    };
+  } catch (
+    error
+  ) {
+    console.error(
+      "[incident-service] lifecycle persistence/publication failed:",
+      error.message
+    );
+
+    /*
+     * Incident state must remain durable even if event
+     * persistence/publication fails.
+     */
+    return {
+      published:
+        false,
+
+      reason:
+        "INCIDENT_EVENT_PIPELINE_FAILED",
+
+      error:
+        error.message,
+    };
+  }
+}
+
+// ============================================================================
+// LEGACY MONITOR PATH
+// ============================================================================
 
 async function openOrUpdate({
   monitor,
@@ -264,87 +638,195 @@ async function openOrUpdate({
     monitor
   );
 
-  const ctx = {
-    organizationId:
-      monitor.organizationId,
-
-    environmentId:
-      monitor.environmentId,
-
-    serviceId:
-      monitor.serviceId,
-
-    monitorId:
-      monitor._id,
-
-    source:
-      "monitor",
-
-    errorCode:
-      check.errorCode,
-  };
-
   const fingerprint =
-    fingerprintFor(ctx);
+    fingerprintFor({
+      organizationId:
+        monitor
+          .organizationId,
+
+      environmentId:
+        monitor
+          .environmentId,
+
+      serviceId:
+        monitor
+          .serviceId,
+
+      monitorId:
+        monitor._id,
+
+      source:
+        "monitor",
+
+      errorCode:
+        check.errorCode,
+    });
 
   const now =
     transitionedAt ??
     new Date();
 
-  /**
-   * Deduplication is scoped to the complete operational boundary.
-   *
-   * A Production incident must never deduplicate against
-   * an identical Staging incident.
-   */
-  const existing =
-    await Incident.findOne({
-      organizationId:
-        monitor.organizationId,
+  let existing =
+    await Incident
+      .findOne({
+        organizationId:
+          monitor
+            .organizationId,
 
-      environmentId:
-        monitor.environmentId,
+        environmentId:
+          monitor
+            .environmentId,
 
-      serviceId:
-        monitor.serviceId,
+        serviceId:
+          monitor
+            .serviceId,
 
-      monitorId:
-        monitor._id,
+        monitorId:
+          monitor._id,
 
-      fingerprint,
+        fingerprint,
 
-      status: {
-        $in:
-          OPEN_STATUSES,
-      },
-    });
+        status: {
+          $in:
+            OPEN_STATUSES,
+        },
+      });
+
+  // ==========================================================================
+  // EXISTING MONITOR INCIDENT
+  // ==========================================================================
 
   if (existing) {
-    const evidence = [
-      ...existing.evidence,
-      sanitizeEvidence(check),
-    ].slice(
-      -MAX_EVIDENCE
-    );
-
-    const severity =
-      inferSeverity(
-        check.errorCode,
-        existing.occurrenceCount +
-          1
-      );
-
-    existing.occurrenceCount +=
+    const nextCount =
+      existing
+        .occurrenceCount +
       1;
 
-    existing.lastObservedAt =
+    const incomingSeverity =
+      inferSeverity(
+        check.errorCode,
+        nextCount
+      );
+
+    const previousSeverity =
+      existing.severity;
+
+    existing
+      .occurrenceCount =
+      nextCount;
+
+    existing
+      .lastObservedAt =
       now;
 
-    existing.evidence =
-      evidence;
+    existing
+      .evidenceCount =
+      (
+        existing
+          .evidenceCount ||
+        0
+      ) + 1;
 
+    existing.providers =
+      Array.from(
+        new Set([
+          ...(
+            existing
+              .providers ||
+            []
+          ),
+
+          "monitor",
+        ])
+      );
+
+    existing.providerCount =
+      existing
+        .providers
+        .length;
+
+    existing.detectionMethod =
+      existing
+        .detectionMethod ||
+      "monitor_transition";
+
+    /*
+     * Never automatically reduce severity while active.
+     */
     existing.severity =
-      severity;
+      higherSeverity(
+        existing.severity,
+        incomingSeverity
+      );
+
+    pushBounded(
+      existing.evidence,
+      sanitizeEvidence(
+        check
+      ),
+      MAX_MONITOR_EVIDENCE
+    );
+
+    if (
+      previousSeverity !==
+      existing.severity
+    ) {
+      existing
+        .timeline
+        .push({
+          occurredAt:
+            now,
+
+          eventType:
+            "severity_escalated",
+
+          actor:
+            "system",
+
+          description:
+            `Incident severity escalated from ${previousSeverity} to ${existing.severity}.`,
+
+          metadata: {
+            previousSeverity,
+
+            newSeverity:
+              existing
+                .severity,
+
+            monitorId:
+              monitor._id,
+          },
+        });
+    }
+
+    /*
+     * A new failure during recovery means recovery failed.
+     */
+    if (
+      existing.status ===
+      "recovering"
+    ) {
+      incidentStateMachine
+        .transition(
+          existing,
+          "investigating",
+          {
+            actor:
+              "system",
+
+            occurredAt:
+              now,
+
+            reason:
+              "A new failure was observed while the incident was recovering.",
+
+            metadata: {
+              monitorId:
+                monitor._id,
+            },
+          }
+        );
+    }
 
     existing.timeline.push({
       occurredAt:
@@ -358,7 +840,8 @@ async function openOrUpdate({
 
       description:
         `Probable contributing signal observed again (${existing.occurrenceCount} occurrences). ${
-          check.sanitizedErrorMessage ??
+          check
+            .sanitizedErrorMessage ??
           check.status ??
           ""
         }`.trim(),
@@ -371,17 +854,29 @@ async function openOrUpdate({
           check.errorCode,
 
         environmentId:
-          monitor.environmentId,
+          monitor
+            .environmentId,
 
         serviceId:
-          monitor.serviceId,
+          monitor
+            .serviceId,
 
         monitorId:
           monitor._id,
       },
     });
 
-    await existing.save();
+    await existing
+      .save();
+
+    await publishIncidentLifecycle(
+      "INCIDENT_UPDATED",
+      existing,
+      {
+        changeType:
+          "monitor_failure_observed",
+      }
+    );
 
     return {
       incident:
@@ -389,8 +884,15 @@ async function openOrUpdate({
 
       created:
         false,
+
+      updated:
+        true,
     };
   }
+
+  // ==========================================================================
+  // CREATE MONITOR INCIDENT
+  // ==========================================================================
 
   const severity =
     inferSeverity(
@@ -404,112 +906,213 @@ async function openOrUpdate({
       check
     );
 
-  const incident =
-    await Incident.create({
-      organizationId:
-        monitor.organizationId,
+  try {
+    const incident =
+      await Incident
+        .create({
+          organizationId:
+            monitor
+              .organizationId,
 
-      environmentId:
-        monitor.environmentId,
+          environmentId:
+            monitor
+              .environmentId,
 
-      tenantId:
-        monitor.tenantId,
+          tenantId:
+            monitor
+              .tenantId,
 
-      serviceId:
-        monitor.serviceId,
+          serviceId:
+            monitor
+              .serviceId,
 
-      monitorId:
-        monitor._id,
+          monitorId:
+            monitor._id,
 
-      source:
-        "monitor",
+          source:
+            "monitor",
 
-      sourceEventId:
-        `${monitor._id}::${
-          check.errorCode ||
-          "http_failure"
-        }`,
+          sourceEventId:
+            `${monitor._id}::${
+              check.errorCode ||
+              "http_failure"
+            }`,
 
-      fingerprint,
+          detectionMethod:
+            "monitor_transition",
 
-      title,
+          correlationGroupId:
+            null,
 
-      description:
-        buildDescription(
-          monitor,
-          check
-        ),
+          primarySignalId:
+            null,
 
-      severity,
+          signalIds:
+            [],
 
-      status:
-        "open",
+          signalFingerprint:
+            null,
 
-      impact:
-        `Monitor "${monitor.name}" at ${monitor.url} is reporting an observed failure.`,
+          providers: [
+            "monitor",
+          ],
 
-      startedAt:
-        now,
+          providerCount:
+            1,
 
-      detectedAt:
-        now,
+          evidenceCount:
+            1,
 
-      lastObservedAt:
-        now,
+          correlationConfidence:
+            null,
 
-      occurrenceCount:
-        1,
+          lastSignalAt:
+            null,
 
-      evidence: [
-        sanitizeEvidence(
-          check
-        ),
-      ],
+          fingerprint,
 
-      timeline: [
-        {
-          occurredAt:
-            now,
-
-          eventType:
-            "opened",
-
-          actor:
-            "system",
+          title,
 
           description:
-            `Incident opened after ${monitor.consecutiveFailureThreshold} consecutive observed failures. ${
-              check.sanitizedErrorMessage ??
-              ""
-            }`.trim(),
+            buildDescription(
+              monitor,
+              check
+            ),
 
-          metadata: {
-            monitorId:
-              monitor._id,
+          severity,
 
-            serviceId:
-              monitor.serviceId,
+          status:
+            "open",
+
+          impact:
+            `Monitor "${monitor.name}" at ${monitor.url} is reporting an observed failure.`,
+
+          startedAt:
+            now,
+
+          detectedAt:
+            now,
+
+          lastObservedAt:
+            now,
+
+          occurrenceCount:
+            1,
+
+          evidence: [
+            sanitizeEvidence(
+              check
+            ),
+          ],
+
+          timeline: [
+            {
+              occurredAt:
+                now,
+
+              eventType:
+                "opened",
+
+              actor:
+                "system",
+
+              description:
+                `Incident opened after ${monitor.consecutiveFailureThreshold} consecutive observed failures. ${
+                  check
+                    .sanitizedErrorMessage ??
+                  ""
+                }`.trim(),
+
+              metadata: {
+                monitorId:
+                  monitor._id,
+
+                serviceId:
+                  monitor
+                    .serviceId,
+
+                environmentId:
+                  monitor
+                    .environmentId,
+
+                threshold:
+                  monitor
+                    .consecutiveFailureThreshold,
+              },
+            },
+          ],
+
+          analysisStatus:
+            "not_started",
+        });
+
+    await publishIncidentLifecycle(
+      "INCIDENT_DETECTED",
+      incident,
+      {
+        changeType:
+          "monitor_transition",
+      }
+    );
+
+    return {
+      incident,
+
+      created:
+        true,
+
+      updated:
+        false,
+    };
+  } catch (
+    error
+  ) {
+    /*
+     * Active-incident unique index is the final concurrency
+     * protection if multiple workers race.
+     */
+    if (
+      error?.code ===
+      11000
+    ) {
+      existing =
+        await Incident
+          .findOne({
+            organizationId:
+              monitor
+                .organizationId,
 
             environmentId:
-              monitor.environmentId,
+              monitor
+                .environmentId,
 
-            threshold:
-              monitor.consecutiveFailureThreshold,
-          },
-        },
-      ],
-    });
+            fingerprint,
 
-  return {
-    incident,
-    created:
-      true,
-  };
+            status: {
+              $in:
+                OPEN_STATUSES,
+            },
+          });
+
+      if (existing) {
+        return openOrUpdate({
+          monitor,
+
+          check,
+
+          transitionedAt:
+            now,
+        });
+      }
+    }
+
+    throw error;
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Automatic recovery
-// ---------------------------------------------------------------------------
+// ============================================================================
+// LEGACY MONITOR RECOVERY
+// ============================================================================
 
 async function resolveForMonitor({
   monitor,
@@ -523,94 +1126,190 @@ async function resolveForMonitor({
     resolvedAt ??
     new Date();
 
-  /**
-   * Resolve every active incident for this exact monitor,
-   * but only inside the monitor's complete ownership boundary.
-   *
-   * We intentionally do not use errorCode here because one
-   * recovered monitor may have produced multiple failure signals.
-   */
   const openIncidents =
-    await Incident.find({
-      organizationId:
-        monitor.organizationId,
+    await Incident
+      .find({
+        organizationId:
+          monitor
+            .organizationId,
 
-      environmentId:
-        monitor.environmentId,
+        environmentId:
+          monitor
+            .environmentId,
 
-      serviceId:
-        monitor.serviceId,
+        serviceId:
+          monitor
+            .serviceId,
 
-      monitorId:
-        monitor._id,
+        monitorId:
+          monitor._id,
 
-      status: {
-        $in:
-          OPEN_STATUSES,
-      },
-    });
+        status: {
+          $in:
+            OPEN_STATUSES,
+        },
+      });
 
   for (
     const incident
     of openIncidents
   ) {
-    incident.status =
-      "resolved";
+    incidentStateMachine
+      .transition(
+        incident,
+        "resolved",
+        {
+          actor:
+            "system",
 
-    incident.resolvedAt =
+          occurredAt:
+            now,
+
+          reason:
+            `Monitor recovered after ${monitor.recoverySuccessThreshold} consecutive successful checks. Incident auto-resolved.`,
+
+          metadata: {
+            monitorId:
+              monitor._id,
+
+            serviceId:
+              monitor
+                .serviceId,
+
+            environmentId:
+              monitor
+                .environmentId,
+
+            recoveryThreshold:
+              monitor
+                .recoverySuccessThreshold,
+
+            resolutionType:
+              "automatic",
+          },
+        }
+      );
+
+    incident.lastObservedAt =
       now;
 
-    incident.timeline.push({
-      occurredAt:
-        now,
+    incident.resolutionType =
+      "automatic";
 
-      eventType:
-        "resolved",
+    incident.resolution =
+      "Monitor recovery threshold reached.";
 
-      actor:
-        "system",
+    await incident
+      .save();
 
-      description:
-        `Monitor recovered after ${monitor.recoverySuccessThreshold} consecutive successful checks. Incident auto-resolved.`,
+    await publishIncidentLifecycle(
+      "INCIDENT_RESOLVED",
+      incident,
+      {
+        changeType:
+          "monitor_recovery",
 
-      metadata: {
-        monitorId:
-          monitor._id,
-
-        serviceId:
-          monitor.serviceId,
-
-        environmentId:
-          monitor.environmentId,
-
-        recoveryThreshold:
-          monitor.recoverySuccessThreshold,
-      },
-    });
-
-    await incident.save();
+        resolutionType:
+          "automatic",
+      }
+    );
   }
 
   return openIncidents;
 }
 
-// ---------------------------------------------------------------------------
-// Manual operations
-// ---------------------------------------------------------------------------
+// ============================================================================
+// GENERIC STATE TRANSITION
+// ============================================================================
 
-/**
- * Manual operations MUST receive:
- *
- * {
- *   organizationId,
- *   environmentId,
- *   userId,
- *   ...
- * }
- *
- * The API route will provide these values from authenticated
- * organization/environment context.
- */
+async function transitionStatus(
+  incidentId,
+  {
+    organizationId,
+    environmentId,
+    userId = null,
+    targetStatus,
+    reason = null,
+    metadata = {},
+    actor =
+      userId
+        ? "user"
+        : "system",
+  }
+) {
+  const incident =
+    await Incident
+      .findOne(
+        incidentOwnershipQuery(
+          incidentId,
+          {
+            organizationId,
+
+            environmentId,
+          }
+        )
+      );
+
+  if (!incident) {
+    return null;
+  }
+
+  const result =
+    incidentStateMachine
+      .transition(
+        incident,
+        targetStatus,
+        {
+          actor,
+
+          actorId:
+            userId,
+
+          occurredAt:
+            new Date(),
+
+          reason,
+
+          metadata,
+        }
+      );
+
+  if (
+    result.changed
+  ) {
+    await incident
+      .save();
+
+    const topicName =
+      targetStatus ===
+      "resolved"
+        ? "INCIDENT_RESOLVED"
+        : "INCIDENT_UPDATED";
+
+    await publishIncidentLifecycle(
+      topicName,
+      incident,
+      {
+        changeType:
+          "status_transition",
+
+        previousStatus:
+          result
+            .previousStatus,
+
+        newStatus:
+          result
+            .currentStatus,
+      }
+    );
+  }
+
+  return incident;
+}
+
+// ============================================================================
+// ACKNOWLEDGE
+// ============================================================================
 
 async function acknowledge(
   incidentId,
@@ -618,70 +1317,97 @@ async function acknowledge(
     organizationId,
     environmentId,
     userId,
-    note,
   }
 ) {
-  const incident =
-    await Incident.findOne(
-      incidentOwnershipQuery(
-        incidentId,
-        {
-          organizationId,
-          environmentId,
-        }
-      )
-    );
+  return transitionStatus(
+    incidentId,
+    {
+      organizationId,
 
-  if (!incident) {
-    return null;
-  }
+      environmentId,
 
-  if (
-    !OPEN_STATUSES.includes(
-      incident.status
-    )
-  ) {
-    throw Object.assign(
-      new Error(
-        "Incident is not in an open state"
-      ),
-      {
-        status: 409,
-        code:
-          "INCIDENT_NOT_OPEN",
-      }
-    );
-  }
-
-  incident.status =
-    "acknowledged";
-
-  incident.acknowledgedAt =
-    new Date();
-
-  incident.timeline.push({
-    occurredAt:
-      new Date(),
-
-    eventType:
-      "acknowledged",
-
-    actor:
-      "user",
-
-    actorId:
       userId,
 
-    description:
-      note
-        ? `Acknowledged: ${note}`
-        : "Incident acknowledged.",
-  });
+      targetStatus:
+        "acknowledged",
 
-  await incident.save();
+      reason:
+        "Incident acknowledged.",
 
-  return incident;
+      metadata: {
+        userId,
+      },
+    }
+  );
 }
+
+// ============================================================================
+// INVESTIGATING
+// ============================================================================
+
+async function startInvestigation(
+  incidentId,
+  {
+    organizationId,
+    environmentId,
+    userId = null,
+    reason = null,
+  }
+) {
+  return transitionStatus(
+    incidentId,
+    {
+      organizationId,
+
+      environmentId,
+
+      userId,
+
+      targetStatus:
+        "investigating",
+
+      reason:
+        reason ||
+        "Incident investigation started.",
+    }
+  );
+}
+
+// ============================================================================
+// RECOVERING
+// ============================================================================
+
+async function startRecovery(
+  incidentId,
+  {
+    organizationId,
+    environmentId,
+    userId = null,
+    reason = null,
+  }
+) {
+  return transitionStatus(
+    incidentId,
+    {
+      organizationId,
+
+      environmentId,
+
+      userId,
+
+      targetStatus:
+        "recovering",
+
+      reason:
+        reason ||
+        "Incident entered recovery.",
+    }
+  );
+}
+
+// ============================================================================
+// MANUAL RESOLUTION
+// ============================================================================
 
 async function resolveManually(
   incidentId,
@@ -693,53 +1419,79 @@ async function resolveManually(
   }
 ) {
   const incident =
-    await Incident.findOne(
-      incidentOwnershipQuery(
-        incidentId,
-        {
-          organizationId,
-          environmentId,
-        }
-      )
-    );
+    await Incident
+      .findOne(
+        incidentOwnershipQuery(
+          incidentId,
+          {
+            organizationId,
+
+            environmentId,
+          }
+        )
+      );
 
   if (!incident) {
     return null;
   }
 
-  incident.status =
-    "resolved";
-
-  incident.resolvedAt =
+  const now =
     new Date();
+
+  incidentStateMachine
+    .transition(
+      incident,
+      "resolved",
+      {
+        actor:
+          "user",
+
+        actorId:
+          userId,
+
+        occurredAt:
+          now,
+
+        reason:
+          resolution
+            ? `Manually resolved: ${resolution}`
+            : "Manually resolved.",
+
+        metadata: {
+          resolutionType:
+            "manual",
+        },
+      }
+    );
 
   incident.resolution =
     resolution ??
     null;
 
-  incident.timeline.push({
-    occurredAt:
-      new Date(),
+  incident.resolutionType =
+    "manual";
 
-    eventType:
-      "resolved",
+  await incident
+    .save();
 
-    actor:
-      "user",
+  await publishIncidentLifecycle(
+    "INCIDENT_RESOLVED",
+    incident,
+    {
+      changeType:
+        "manual_resolution",
 
-    actorId:
-      userId,
-
-    description:
-      resolution
-        ? `Manually resolved: ${resolution}`
-        : "Manually resolved.",
-  });
-
-  await incident.save();
+      resolutionType:
+        "manual",
+    }
+  );
 
   return incident;
 }
+
+// ============================================================================
+// REOPEN
+// ============================================================================
 
 async function reopen(
   incidentId,
@@ -751,70 +1503,104 @@ async function reopen(
   }
 ) {
   const incident =
-    await Incident.findOne(
-      incidentOwnershipQuery(
-        incidentId,
-        {
-          organizationId,
-          environmentId,
-        }
-      )
-    );
+    await Incident
+      .findOne(
+        incidentOwnershipQuery(
+          incidentId,
+          {
+            organizationId,
+
+            environmentId,
+          }
+        )
+      );
 
   if (!incident) {
     return null;
   }
 
-  if (
-    incident.status !==
-      "resolved" &&
-    incident.status !==
-      "closed"
-  ) {
-    throw Object.assign(
-      new Error(
-        "Only resolved or closed incidents can be reopened"
-      ),
+  /*
+   * State machine enforces:
+   *
+   * resolved -> open
+   * closed   -> open
+   */
+  incidentStateMachine
+    .transition(
+      incident,
+      "open",
       {
-        status: 409,
-        code:
-          "INCIDENT_NOT_REOPENABLE",
+        actor:
+          "user",
+
+        actorId:
+          userId,
+
+        occurredAt:
+          new Date(),
+
+        reason:
+          reason
+            ? `Reopened: ${reason}`
+            : "Incident reopened.",
+
+        metadata: {
+          reopenedBy:
+            userId,
+        },
       }
     );
-  }
 
-  incident.status =
-    "open";
+  await incident
+    .save();
 
-  incident.resolvedAt =
-    null;
-
-  incident.resolution =
-    null;
-
-  incident.timeline.push({
-    occurredAt:
-      new Date(),
-
-    eventType:
-      "reopened",
-
-    actor:
-      "user",
-
-    actorId:
-      userId,
-
-    description:
-      reason
-        ? `Reopened: ${reason}`
-        : "Incident reopened.",
-  });
-
-  await incident.save();
+  await publishIncidentLifecycle(
+    "INCIDENT_UPDATED",
+    incident,
+    {
+      changeType:
+        "reopened",
+    }
+  );
 
   return incident;
 }
+
+// ============================================================================
+// CLOSE
+// ============================================================================
+
+async function close(
+  incidentId,
+  {
+    organizationId,
+    environmentId,
+    userId,
+    reason = null,
+  }
+) {
+  return transitionStatus(
+    incidentId,
+    {
+      organizationId,
+
+      environmentId,
+
+      userId,
+
+      targetStatus:
+        "closed",
+
+      reason:
+        reason ||
+        "Incident closed.",
+    }
+  );
+}
+
+// ============================================================================
+// ASSIGN
+// ============================================================================
 
 async function assign(
   incidentId,
@@ -827,30 +1613,42 @@ async function assign(
   }
 ) {
   const incident =
-    await Incident.findOne(
-      incidentOwnershipQuery(
-        incidentId,
-        {
-          organizationId,
-          environmentId,
-        }
-      )
-    );
+    await Incident
+      .findOne(
+        incidentOwnershipQuery(
+          incidentId,
+          {
+            organizationId,
+
+            environmentId,
+          }
+        )
+      );
 
   if (!incident) {
     return null;
   }
 
+  const now =
+    new Date();
+
   incident.assignedTo =
     assigneeId ??
     null;
 
+  incident.assignedAt =
+    assigneeId
+      ? now
+      : null;
+
   incident.timeline.push({
     occurredAt:
-      new Date(),
+      now,
 
     eventType:
-      "assigned",
+      assigneeId
+        ? "assigned"
+        : "unassigned",
 
     actor:
       "user",
@@ -868,18 +1666,36 @@ async function assign(
         : "Unassigned.",
 
     metadata: {
-      assigneeId,
+      assigneeId:
+        assigneeId ??
+        null,
     },
   });
 
-  await incident.save();
+  await incident
+    .save();
+
+  await publishIncidentLifecycle(
+    "INCIDENT_UPDATED",
+    incident,
+    {
+      changeType:
+        assigneeId
+          ? "assigned"
+          : "unassigned",
+
+      assigneeId:
+        assigneeId ??
+        null,
+    }
+  );
 
   return incident;
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ============================================================================
+// MONITOR TITLE
+// ============================================================================
 
 function buildTitle(
   monitor,
@@ -889,38 +1705,53 @@ function buildTitle(
     check.errorCode ===
     "ENOTFOUND"
   ) {
-    return `${monitor.name}: DNS resolution failure`;
+    return (
+      `${monitor.name}: DNS resolution failure`
+    );
   }
 
   if (
     check.errorCode ===
     "ECONNREFUSED"
   ) {
-    return `${monitor.name}: Connection refused`;
+    return (
+      `${monitor.name}: Connection refused`
+    );
   }
 
   if (
     check.errorCode ===
     "ETIMEDOUT"
   ) {
-    return `${monitor.name}: Request timeout`;
+    return (
+      `${monitor.name}: Request timeout`
+    );
   }
 
   if (
     check.statusCode
   ) {
-    return `${monitor.name}: HTTP ${check.statusCode} observed`;
+    return (
+      `${monitor.name}: HTTP ${check.statusCode} observed`
+    );
   }
 
-  return `${monitor.name}: Observed failure`;
+  return (
+    `${monitor.name}: Observed failure`
+  );
 }
+
+// ============================================================================
+// MONITOR DESCRIPTION
+// ============================================================================
 
 function buildDescription(
   monitor,
   check
 ) {
   const method =
-    check.sanitizedErrorMessage ??
+    check
+      .sanitizedErrorMessage ??
     (
       check.statusCode
         ? `HTTP ${check.statusCode}`
@@ -933,15 +1764,987 @@ function buildDescription(
   );
 }
 
+// ============================================================================
+// SIGNAL INCIDENT FINGERPRINT
+// ============================================================================
+
+function fingerprintForSignal(
+  signal,
+  correlationGroup = null
+) {
+  return fingerprintFor({
+    organizationId:
+      signal
+        .organizationId,
+
+    environmentId:
+      signal
+        .environmentId,
+
+    serviceId:
+      signal.serviceId,
+
+    monitorId:
+      signal.monitorId ||
+      null,
+
+    source:
+      normalizeIncidentSource(
+        signal
+      ),
+
+    errorCode:
+      signal.errorCode ||
+      signal.eventType ||
+      "signal_failure",
+
+    correlationGroupId:
+      correlationGroup
+        ?.correlationGroupId ||
+      signal
+        .correlationGroupId ||
+      null,
+
+    signalFingerprint:
+      signal.fingerprint ||
+      null,
+  });
+}
+
+// ============================================================================
+// DETECTION METHOD
+// ============================================================================
+
+function detectionMethodFor(
+  signal,
+  correlationGroup = null
+) {
+  if (
+    signal.source ===
+    "manual"
+  ) {
+    return "manual";
+  }
+
+  if (
+    correlationGroup
+      ?.providerCount >=
+    2
+  ) {
+    return (
+      "cross_provider_correlation"
+    );
+  }
+
+  if (
+    correlationGroup
+      ?.signalCount >=
+    2
+  ) {
+    return (
+      "correlated_signals"
+    );
+  }
+
+  if (
+    signal.source ===
+    "monitor"
+  ) {
+    return (
+      "monitor_transition"
+    );
+  }
+
+  return "single_signal";
+}
+
+// ============================================================================
+// PROVIDERS
+// ============================================================================
+
+function collectProviders(
+  signal,
+  correlationGroup = null,
+  incident = null
+) {
+  const providers =
+    new Set(
+      incident
+        ?.providers ||
+      []
+    );
+
+  if (
+    signal.provider
+  ) {
+    providers.add(
+      signal.provider
+    );
+  }
+
+  for (
+    const provider
+    of correlationGroup
+      ?.providers ||
+    []
+  ) {
+    if (
+      provider
+    ) {
+      providers.add(
+        provider
+      );
+    }
+  }
+
+  return [
+    ...providers,
+  ];
+}
+
+// ============================================================================
+// SIGNAL IDS
+// ============================================================================
+
+function collectSignalIds(
+  signal,
+  correlationGroup = null,
+  incident = null
+) {
+  const ids =
+    new Set(
+      incident
+        ?.signalIds ||
+      []
+    );
+
+  if (
+    signal.signalId
+  ) {
+    ids.add(
+      signal.signalId
+    );
+  }
+
+  for (
+    const signalId
+    of correlationGroup
+      ?.signalIds ||
+    []
+  ) {
+    if (
+      signalId
+    ) {
+      ids.add(
+        signalId
+      );
+    }
+  }
+
+  return [
+    ...ids,
+  ].slice(
+    -MAX_SIGNAL_IDS
+  );
+}
+
+// ============================================================================
+// SIGNAL -> INCIDENT
+// ============================================================================
+
+async function openOrUpdateFromSignal({
+  signal,
+  correlationGroup = null,
+  detectedAt = null,
+}) {
+  assertSignalOwnership(
+    signal
+  );
+
+  const now =
+    detectedAt ||
+    signal.observedAt ||
+    new Date();
+
+  const fingerprint =
+    fingerprintForSignal(
+      signal,
+      correlationGroup
+    );
+
+  const groupId =
+    correlationGroup
+      ?.correlationGroupId ||
+    signal
+      .correlationGroupId ||
+    null;
+
+  // ==========================================================================
+  // FIND EXISTING
+  // ==========================================================================
+
+  let existing =
+    await Incident
+      .findOne({
+        organizationId:
+          signal
+            .organizationId,
+
+        environmentId:
+          signal
+            .environmentId,
+
+        fingerprint,
+
+        status: {
+          $in:
+            OPEN_STATUSES,
+        },
+      });
+
+  /*
+   * Defensive fallback for an already-open correlation-group incident.
+   */
+  if (
+    !existing &&
+    groupId
+  ) {
+    existing =
+      await Incident
+        .findOne({
+          organizationId:
+            signal
+              .organizationId,
+
+          environmentId:
+            signal
+              .environmentId,
+
+          correlationGroupId:
+            groupId,
+
+          status: {
+            $in:
+              OPEN_STATUSES,
+          },
+        });
+  }
+
+  const providers =
+    collectProviders(
+      signal,
+      correlationGroup,
+      existing
+    );
+
+  const signalIds =
+    collectSignalIds(
+      signal,
+      correlationGroup,
+      existing
+    );
+
+  const evidence =
+    sanitizeSignalEvidence(
+      signal
+    );
+
+  const incomingSeverity =
+    correlationGroup
+      ?.highestSeverity ||
+    signal.severity ||
+    "warning";
+
+  // ==========================================================================
+  // UPDATE EXISTING SIGNAL INCIDENT
+  // ==========================================================================
+
+  if (existing) {
+    const previousSeverity =
+      existing.severity;
+
+    existing.occurrenceCount +=
+      1;
+
+    existing.lastObservedAt =
+      now;
+
+    existing.lastSignalAt =
+      now;
+
+    existing.signalIds =
+      signalIds;
+
+    existing.providers =
+      providers;
+
+    existing.providerCount =
+      providers.length;
+
+    existing.evidenceCount =
+      (
+        existing
+          .evidenceCount ||
+        0
+      ) + 1;
+
+    existing.correlationConfidence =
+      Math.max(
+        existing
+          .correlationConfidence ||
+        0,
+
+        correlationGroup
+          ?.confidenceScore ||
+        signal
+          .correlationScore ||
+        0
+      );
+
+    existing.correlationGroupId =
+      existing
+        .correlationGroupId ||
+      groupId;
+
+    existing.primarySignalId =
+      existing
+        .primarySignalId ||
+      signal.signalId;
+
+    existing.signalFingerprint =
+      signal.fingerprint ||
+      existing
+        .signalFingerprint ||
+      null;
+
+    existing.detectionMethod =
+      detectionMethodFor(
+        signal,
+        correlationGroup
+      );
+
+    /*
+     * Escalation only.
+     * Never automatically downgrade an active incident.
+     */
+    existing.severity =
+      higherSeverity(
+        existing.severity,
+        incomingSeverity
+      );
+
+    if (
+      previousSeverity !==
+      existing.severity
+    ) {
+      existing.timeline.push({
+        occurredAt:
+          now,
+
+        eventType:
+          "severity_escalated",
+
+        actor:
+          "system",
+
+        description:
+          `Incident severity escalated from ${previousSeverity} to ${existing.severity}.`,
+
+        metadata: {
+          signalId:
+            signal.signalId,
+
+          provider:
+            signal.provider,
+
+          previousSeverity,
+
+          newSeverity:
+            existing.severity,
+        },
+      });
+    }
+
+    /*
+     * New failure during recovery invalidates recovery.
+     */
+    if (
+      existing.status ===
+      "recovering"
+    ) {
+      incidentStateMachine
+        .transition(
+          existing,
+          "investigating",
+          {
+            actor:
+              "system",
+
+            occurredAt:
+              now,
+
+            reason:
+              "New failure evidence arrived while recovery was in progress.",
+
+            metadata: {
+              signalId:
+                signal.signalId,
+
+              provider:
+                signal.provider,
+            },
+          }
+        );
+    }
+
+    pushBounded(
+      existing.evidence,
+      evidence,
+      MAX_SIGNAL_EVIDENCE
+    );
+
+    existing.timeline.push({
+      occurredAt:
+        now,
+
+      eventType:
+        "signal_observed",
+
+      actor:
+        "system",
+
+      description:
+        `Correlated operational signal received from ${signal.provider}.`,
+
+      metadata: {
+        signalId:
+          signal.signalId,
+
+        provider:
+          signal.provider,
+
+        eventType:
+          signal.eventType,
+
+        correlationGroupId:
+          groupId,
+
+        correlationScore:
+          signal
+            .correlationScore ??
+          null,
+
+        occurrenceCount:
+          existing
+            .occurrenceCount,
+      },
+    });
+
+    await existing
+      .save();
+
+    await publishIncidentLifecycle(
+      "INCIDENT_UPDATED",
+      existing,
+      {
+        changeType:
+          "signal_observed",
+
+        signalId:
+          signal.signalId,
+      }
+    );
+
+    return {
+      incident:
+        existing,
+
+      created:
+        false,
+
+      updated:
+        true,
+    };
+  }
+
+  // ==========================================================================
+  // CREATE SIGNAL INCIDENT
+  // ==========================================================================
+
+  const title =
+    String(
+      signal.title ||
+      "AIRA operational incident"
+    )
+      .slice(
+        0,
+        256
+      );
+
+  const description =
+    String(
+      [
+        signal.description,
+
+        signal.errorMessage,
+
+        correlationGroup
+          ?.incidentCandidateReason,
+      ]
+        .filter(
+          Boolean
+        )
+        .join(
+          " "
+        ) ||
+      "Operational failure detected from canonical AIRA signals."
+    )
+      .slice(
+        0,
+        2048
+      );
+
+  try {
+    const incident =
+      await Incident
+        .create({
+          organizationId:
+            signal
+              .organizationId,
+
+          environmentId:
+            signal
+              .environmentId,
+
+          tenantId:
+            signal.tenantId,
+
+          serviceId:
+            signal.serviceId,
+
+          monitorId:
+            signal.monitorId ||
+            null,
+
+          source:
+            normalizeIncidentSource(
+              signal
+            ),
+
+          sourceEventId:
+            signal
+              .sourceEventId ||
+            signal.signalId,
+
+          detectionMethod:
+            detectionMethodFor(
+              signal,
+              correlationGroup
+            ),
+
+          correlationGroupId:
+            groupId,
+
+          primarySignalId:
+            signal.signalId,
+
+          signalIds,
+
+          signalFingerprint:
+            signal.fingerprint ||
+            null,
+
+          providers,
+
+          providerCount:
+            providers.length,
+
+          evidenceCount:
+            1,
+
+          correlationConfidence:
+            correlationGroup
+              ?.confidenceScore ||
+            signal
+              .correlationScore ||
+            null,
+
+          lastSignalAt:
+            now,
+
+          fingerprint,
+
+          title,
+
+          description,
+
+          severity:
+            incomingSeverity,
+
+          status:
+            "open",
+
+          startedAt:
+            signal.firstSeenAt ||
+            signal.observedAt ||
+            now,
+
+          detectedAt:
+            now,
+
+          lastObservedAt:
+            now,
+
+          occurrenceCount:
+            1,
+
+          evidence: [
+            evidence,
+          ],
+
+          timeline: [
+            {
+              occurredAt:
+                now,
+
+              eventType:
+                "opened",
+
+              actor:
+                "system",
+
+              description:
+                "Incident opened from canonical AIRA signal evidence.",
+
+              metadata: {
+                signalId:
+                  signal.signalId,
+
+                provider:
+                  signal.provider,
+
+                correlationGroupId:
+                  groupId,
+
+                detectionMethod:
+                  detectionMethodFor(
+                    signal,
+                    correlationGroup
+                  ),
+              },
+            },
+          ],
+
+          analysisStatus:
+            "not_started",
+        });
+
+    await publishIncidentLifecycle(
+      "INCIDENT_DETECTED",
+      incident,
+      {
+        changeType:
+          "signal_detection",
+
+        signalId:
+          signal.signalId,
+      }
+    );
+
+    return {
+      incident,
+
+      created:
+        true,
+
+      updated:
+        false,
+    };
+  } catch (
+    error
+  ) {
+    /*
+     * Concurrent workers may both decide to create.
+     *
+     * Mongo unique-active-incident index is authoritative.
+     */
+    if (
+      error?.code ===
+      11000
+    ) {
+      const concurrent =
+        await Incident
+          .findOne({
+            organizationId:
+              signal
+                .organizationId,
+
+            environmentId:
+              signal
+                .environmentId,
+
+            fingerprint,
+
+            status: {
+              $in:
+                OPEN_STATUSES,
+            },
+          });
+
+      if (
+        concurrent
+      ) {
+        return openOrUpdateFromSignal({
+          signal,
+
+          correlationGroup,
+
+          detectedAt:
+            now,
+        });
+      }
+    }
+
+    throw error;
+  }
+}
+
+// ============================================================================
+// SIGNAL RECOVERY
+// ============================================================================
+
+async function resolveFromSignal({
+  signal,
+  resolvedAt = null,
+  reason = null,
+}) {
+  assertSignalOwnership(
+    signal
+  );
+
+  const now =
+    resolvedAt ||
+    signal.observedAt ||
+    new Date();
+
+  const filter = {
+    organizationId:
+      signal
+        .organizationId,
+
+    environmentId:
+      signal
+        .environmentId,
+
+    serviceId:
+      signal.serviceId,
+
+    status: {
+      $in:
+        OPEN_STATUSES,
+    },
+  };
+
+  /*
+   * Fail closed.
+   *
+   * A generic healthy signal must NEVER resolve every active
+   * incident belonging to a service.
+   */
+  if (
+    signal
+      .correlationGroupId
+  ) {
+    filter.correlationGroupId =
+      signal
+        .correlationGroupId;
+  } else if (
+    signal.monitorId
+  ) {
+    filter.monitorId =
+      signal.monitorId;
+  } else if (
+    signal.sourceEventId
+  ) {
+    filter.sourceEventId =
+      signal
+        .sourceEventId;
+  } else if (
+    signal.fingerprint
+  ) {
+    filter.signalFingerprint =
+      signal.fingerprint;
+  } else {
+    return [];
+  }
+
+  const incidents =
+    await Incident
+      .find(
+        filter
+      );
+
+  for (
+    const incident
+    of incidents
+  ) {
+    incidentStateMachine
+      .transition(
+        incident,
+        "resolved",
+        {
+          actor:
+            "system",
+
+          occurredAt:
+            now,
+
+          reason:
+            reason ||
+            `Incident automatically resolved from recovery signal provided by ${signal.provider}.`,
+
+          metadata: {
+            signalId:
+              signal.signalId,
+
+            provider:
+              signal.provider,
+
+            eventType:
+              signal.eventType,
+
+            resolutionType:
+              "recovery_signal",
+          },
+        }
+      );
+
+    incident.lastObservedAt =
+      now;
+
+    incident.lastSignalAt =
+      now;
+
+    incident.resolutionType =
+      "recovery_signal";
+
+    incident.resolution =
+      reason ||
+      `Recovery signal received from ${signal.provider}.`;
+
+    if (
+      signal.signalId &&
+      !incident
+        .signalIds
+        .includes(
+          signal.signalId
+        )
+    ) {
+      incident.signalIds =
+        [
+          ...incident
+            .signalIds,
+
+          signal.signalId,
+        ]
+          .slice(
+            -MAX_SIGNAL_IDS
+          );
+    }
+
+    pushBounded(
+      incident.evidence,
+      sanitizeSignalEvidence(
+        signal
+      ),
+      MAX_SIGNAL_EVIDENCE
+    );
+
+    incident.evidenceCount =
+      (
+        incident
+          .evidenceCount ||
+        0
+      ) + 1;
+
+    await incident
+      .save();
+
+    await publishIncidentLifecycle(
+      "INCIDENT_RESOLVED",
+      incident,
+      {
+        changeType:
+          "recovery_signal",
+
+        signalId:
+          signal.signalId,
+
+        resolutionType:
+          "recovery_signal",
+      }
+    );
+  }
+
+  return incidents;
+}
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
 module.exports = {
+  // --------------------------------------------------------------------------
+  // Legacy monitor compatibility
+  // --------------------------------------------------------------------------
+
   openOrUpdate,
+
   resolveForMonitor,
 
+  // --------------------------------------------------------------------------
+  // Canonical Phase 4 -> Phase 5 path
+  // --------------------------------------------------------------------------
+
+  openOrUpdateFromSignal,
+
+  resolveFromSignal,
+
+  // --------------------------------------------------------------------------
+  // Lifecycle
+  // --------------------------------------------------------------------------
+
+  transitionStatus,
+
   acknowledge,
+
+  startInvestigation,
+
+  startRecovery,
+
   resolveManually,
+
   reopen,
+
+  close,
+
   assign,
 
+  // --------------------------------------------------------------------------
+  // Helpers
+  // --------------------------------------------------------------------------
+
   fingerprintFor,
+
+  fingerprintForSignal,
+
+  sanitizeEvidence,
+
+  sanitizeSignalEvidence,
+
+  detectionMethodFor,
+
+  publishIncidentLifecycle,
+
   OPEN_STATUSES,
 };

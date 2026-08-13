@@ -27,7 +27,6 @@ const Monitor    = require("../../models/Monitor");
 const MonitorCheck = require("../../models/MonitorCheck");
 const { record: auditRecord } = require("../identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
-const incidentService = require("../incidents/incidentService");
 const signalIngestionService = require("../signals/signalIngestionService");
 
 const MAX_RESPONSE_BYTES  = 512_000;  // 512 KB
@@ -373,149 +372,413 @@ function sanitizeErrorMessage(err) {
  * Save a MonitorCheck and update the Monitor's runtime state.
  * Returns { oldStatus, newStatus, transitioned }.
  */
-async function recordResult(monitor, result) {
-  // 1. Persist check record
-  await MonitorCheck.create(result);
-
-  const isSuccess = result.status === "healthy";
-  const oldStatus = monitor.lastStatus;
-
-  // 2. Update counters and runtime state atomically
-  const consecutiveFailures  = isSuccess ? 0 : monitor.consecutiveFailures + 1;
-  const consecutiveSuccesses = isSuccess ? monitor.consecutiveSuccesses + 1 : 0;
-
-  // State transition logic
-  let newStatus = oldStatus;
-  if (consecutiveFailures >= monitor.consecutiveFailureThreshold) {
-    newStatus = "down";
-  } else if (consecutiveSuccesses >= monitor.recoverySuccessThreshold) {
-    newStatus = "healthy";
-  } else if (result.status === "degraded") {
-    newStatus = "degraded";
-  } else if (oldStatus === "unknown" && result.status === "healthy") {
-    newStatus = "healthy";
-  } else if (oldStatus === "unknown") {
-    newStatus = result.status;
-  }
-  // If not enough data yet to confirm up or down, keep current status
-
-  const nextCheckAt =
-  new Date(
-    Date.now() +
-      monitor.intervalSeconds * 1000
-  );
+// ─── Persist result and update monitor state ──────────────────────────────────
 
 /**
- * Update the monitor only if its complete ownership
- * context still matches the monitor claimed by the worker.
+ * Save a MonitorCheck and update the Monitor's runtime state.
  *
- * This protects against stale workers updating a monitor
- * that has been moved, replaced, or otherwise changed.
+ * Phase 5 canonical architecture:
+ *
+ * Monitor
+ *   -> MonitorCheck
+ *   -> canonical Signal
+ *   -> correlation
+ *   -> incident orchestration
+ *
+ * This function no longer creates/resolves Incidents directly.
+ *
+ * Returns:
+ * {
+ *   oldStatus,
+ *   newStatus,
+ *   transitioned,
+ *   signalResult
+ * }
  */
-const updatedMonitor =
-  await Monitor.findOneAndUpdate(
-    {
-      _id:
-        monitor._id,
+async function recordResult(
+  monitor,
+  result
+) {
+  // ==========================================================================
+  // 1. PERSIST RAW MONITOR CHECK
+  // ==========================================================================
 
-      organizationId:
-        monitor.organizationId,
-
-      environmentId:
-        monitor.environmentId,
-
-      serviceId:
-        monitor.serviceId,
-    },
-
-    {
-      $set: {
-        lastStatus:
-          newStatus,
-
-        lastCheckedAt:
-          result.checkedAt,
-
-        lastStatusCode:
-          result.statusCode,
-
-        lastResponseTimeMs:
-          result.responseTimeMs,
-
-        consecutiveFailures,
-        consecutiveSuccesses,
-
-        nextCheckAt,
-
-        lockedAt:
-          null,
-
-        lockedBy:
-          null,
-      },
-    },
-
-    {
-      new: true,
-    }
-  );
-
-if (!updatedMonitor) {
-  const error =
-    new Error(
-      "Monitor ownership changed or monitor no longer exists"
+  await MonitorCheck
+    .create(
+      result
     );
 
-  error.code =
-    "MONITOR_OWNERSHIP_MISMATCH";
+  const rawHealthy =
+    result.status ===
+    "healthy";
 
-  throw error;
-}
-/*
- * Canonical Phase 4 signal ingestion.
- *
- * This currently runs alongside the legacy direct
- * monitor -> incident bridge.
- *
- * Phase 5 will remove the direct bridge after
- * signal-driven incident lifecycle handling is proven.
- */
-signalIngestionService
-  .ingestMonitorCheck(
-    monitor,
-    result
-  )
-  .catch(
-    (error) => {
-      console.error(
-        "[signal] monitor ingestion failed:",
-        error.message
+  const oldStatus =
+    monitor.lastStatus ||
+    "unknown";
+
+  // ==========================================================================
+  // 2. UPDATE FAILURE / SUCCESS COUNTERS
+  // ==========================================================================
+
+  const consecutiveFailures =
+    rawHealthy
+      ? 0
+      : (
+          monitor
+            .consecutiveFailures ||
+          0
+        ) + 1;
+
+  const consecutiveSuccesses =
+    rawHealthy
+      ? (
+          monitor
+            .consecutiveSuccesses ||
+          0
+        ) + 1
+      : 0;
+
+  // ==========================================================================
+  // 3. MONITOR STATE MACHINE
+  // ==========================================================================
+
+  let newStatus =
+    oldStatus;
+
+  if (
+    consecutiveFailures >=
+    monitor
+      .consecutiveFailureThreshold
+  ) {
+    newStatus =
+      "down";
+  } else if (
+    consecutiveSuccesses >=
+    monitor
+      .recoverySuccessThreshold
+  ) {
+    newStatus =
+      "healthy";
+  } else if (
+    result.status ===
+    "degraded"
+  ) {
+    newStatus =
+      "degraded";
+  } else if (
+    oldStatus ===
+      "unknown" &&
+    result.status ===
+      "healthy"
+  ) {
+    newStatus =
+      "healthy";
+  } else if (
+    oldStatus ===
+    "unknown"
+  ) {
+    newStatus =
+      result.status;
+  }
+
+  /*
+   * Important:
+   *
+   * A single failed HTTP request must NOT automatically create an incident
+   * when the monitor requires multiple consecutive failures.
+   *
+   * We therefore send the EFFECTIVE monitor state into the Signal pipeline,
+   * not merely the raw check state.
+   */
+
+  const transitioned =
+    oldStatus !==
+    newStatus;
+
+  const nextCheckAt =
+    new Date(
+      Date.now() +
+      monitor
+        .intervalSeconds *
+        1000
+    );
+
+  // ==========================================================================
+  // 4. UPDATE MONITOR DOCUMENT
+  // ==========================================================================
+
+  const update = {
+    lastStatus:
+      newStatus,
+
+    lastCheckedAt:
+      result.checkedAt,
+
+    lastStatusCode:
+      result.statusCode,
+
+    lastResponseTimeMs:
+      result.responseTimeMs,
+
+    consecutiveFailures,
+
+    consecutiveSuccesses,
+
+    nextCheckAt,
+
+    lockedAt:
+      null,
+
+    lockedBy:
+      null,
+  };
+
+  /*
+   * Operational timestamps.
+   */
+  if (
+    newStatus ===
+    "down"
+  ) {
+    update.lastFailureAt =
+      result.checkedAt;
+  }
+
+  if (
+    transitioned &&
+    newStatus ===
+      "healthy" &&
+    [
+      "down",
+      "degraded",
+    ].includes(
+      oldStatus
+    )
+  ) {
+    update.lastRecoveryAt =
+      result.checkedAt;
+  }
+
+  const updatedMonitor =
+    await Monitor
+      .findOneAndUpdate(
+        {
+          _id:
+            monitor._id,
+
+          organizationId:
+            monitor
+              .organizationId,
+
+          environmentId:
+            monitor
+              .environmentId,
+
+          serviceId:
+            monitor
+              .serviceId,
+        },
+        {
+          $set:
+            update,
+        },
+        {
+          new:
+            true,
+        }
       );
-    }
-  );
 
-  
-  const transitioned = oldStatus !== newStatus;
-  if (transitioned) {
+  if (
+    !updatedMonitor
+  ) {
+    const error =
+      new Error(
+        "Monitor ownership changed or monitor no longer exists"
+      );
+
+    error.code =
+      "MONITOR_OWNERSHIP_MISMATCH";
+
+    throw error;
+  }
+
+  // ==========================================================================
+  // 5. LOG STATE TRANSITION
+  // ==========================================================================
+
+  if (
+    transitioned
+  ) {
     console.log(
       `[monitor] State transition for ${monitor._id} (${monitor.name}): ${oldStatus} → ${newStatus}`
     );
-
-    if (newStatus === "down") {
-      // Open or update the incident (fire-and-forget; failures must not break monitoring)
-      incidentService.openOrUpdate({ monitor, check: result, transitionedAt: result.checkedAt })
-        .catch((err) => console.error("[incident] openOrUpdate failed:", err.message));
-    } else if (newStatus === "healthy" && (oldStatus === "down" || oldStatus === "degraded")) {
-      incidentService.resolveForMonitor({ monitor, resolvedAt: result.checkedAt })
-        .catch((err) => console.error("[incident] resolveForMonitor failed:", err.message));
-    }
-  } else if (newStatus === "down") {
-    // Still down — update existing incident occurrence count
-    incidentService.openOrUpdate({ monitor, check: result, transitionedAt: result.checkedAt })
-      .catch((err) => console.error("[incident] openOrUpdate (update) failed:", err.message));
   }
 
-  return { oldStatus, newStatus, transitioned };
+  // ==========================================================================
+  // 6. DETERMINE WHETHER THIS CHECK ENTERS THE SIGNAL PIPELINE
+  // ==========================================================================
+
+  /*
+   * We intentionally do NOT send every healthy heartbeat through the
+   * incident pipeline.
+   *
+   * Send:
+   *
+   * 1. confirmed DOWN state
+   * 2. DEGRADED evidence
+   * 3. actual recovery transition
+   *
+   * This prevents noise while preserving outage recurrence evidence.
+   */
+
+  const isConfirmedFailure =
+    newStatus ===
+    "down";
+
+  const isDegraded =
+    newStatus ===
+    "degraded";
+
+  const isRecovery =
+    transitioned &&
+    newStatus ===
+      "healthy" &&
+    [
+      "down",
+      "degraded",
+    ].includes(
+      oldStatus
+    );
+
+  const shouldIngest =
+    isConfirmedFailure ||
+    isDegraded ||
+    isRecovery;
+
+  let signalResult =
+    null;
+
+  // ==========================================================================
+  // 7. CANONICAL SIGNAL INGESTION
+  // ==========================================================================
+
+  if (
+    shouldIngest
+  ) {
+    const canonicalCheck = {
+      ...result,
+
+      /*
+       * Effective state after monitor thresholds.
+       */
+      status:
+        newStatus,
+
+      rawCheckStatus:
+        result.status,
+
+      previousStatus:
+        oldStatus,
+
+      transitioned,
+
+      consecutiveFailures,
+
+      consecutiveSuccesses,
+    };
+
+    try {
+      signalResult =
+        await signalIngestionService
+          .ingestMonitorCheck(
+            updatedMonitor,
+            canonicalCheck
+          );
+    } catch (
+      error
+    ) {
+      console.error(
+        "[monitor-execution] Canonical signal ingestion failed:",
+        error.message
+      );
+
+      /*
+       * After Phase 5 cutover, the Signal pipeline IS the incident path.
+       *
+       * We therefore fail loudly instead of silently losing an incident.
+       */
+      throw Object.assign(
+        new Error(
+          `Monitor result could not enter the canonical signal pipeline: ${error.message}`
+        ),
+        {
+          code:
+            "MONITOR_SIGNAL_INGESTION_FAILED",
+
+          cause:
+            error,
+        }
+      );
+    }
+  }
+
+  // ==========================================================================
+  // 8. AUDIT STATE TRANSITION
+  // ==========================================================================
+
+  if (
+    transitioned &&
+    AUTH_EVENT_TYPES
+      ?.MONITOR_STATUS_CHANGED
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .MONITOR_STATUS_CHANGED,
+
+      AUTH_EVENT_OUTCOMES
+        .SUCCESS,
+
+      {
+        organizationId:
+          monitor
+            .organizationId,
+
+        tenantId:
+          monitor
+            .tenantId,
+
+        metadata: {
+          monitorId:
+            monitor._id,
+
+          environmentId:
+            monitor
+              .environmentId,
+
+          serviceId:
+            monitor
+              .serviceId,
+
+          oldStatus,
+
+          newStatus,
+        },
+      }
+    )
+      .catch(
+        () => {}
+      );
+  }
+
+  return {
+    oldStatus,
+
+    newStatus,
+
+    transitioned,
+
+    signalResult,
+  };
 }
 
 module.exports = { executeCheck, recordResult, sanitizeErrorMessage };

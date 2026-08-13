@@ -1,6 +1,11 @@
 "use strict";
 
-const mongoose = require("mongoose");
+const mongoose =
+  require("mongoose");
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
 
 const INCIDENT_STATUSES = [
   "open",
@@ -24,12 +29,24 @@ const INCIDENT_SOURCES = [
   "integration",
 ];
 
+const INCIDENT_DETECTION_METHODS = [
+  "monitor_transition",
+  "single_signal",
+  "correlated_signals",
+  "cross_provider_correlation",
+  "manual",
+];
+
 const ACTIVE_INCIDENT_STATUSES = [
   "open",
   "acknowledged",
   "investigating",
   "recovering",
 ];
+
+// ============================================================================
+// EVIDENCE
+// ============================================================================
 
 const evidenceSchema =
   new mongoose.Schema(
@@ -54,32 +71,129 @@ const evidenceSchema =
 
       checkerRegion:
         String,
+
+      /*
+       * Phase 4 signal provenance.
+       */
+      signalId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      provider: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      signalType: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      eventType: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      severity: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      observedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      traceId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      resourceId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      correlationScore: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
     },
     {
-      _id: false,
+      _id:
+        false,
     }
   );
+
+// ============================================================================
+// TIMELINE
+// ============================================================================
 
 const timelineEventSchema =
   new mongoose.Schema(
     {
       occurredAt: {
-        type: Date,
-        required: true,
-        default: Date.now,
+        type:
+          Date,
+
+        required:
+          true,
+
+        default:
+          Date.now,
       },
 
       eventType: {
-        type: String,
-        required: true,
+        type:
+          String,
+
+        required:
+          true,
       },
 
       actor: {
-        type: String,
+        type:
+          String,
+
         enum: [
           "system",
           "user",
         ],
+
         default:
           "system",
       },
@@ -87,152 +201,332 @@ const timelineEventSchema =
       actorId: {
         type:
           mongoose.Schema.Types.ObjectId,
+
         ref:
           "User",
+
+        default:
+          null,
       },
 
       description: {
-        type: String,
-        required: true,
+        type:
+          String,
+
+        required:
+          true,
+
+        maxlength:
+          2048,
       },
 
       metadata: {
         type:
           mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
       },
     },
     {
-      _id: true,
+      _id:
+        true,
     }
   );
+
+// ============================================================================
+// INCIDENT
+// ============================================================================
 
 const incidentSchema =
   new mongoose.Schema(
     {
-      /**
-       * Canonical organization ownership boundary.
-       */
+      // ======================================================================
+      // OWNERSHIP
+      // ======================================================================
+
       organizationId: {
         type:
           mongoose.Schema.Types.ObjectId,
+
         ref:
           "Organization",
+
         required:
           true,
+
         index:
           true,
       },
 
-      /**
-       * Canonical environment ownership boundary.
-       *
-       * Temporarily optional until existing Incident records
-       * are migrated.
-       */
       environmentId: {
         type:
           mongoose.Schema.Types.ObjectId,
+
         ref:
           "Environment",
+
+        /*
+         * Keep false until legacy migration is fully complete.
+         */
         required:
           false,
+
         default:
           null,
+
         index:
           true,
       },
 
-      /**
-       * Legacy tenant identifier.
-       */
       tenantId: {
         type:
           String,
+
         required:
           true,
+
         index:
           true,
       },
 
-      /**
-       * Service where the incident occurred.
-       */
+      // ======================================================================
+      // SERVICE / MONITOR
+      // ======================================================================
+
       serviceId: {
         type:
           mongoose.Schema.Types.ObjectId,
+
         ref:
           "Service",
+
         required:
           true,
+
         index:
           true,
       },
 
-      /**
-       * Monitor that detected the failure.
-       *
-       * May be absent for manual/integration incidents.
-       */
       monitorId: {
         type:
           mongoose.Schema.Types.ObjectId,
+
         ref:
           "Monitor",
+
         default:
           null,
+
         index:
           true,
       },
 
-      /**
-       * -------------------------------------------------------------
-       * DEDUPLICATION
-       * -------------------------------------------------------------
-       */
+      // ======================================================================
+      // SOURCE
+      // ======================================================================
 
       source: {
         type:
           String,
+
         enum:
           INCIDENT_SOURCES,
+
         default:
           "monitor",
+
+        index:
+          true,
       },
 
       sourceEventId: {
         type:
           String,
+
         default:
           null,
+
+        maxlength:
+          512,
       },
 
-      /**
-       * Deterministic failure fingerprint.
-       *
-       * The environment is part of the fingerprint so that
-       * identical failures in Staging and Production are separate
-       * incidents.
-       */
-      fingerprint: {
+      detectionMethod: {
         type:
           String,
-        required:
-          true,
+
+        enum:
+          INCIDENT_DETECTION_METHODS,
+
+        default:
+          "monitor_transition",
+
         index:
           true,
       },
 
-      /**
-       * -------------------------------------------------------------
-       * DESCRIPTION
-       * -------------------------------------------------------------
+      // ======================================================================
+      // PHASE 4 SIGNAL PROVENANCE
+      // ======================================================================
+
+      /*
+       * Correlation group responsible for this incident.
        */
+      correlationGroupId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      /*
+       * First / primary signal that opened the incident.
+       */
+      primarySignalId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      /*
+       * All canonical signals attached to this incident.
+       *
+       * Keep bounded in service logic later.
+       */
+      signalIds: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      /*
+       * Phase 4 fingerprint.
+       *
+       * This is NOT the same as Incident.fingerprint.
+       *
+       * signalFingerprint:
+       *   identity of operational evidence
+       *
+       * fingerprint:
+       *   identity of the incident itself
+       */
+      signalFingerprint: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      /*
+       * Providers contributing evidence.
+       *
+       * Example:
+       *
+       * [
+       *   "prometheus_alertmanager",
+       *   "opentelemetry",
+       *   "monitor"
+       * ]
+       */
+      providers: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      providerCount: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        default:
+          0,
+      },
+
+      evidenceCount: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        default:
+          0,
+      },
+
+      /*
+       * Correlation confidence at latest observation.
+       */
+      correlationConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      lastSignalAt: {
+        type:
+          Date,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // INCIDENT IDENTITY / DEDUPLICATION
+      // ======================================================================
+
+      fingerprint: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // DESCRIPTION
+      // ======================================================================
 
       title: {
         type:
           String,
+
         required:
           true,
+
         maxlength:
           256,
       },
@@ -240,26 +534,38 @@ const incidentSchema =
       description: {
         type:
           String,
+
         maxlength:
           2048,
+
+        default:
+          null,
       },
 
       severity: {
         type:
           String,
+
         enum:
           INCIDENT_SEVERITIES,
+
         default:
           "warning",
+
+        index:
+          true,
       },
 
       status: {
         type:
           String,
+
         enum:
           INCIDENT_STATUSES,
+
         default:
           "open",
+
         index:
           true,
       },
@@ -267,19 +573,22 @@ const incidentSchema =
       impact: {
         type:
           String,
+
         maxlength:
           512,
+
+        default:
+          null,
       },
 
-      /**
-       * -------------------------------------------------------------
-       * TIMING
-       * -------------------------------------------------------------
-       */
+      // ======================================================================
+      // TIMING
+      // ======================================================================
 
       startedAt: {
         type:
           Date,
+
         required:
           true,
       },
@@ -287,82 +596,289 @@ const incidentSchema =
       detectedAt: {
         type:
           Date,
+
         required:
           true,
       },
 
-      acknowledgedAt:
-        Date,
-
-      resolvedAt:
-        Date,
-
-      lastObservedAt: {
+      acknowledgedAt: {
         type:
           Date,
-        required:
-          true,
-      },
 
-      /**
-       * Repeated failure tracking.
-       */
-      occurrenceCount: {
-        type:
-          Number,
-        default:
-          1,
-        min:
-          1,
-      },
-
-      /**
-       * Sanitized evidence from monitor checks.
-       */
-      evidence: {
-        type:
-          [evidenceSchema],
-        default:
-          [],
-      },
-
-      /**
-       * -------------------------------------------------------------
-       * ASSIGNMENT / RESOLUTION
-       * -------------------------------------------------------------
-       */
-
-      assignedTo: {
-        type:
-          mongoose.Schema.Types.ObjectId,
-        ref:
-          "User",
         default:
           null,
       },
 
+      resolvedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      closedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      lastObservedAt: {
+        type:
+          Date,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // RECURRENCE
+      // ======================================================================
+
+      occurrenceCount: {
+        type:
+          Number,
+
+        default:
+          1,
+
+        min:
+          1,
+      },
+
+      reopenCount: {
+        type:
+          Number,
+
+        default:
+          0,
+
+        min:
+          0,
+      },
+
+      lastReopenedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // EVIDENCE
+      // ======================================================================
+
+      evidence: {
+        type:
+          [evidenceSchema],
+
+        default:
+          [],
+      },
+
+      // ======================================================================
+      // ASSIGNMENT
+      // ======================================================================
+
+      assignedTo: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "User",
+
+        default:
+          null,
+      },
+
+      assignedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // RESOLUTION
+      // ======================================================================
+
       resolution: {
         type:
           String,
+
         maxlength:
           2048,
+
+        default:
+          null,
       },
+
+      resolutionType: {
+        type:
+          String,
+
+        enum: [
+          "automatic",
+          "manual",
+          "recovery_signal",
+          "rollback",
+          "playbook",
+          null,
+        ],
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // TAGS
+      // ======================================================================
 
       tags: {
         type:
           [String],
+
         default:
           [],
       },
 
-      /**
-       * Full incident lifecycle.
-       */
+      // ======================================================================
+      // TIMELINE
+      // ======================================================================
+
       timeline: {
         type:
           [timelineEventSchema],
+
         default:
           [],
+      },
+         // ======================================================================
+      // IMPACT / BLAST RADIUS
+      // ======================================================================
+
+      impactAnalysis: {
+        rootService: {
+          type:
+            mongoose.Schema.Types.Mixed,
+
+          default:
+            null,
+        },
+
+        affectedServices: {
+          type:
+            [mongoose.Schema.Types.Mixed],
+
+          default:
+            [],
+        },
+
+        affectedResources: {
+          type:
+            [mongoose.Schema.Types.Mixed],
+
+          default:
+            [],
+        },
+
+        levels: {
+          type:
+            [mongoose.Schema.Types.Mixed],
+
+          default:
+            [],
+        },
+
+        summary: {
+          affectedServiceCount: {
+            type:
+              Number,
+
+            default:
+              0,
+          },
+
+          affectedResourceCount: {
+            type:
+              Number,
+
+            default:
+              0,
+          },
+
+          userFacingImpact: {
+            type:
+              Boolean,
+
+            default:
+              false,
+          },
+
+          maxCriticality: {
+            type:
+              Number,
+
+            default:
+              0,
+          },
+        },
+
+        analyzedAt: {
+          type:
+            Date,
+
+          default:
+            null,
+        },
+      },
+      // ======================================================================
+      // FUTURE PHASE HANDOFF
+      // ======================================================================
+
+      /*
+       * Phase 6 Agent Intelligence will set these.
+       */
+      analysisStatus: {
+        type:
+          String,
+
+        enum: [
+          "not_started",
+          "queued",
+          "analyzing",
+          "completed",
+          "failed",
+        ],
+
+        default:
+          "not_started",
+
+        index:
+          true,
+      },
+
+      analysisStartedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      analysisCompletedAt: {
+        type:
+          Date,
+
+        default:
+          null,
       },
     },
     {
@@ -374,11 +890,9 @@ const incidentSchema =
     }
   );
 
-/**
- * ------------------------------------------------------------------
- * ENVIRONMENT-SCOPED INDEXES
- * ------------------------------------------------------------------
- */
+// ============================================================================
+// INDEXES
+// ============================================================================
 
 incidentSchema.index({
   organizationId:
@@ -391,9 +905,6 @@ incidentSchema.index({
     1,
 });
 
-/**
- * Common incident-list query.
- */
 incidentSchema.index({
   organizationId:
     1,
@@ -408,9 +919,6 @@ incidentSchema.index({
     -1,
 });
 
-/**
- * Incidents for a service inside an environment.
- */
 incidentSchema.index({
   organizationId:
     1,
@@ -425,9 +933,6 @@ incidentSchema.index({
     1,
 });
 
-/**
- * Monitor-driven incident lookup.
- */
 incidentSchema.index({
   organizationId:
     1,
@@ -441,16 +946,91 @@ incidentSchema.index({
   status:
     1,
 });
+incidentSchema.index({
+  organizationId:
+    1,
 
-/**
- * Deduplication support.
- *
- * Only one ACTIVE incident with the same failure fingerprint
- * should exist inside one environment.
- *
- * Resolved/closed incidents remain historical records and a
- * later occurrence may create a new incident.
- */
+  environmentId:
+    1,
+
+  "impactAnalysis.summary.userFacingImpact":
+    1,
+
+  status:
+    1,
+});
+// ============================================================================
+// SIGNAL / CORRELATION INDEXES
+// ============================================================================
+
+incidentSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  correlationGroupId:
+    1,
+
+  status:
+    1,
+});
+
+incidentSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  signalFingerprint:
+    1,
+
+  status:
+    1,
+});
+
+incidentSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  primarySignalId:
+    1,
+});
+
+incidentSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  providers:
+    1,
+
+  status:
+    1,
+});
+
+incidentSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  lastSignalAt:
+    -1,
+});
+
+// ============================================================================
+// ACTIVE INCIDENT UNIQUENESS
+// ============================================================================
+
 incidentSchema.index(
   {
     organizationId:
@@ -483,28 +1063,19 @@ incidentSchema.index(
   }
 );
 
-/**
- * ------------------------------------------------------------------
- * FINGERPRINT
- * ------------------------------------------------------------------
- *
- * Environment MUST participate in incident identity.
- *
- * Otherwise:
- *
- * Staging payment-api failure
- *
- * could accidentally deduplicate against:
- *
- * Production payment-api failure.
- */
+// ============================================================================
+// FINGERPRINT
+// ============================================================================
+
 function buildFingerprint({
   organizationId,
   environmentId,
   serviceId,
-  monitorId,
-  errorCode,
+  monitorId = null,
+  errorCode = null,
   source = "monitor",
+  correlationGroupId = null,
+  signalFingerprint = null,
 }) {
   if (!organizationId) {
     throw new Error(
@@ -524,18 +1095,77 @@ function buildFingerprint({
     );
   }
 
+  /*
+   * Correlated-signal incidents should remain stable even
+   * when evidence arrives from multiple providers.
+   *
+   * For those incidents, correlationGroupId becomes the
+   * strongest identity component.
+   */
+  if (correlationGroupId) {
+    return [
+      organizationId,
+      environmentId,
+      serviceId,
+      "correlation",
+      correlationGroupId,
+    ]
+      .map(
+        String
+      )
+      .join(
+        "::"
+      );
+  }
+
+  /*
+   * Provider-neutral signal fallback.
+   */
+  if (
+    signalFingerprint &&
+    !monitorId
+  ) {
+    return [
+      organizationId,
+      environmentId,
+      serviceId,
+      source,
+      signalFingerprint,
+    ]
+      .map(
+        String
+      )
+      .join(
+        "::"
+      );
+  }
+
+  /*
+   * Legacy monitor path.
+   *
+   * Keep exactly compatible with existing monitor incidents.
+   */
   return [
     organizationId,
     environmentId,
     serviceId,
-    monitorId || "no-monitor",
+    monitorId ||
+      "no-monitor",
     source,
     errorCode ||
       "http_failure",
   ]
-    .map(String)
-    .join("::");
+    .map(
+      String
+    )
+    .join(
+      "::"
+    );
 }
+
+// ============================================================================
+// EXPORT
+// ============================================================================
 
 const Incident =
   mongoose.model(
@@ -547,8 +1177,12 @@ module.exports = {
   Incident,
 
   INCIDENT_STATUSES,
+
   INCIDENT_SEVERITIES,
+
   INCIDENT_SOURCES,
+
+  INCIDENT_DETECTION_METHODS,
 
   ACTIVE_INCIDENT_STATUSES,
 

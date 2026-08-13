@@ -98,14 +98,13 @@ class SignalIngestionService {
           correlationGroup:
             null,
 
-          routing:
-            {
-              routed:
-                false,
+          routing: {
+            routed:
+              false,
 
-              reason:
-                "DUPLICATE_SIGNAL",
-            },
+            reason:
+              "DUPLICATE_SIGNAL",
+          },
         };
       }
 
@@ -179,8 +178,11 @@ class SignalIngestionService {
           );
 
       /*
-       * Refresh once more because group service adds
-       * correlationGroupId / candidate status.
+       * Refresh again because correlationGroupService may set:
+       *
+       * - correlationGroupId
+       * - correlationScore
+       * - incidentCandidate
        */
       persistedSignal =
         await Signal
@@ -200,6 +202,10 @@ class SignalIngestionService {
             correlationGroup
           );
 
+      /*
+       * Router / incident orchestration may attach incidentId and
+       * update processing state.
+       */
       persistedSignal =
         await Signal
           .findById(
@@ -223,7 +229,13 @@ class SignalIngestionService {
 
         routing,
       };
-    } catch (error) {
+    } catch (
+      error
+    ) {
+      // ----------------------------------------------------------------------
+      // FAILURE TRACKING
+      // ----------------------------------------------------------------------
+
       if (
         persistedSignal
           ?._id
@@ -355,7 +367,8 @@ class SignalIngestionService {
         });
 
         if (
-          result.duplicate
+          result
+            .duplicate
         ) {
           duplicates +=
             1;
@@ -363,7 +376,9 @@ class SignalIngestionService {
           accepted +=
             1;
         }
-      } catch (error) {
+      } catch (
+        error
+      ) {
         failed +=
           1;
 
@@ -411,7 +426,9 @@ class SignalIngestionService {
     check,
     options = {}
   ) {
-    if (!monitor) {
+    if (
+      !monitor
+    ) {
       throw Object.assign(
         new Error(
           "Monitor is required"
@@ -423,81 +440,606 @@ class SignalIngestionService {
       );
     }
 
-    return this
-      .ingest(
+    if (
+      !check
+    ) {
+      throw Object.assign(
+        new Error(
+          "Monitor check is required"
+        ),
         {
-          provider:
-            "monitor",
+          code:
+            "SIGNAL_MONITOR_CHECK_REQUIRED",
+        }
+      );
+    }
 
-          ...check,
-        },
+    if (
+      !monitor
+        .organizationId ||
+      !monitor
+        .environmentId ||
+      !monitor
+        .tenantId ||
+      !monitor
+        .serviceId ||
+      !monitor._id
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete monitor ownership context is required"
+        ),
         {
-          organizationId:
-            monitor
-              .organizationId,
+          code:
+            "SIGNAL_MONITOR_CONTEXT_REQUIRED",
+        }
+      );
+    }
 
-          environmentId:
-            monitor
-              .environmentId,
+    const effectiveStatus =
+      String(
+        check.status ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
 
-          tenantId:
-            monitor
-              .tenantId,
+    const previousStatus =
+      String(
+        check.previousStatus ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
 
-          serviceId:
-            monitor
-              .serviceId,
+    const transitioned =
+      check.transitioned ===
+      true;
 
-          monitorId:
-            monitor._id,
+    // ------------------------------------------------------------------------
+    // CLASSIFY CANONICAL MONITOR EVENT
+    // ------------------------------------------------------------------------
 
-          monitorName:
+    const recovered =
+      transitioned &&
+      effectiveStatus ===
+        "healthy" &&
+      [
+        "down",
+        "degraded",
+      ].includes(
+        previousStatus
+      );
+
+    const degraded =
+      effectiveStatus ===
+      "degraded";
+
+    const failure =
+      effectiveStatus ===
+      "down";
+
+    let eventType;
+
+    let severity;
+
+    let title;
+
+    let description;
+
+    if (
+      recovered
+    ) {
+      eventType =
+        "monitor.recovered";
+
+      severity =
+        "info";
+
+      title =
+        `${monitor.name} recovered`;
+
+      description =
+        `Monitor "${monitor.name}" recovered after previously being ${previousStatus}.`;
+    } else if (
+      degraded
+    ) {
+      eventType =
+        "monitor.degraded";
+
+      severity =
+        "warning";
+
+      title =
+        `${monitor.name} degraded`;
+
+      description =
+        check
+          .sanitizedErrorMessage ||
+        `Monitor "${monitor.name}" is reporting degraded health.`;
+    } else if (
+      failure
+    ) {
+      eventType =
+        "monitor.failure";
+
+      severity =
+        this
+          .monitorSeverity(
+            check
+          );
+
+      title =
+        `${monitor.name} failure`;
+
+      description =
+        check
+          .sanitizedErrorMessage ||
+        `Monitor "${monitor.name}" observed a confirmed failure.`;
+    } else {
+      /*
+       * Healthy heartbeats normally do not reach this method after
+       * the Phase 5 monitor cutover.
+       *
+       * Keep this representation for tests/direct callers.
+       */
+      eventType =
+        "monitor.healthy";
+
+      severity =
+        "info";
+
+      title =
+        `${monitor.name} healthy`;
+
+      description =
+        `Monitor "${monitor.name}" is healthy.`;
+    }
+
+    // ------------------------------------------------------------------------
+    // OBSERVATION TIME
+    // ------------------------------------------------------------------------
+
+    const checkedAt =
+      check.checkedAt ||
+      new Date();
+
+    // ------------------------------------------------------------------------
+    // SOURCE EVENT ID
+    // ------------------------------------------------------------------------
+
+    /*
+     * MonitorCheck currently may not expose its Mongo _id here because
+     * monitorExecution persists the check before calling ingestion.
+     *
+     * Generate deterministic-enough event identity from monitor +
+     * observation timestamp + event type.
+     */
+    const sourceEventId =
+      check.checkId ||
+      check.eventId ||
+      [
+        "monitor",
+        String(
+          monitor._id
+        ),
+        eventType,
+        new Date(
+          checkedAt
+        )
+          .toISOString(),
+      ]
+        .join(
+          ":"
+        );
+
+    // ------------------------------------------------------------------------
+    // CANONICAL PAYLOAD
+    // ------------------------------------------------------------------------
+
+    const canonicalInput = {
+      provider:
+        "monitor",
+
+      source:
+        "monitor",
+
+      signalType:
+        "alert",
+
+      eventType,
+
+      title,
+
+      description,
+
+      severity,
+
+      status:
+        effectiveStatus ||
+        "unknown",
+
+      statusCode:
+        check
+          .statusCode ??
+        null,
+
+      /*
+       * Recovery must not carry the previous failure code.
+       */
+      errorCode:
+        recovered
+          ? null
+          : (
+              check
+                .errorCode ||
+              null
+            ),
+
+      errorMessage:
+        recovered
+          ? null
+          : (
+              check
+                .sanitizedErrorMessage ||
+              null
+            ),
+
+      responseTimeMs:
+        check
+          .responseTimeMs ??
+        null,
+
+      observedAt:
+        checkedAt,
+
+      sourceEventId,
+
+      /*
+       * Preserve explicit ownership both in payload and context.
+       */
+      serviceId:
+        monitor
+          .serviceId,
+
+      monitorId:
+        monitor._id,
+
+      resource: {
+        serviceName:
+          monitor.name,
+
+        host:
+          this
+            .extractHost(
+              monitor.url
+            ),
+
+        region:
+          check
+            .checkerRegion ||
+          null,
+      },
+
+      attributes: {
+        monitor: {
+          id:
+            String(
+              monitor._id
+            ),
+
+          name:
             monitor.name,
 
-          serviceName:
+          url:
+            monitor.url,
+
+          type:
+            monitor.type,
+
+          previousStatus:
+            previousStatus ||
             null,
 
-          host:
-            this
-              .extractHost(
-                monitor.url
-              ),
+          effectiveStatus,
+
+          rawCheckStatus:
+            check
+              .rawCheckStatus ||
+            null,
+
+          transitioned,
+
+          consecutiveFailures:
+            check
+              .consecutiveFailures ??
+            null,
+
+          consecutiveSuccesses:
+            check
+              .consecutiveSuccesses ??
+            null,
+
+          consecutiveFailureThreshold:
+            monitor
+              .consecutiveFailureThreshold,
+
+          recoverySuccessThreshold:
+            monitor
+              .recoverySuccessThreshold,
         },
+      },
+
+      /*
+       * Raw evidence is retained for investigation but remains
+       * separated from canonical normalized fields.
+       */
+      rawPayload: {
+        status:
+          check.status,
+
+        rawCheckStatus:
+          check
+            .rawCheckStatus ||
+          null,
+
+        previousStatus:
+          check
+            .previousStatus ||
+          null,
+
+        transitioned,
+
+        statusCode:
+          check
+            .statusCode ??
+          null,
+
+        responseTimeMs:
+          check
+            .responseTimeMs ??
+          null,
+
+        responseSizeBytes:
+          check
+            .responseSizeBytes ??
+          null,
+
+        dnsTimeMs:
+          check
+            .dnsTimeMs ??
+          null,
+
+        tcpTimeMs:
+          check
+            .tcpTimeMs ??
+          null,
+
+        tlsTimeMs:
+          check
+            .tlsTimeMs ??
+          null,
+
+        firstByteTimeMs:
+          check
+            .firstByteTimeMs ??
+          null,
+
+        sslValid:
+          check
+            .sslValid ??
+          null,
+
+        sslDaysRemaining:
+          check
+            .sslDaysRemaining ??
+          null,
+
+        contentMatched:
+          check
+            .contentMatched ??
+          null,
+
+        redirectCount:
+          check
+            .redirectCount ??
+          0,
+
+        errorCode:
+          check
+            .errorCode ||
+          null,
+
+        sanitizedErrorMessage:
+          check
+            .sanitizedErrorMessage ||
+          null,
+
+        checkerRegion:
+          check
+            .checkerRegion ||
+          null,
+
+        checkedAt,
+      },
+    };
+
+    const canonicalContext = {
+      organizationId:
+        monitor
+          .organizationId,
+
+      environmentId:
+        monitor
+          .environmentId,
+
+      tenantId:
+        monitor
+          .tenantId,
+
+      serviceId:
+        monitor
+          .serviceId,
+
+      monitorId:
+        monitor._id,
+
+      monitorName:
+        monitor.name,
+
+      serviceName:
+        monitor.name,
+
+      host:
+        this
+          .extractHost(
+            monitor.url
+          ),
+    };
+
+    return this
+      .ingest(
+        canonicalInput,
+        canonicalContext,
         options
       );
   }
 
   // ==========================================================================
-  // QUERY
+  // MONITOR SEVERITY
+  // ==========================================================================
+
+  monitorSeverity(
+    check
+  ) {
+    const errorCode =
+      String(
+        check
+          ?.errorCode ||
+        ""
+      )
+        .trim()
+        .toUpperCase();
+
+    /*
+     * Hard availability / connectivity failures.
+     */
+    if (
+      [
+        "ENOTFOUND",
+        "EAI_AGAIN",
+        "ECONNREFUSED",
+        "ECONNRESET",
+        "ETIMEDOUT",
+        "CERT_HAS_EXPIRED",
+        "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "DEPTH_ZERO_SELF_SIGNED_CERT",
+      ].includes(
+        errorCode
+      )
+    ) {
+      return "critical";
+    }
+
+    const statusCode =
+      Number(
+        check
+          ?.statusCode
+      );
+
+    /*
+     * Server failures are generally critical availability evidence.
+     */
+    if (
+      Number.isFinite(
+        statusCode
+      ) &&
+      statusCode >=
+        500
+    ) {
+      return "critical";
+    }
+
+    /*
+     * Degraded SSL, 4xx, content mismatch and other conditions
+     * remain warnings unless correlation later escalates them.
+     */
+    return "warning";
+  }
+
+  // ==========================================================================
+  // QUERY BY ID
   // ==========================================================================
 
   async getById(
     context,
     signalId
   ) {
+    if (
+      !context
+        ?.organizationId ||
+      !context
+        ?.environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete signal query context is required"
+        ),
+        {
+          code:
+            "SIGNAL_QUERY_CONTEXT_REQUIRED",
+        }
+      );
+    }
+
     return Signal
       .findOne({
         organizationId:
-          context.organizationId,
+          context
+            .organizationId,
 
         environmentId:
-          context.environmentId,
+          context
+            .environmentId,
 
         signalId,
       })
       .lean();
   }
 
+  // ==========================================================================
+  // LIST
+  // ==========================================================================
+
   async list(
     context,
     query = {}
   ) {
+    if (
+      !context
+        ?.organizationId ||
+      !context
+        ?.environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete signal query context is required"
+        ),
+        {
+          code:
+            "SIGNAL_QUERY_CONTEXT_REQUIRED",
+        }
+      );
+    }
+
     const filter = {
       organizationId:
-        context.organizationId,
+        context
+          .organizationId,
 
       environmentId:
-        context.environmentId,
+        context
+          .environmentId,
     };
 
     if (
@@ -537,13 +1079,29 @@ class SignalIngestionService {
     }
 
     if (
+      query.monitorId
+    ) {
+      filter.monitorId =
+        query.monitorId;
+    }
+
+    if (
+      query.incidentId
+    ) {
+      filter.incidentId =
+        query.incidentId;
+    }
+
+    if (
       query.incidentCandidate !==
       undefined
     ) {
       filter.incidentCandidate =
-        query.incidentCandidate ===
+        query
+          .incidentCandidate ===
           true ||
-        query.incidentCandidate ===
+        query
+          .incidentCandidate ===
           "true";
     }
 
@@ -556,6 +1114,13 @@ class SignalIngestionService {
     }
 
     if (
+      query.eventType
+    ) {
+      filter.eventType =
+        query.eventType;
+    }
+
+    if (
       query.from ||
       query.to
     ) {
@@ -565,23 +1130,67 @@ class SignalIngestionService {
       if (
         query.from
       ) {
-        filter
-          .observedAt
-          .$gte =
+        const from =
           new Date(
             query.from
           );
+
+        if (
+          Number.isNaN(
+            from.getTime()
+          )
+        ) {
+          throw Object.assign(
+            new Error(
+              "Invalid signal query from date"
+            ),
+            {
+              code:
+                "SIGNAL_QUERY_DATE_INVALID",
+
+              status:
+                400,
+            }
+          );
+        }
+
+        filter
+          .observedAt
+          .$gte =
+          from;
       }
 
       if (
         query.to
       ) {
-        filter
-          .observedAt
-          .$lte =
+        const to =
           new Date(
             query.to
           );
+
+        if (
+          Number.isNaN(
+            to.getTime()
+          )
+        ) {
+          throw Object.assign(
+            new Error(
+              "Invalid signal query to date"
+            ),
+            {
+              code:
+                "SIGNAL_QUERY_DATE_INVALID",
+
+              status:
+                400,
+            }
+          );
+        }
+
+        filter
+          .observedAt
+          .$lte =
+          to;
       }
     }
 
@@ -613,7 +1222,7 @@ class SignalIngestionService {
   }
 
   // ==========================================================================
-  // HELPERS
+  // SAFE ERROR MESSAGE
   // ==========================================================================
 
   safeErrorMessage(
@@ -630,13 +1239,24 @@ class SignalIngestionService {
       );
   }
 
+  // ==========================================================================
+  // HOST EXTRACTION
+  // ==========================================================================
+
   extractHost(
     url
   ) {
+    if (
+      !url
+    ) {
+      return null;
+    }
+
     try {
       return new URL(
         url
-      ).hostname;
+      )
+        .hostname;
     } catch {
       return null;
     }
