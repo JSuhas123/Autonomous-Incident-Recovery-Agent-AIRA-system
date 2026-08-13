@@ -1,10 +1,15 @@
 "use strict";
 
-const express = require("express");
+const express =
+  require("express");
+
+const mongoose =
+  require("mongoose");
 
 const router =
   express.Router({
-    mergeParams: true,
+    mergeParams:
+      true,
   });
 
 const IntegrationConnection =
@@ -24,29 +29,103 @@ const kubernetesDiscoveryService =
     "../services/discovery/kubernetesDiscoveryService"
   );
 
-/**
- * Resolve an active tenant-owned Kubernetes integration
- * and decrypt its secret only for the duration of the request.
- */
-async function _getKubernetesConnection(
-  tenantId,
+const kubernetesInventoryService =
+  require(
+    "../services/discovery/kubernetesInventoryService"
+  );
+
+const kubernetesRelationshipService =
+  require(
+    "../services/discovery/kubernetesRelationshipService"
+  );
+
+// ============================================================================
+// CONTEXT
+// ============================================================================
+
+function requireInventoryContext(
+  req,
+  res
+) {
+  const context =
+    req.context;
+
+  if (!context) {
+    res
+      .status(500)
+      .json({
+        error:
+          "Request context unavailable",
+
+        code:
+          "REQUEST_CONTEXT_MISSING",
+      });
+
+    return null;
+  }
+
+  if (
+    !context.organizationId ||
+    !context.environmentId ||
+    !context.tenantId
+  ) {
+    res
+      .status(500)
+      .json({
+        error:
+          "Complete inventory context unavailable",
+
+        code:
+          "INVENTORY_CONTEXT_MISSING",
+      });
+
+    return null;
+  }
+
+  return context;
+}
+
+// ============================================================================
+// CONNECTION
+// ============================================================================
+
+async function getKubernetesConnection(
+  context,
   connectionId
 ) {
+  if (
+    !mongoose.Types.ObjectId
+      .isValid(
+        connectionId
+      )
+  ) {
+    return null;
+  }
+
+  /*
+   * Integration ownership is now proven against BOTH
+   * organization and environment.
+   */
   const connection =
-    await IntegrationConnection.findOne({
-      _id:
-        connectionId,
+    await IntegrationConnection
+      .findOne({
+        _id:
+          connectionId,
 
-      tenantId,
+        organizationId:
+          context.organizationId,
 
-      provider:
-        "kubernetes",
+        environmentId:
+          context.environmentId,
 
-      status: {
-        $ne:
-          "deleted",
-      },
-    });
+        provider:
+          "kubernetes",
+
+        status: {
+          $ne:
+            "deleted",
+        },
+      });
 
   if (!connection) {
     return null;
@@ -55,10 +134,14 @@ async function _getKubernetesConnection(
   const secretStorage =
     getSecretStorage();
 
+  /*
+   * Secret exists only for the lifetime of this request.
+   */
   const decryptedSecret =
-    await secretStorage.getSecret(
-      connection
-    );
+    await secretStorage
+      .getSecret(
+        connection
+      );
 
   connection._decryptedSecret =
     decryptedSecret;
@@ -66,29 +149,34 @@ async function _getKubernetesConnection(
   return connection;
 }
 
+// ============================================================================
+// GET /:connectionId/discovery
+//
+// READ-ONLY PREVIEW.
+// ============================================================================
+
 router.get(
   "/:connectionId/discovery",
+
   async (
     req,
-    res
+    res,
+    next
   ) => {
     try {
-      const tenantId =
-        req.auth?.tenantId ||
-        req.tenant?.id;
+      const context =
+        requireInventoryContext(
+          req,
+          res
+        );
 
-      if (!tenantId) {
-        return res
-          .status(401)
-          .json({
-            error:
-              "Unauthorized",
-          });
+      if (!context) {
+        return;
       }
 
       const connection =
-        await _getKubernetesConnection(
-          tenantId,
+        await getKubernetesConnection(
+          context,
           req.params
             .connectionId
         );
@@ -99,6 +187,9 @@ router.get(
           .json({
             error:
               "Kubernetes integration not found",
+
+            code:
+              "KUBERNETES_INTEGRATION_NOT_FOUND",
           });
       }
 
@@ -109,31 +200,183 @@ router.get(
           );
 
       return res.json({
+        persisted:
+          false,
+
         connectionId:
           connection._id,
 
         provider:
           "kubernetes",
 
+        organizationId:
+          context.organizationId,
+
+        environmentId:
+          context.environmentId,
+
         ...discovery,
       });
     } catch (error) {
-      console.error(
-        "[kubernetes-discovery] discovery failed:",
-        error
-      );
-
-      return res
-        .status(500)
-        .json({
-          error:
-            "Kubernetes discovery failed",
-
-          details:
-            error.message,
-        });
+      return next(error);
     }
   }
 );
 
-module.exports =router;
+// ============================================================================
+// POST /:connectionId/discovery/sync
+//
+// FULL INVENTORY SYNCHRONIZATION.
+// ============================================================================
+
+router.post(
+  "/:connectionId/discovery/sync",
+
+  async (
+    req,
+    res,
+    next
+  ) => {
+    const startedAt =
+      Date.now();
+
+    try {
+      const context =
+        requireInventoryContext(
+          req,
+          res
+        );
+
+      if (!context) {
+        return;
+      }
+
+      const connection =
+        await getKubernetesConnection(
+          context,
+          req.params
+            .connectionId
+        );
+
+      if (!connection) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Kubernetes integration not found",
+
+            code:
+              "KUBERNETES_INTEGRATION_NOT_FOUND",
+          });
+      }
+
+      // ----------------------------------------------------------------------
+      // 1. LIVE DISCOVERY
+      // ----------------------------------------------------------------------
+
+      const discovery =
+        await kubernetesDiscoveryService
+          .discoverCluster(
+            connection
+          );
+
+      const durationMs =
+        Date.now() -
+        startedAt;
+
+      // ----------------------------------------------------------------------
+      // 2. PROVIDER + CANONICAL RESOURCE INVENTORY
+      // ----------------------------------------------------------------------
+
+      const inventory =
+        await kubernetesInventoryService
+          .persistDiscovery({
+            tenantId:
+              context.tenantId,
+
+            organizationId:
+              context.organizationId,
+
+            environmentId:
+              context.environmentId,
+
+            integrationId:
+              connection._id,
+
+            discovery,
+
+            durationMs,
+
+            syncCanonical:
+              true,
+          });
+
+      // ----------------------------------------------------------------------
+      // 3. PROVIDER + CANONICAL RELATIONSHIP GRAPH
+      // ----------------------------------------------------------------------
+
+      const relationships =
+        await kubernetesRelationshipService
+          .rebuildRelationships({
+            tenantId:
+              context.tenantId,
+
+            organizationId:
+              context.organizationId,
+
+            environmentId:
+              context.environmentId,
+
+            integrationId:
+              connection._id,
+
+            syncCanonical:
+              true,
+          });
+
+      return res
+        .status(200)
+        .json({
+          success:
+            true,
+
+          provider:
+            "kubernetes",
+
+          connectionId:
+            connection._id,
+
+          organizationId:
+            context.organizationId,
+
+          environmentId:
+            context.environmentId,
+
+          discoveredAt:
+            discovery
+              .discoveredAt,
+
+          durationMs:
+            Date.now() -
+            startedAt,
+
+          summary:
+            discovery.summary,
+
+          inventory,
+
+          relationships,
+        });
+    } catch (error) {
+      console.error(
+        "[kubernetes-discovery] synchronization failed:",
+        error
+      );
+
+      return next(error);
+    }
+  }
+);
+
+module.exports =
+  router;

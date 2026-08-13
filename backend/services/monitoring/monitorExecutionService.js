@@ -28,6 +28,7 @@ const MonitorCheck = require("../../models/MonitorCheck");
 const { record: auditRecord } = require("../identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
 const incidentService = require("../incidents/incidentService");
+const signalIngestionService = require("../signals/signalIngestionService");
 
 const MAX_RESPONSE_BYTES  = 512_000;  // 512 KB
 const CHECKER_REGION      = process.env.CHECKER_REGION ?? "default";
@@ -470,7 +471,30 @@ if (!updatedMonitor) {
 
   throw error;
 }
+/*
+ * Canonical Phase 4 signal ingestion.
+ *
+ * This currently runs alongside the legacy direct
+ * monitor -> incident bridge.
+ *
+ * Phase 5 will remove the direct bridge after
+ * signal-driven incident lifecycle handling is proven.
+ */
+signalIngestionService
+  .ingestMonitorCheck(
+    monitor,
+    result
+  )
+  .catch(
+    (error) => {
+      console.error(
+        "[signal] monitor ingestion failed:",
+        error.message
+      );
+    }
+  );
 
+  
   const transitioned = oldStatus !== newStatus;
   if (transitioned) {
     console.log(

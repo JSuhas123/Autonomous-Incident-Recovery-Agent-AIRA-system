@@ -1,0 +1,1804 @@
+"use strict";
+
+const crypto =
+  require("node:crypto");
+
+const mongoose =
+  require("mongoose");
+
+const SIGNAL_TYPES = [
+  "log",
+  "metric",
+  "trace",
+];
+
+const otelSignalSchema =
+  new mongoose.Schema(
+    {
+      // ======================================================================
+      // OWNERSHIP
+      // ======================================================================
+
+      organizationId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "Organization",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      environmentId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "Environment",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      tenantId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      integrationId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "IntegrationConnection",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      provider: {
+        type:
+          String,
+
+        default:
+          "opentelemetry",
+
+        immutable:
+          true,
+      },
+
+      // ======================================================================
+      // SIGNAL IDENTITY
+      // ======================================================================
+
+      signalType: {
+        type:
+          String,
+
+        enum:
+          SIGNAL_TYPES,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      signalId: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      payloadHash: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      serviceName: {
+        type:
+          String,
+
+        trim:
+          true,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // CORRELATION
+      // ======================================================================
+
+      traceId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      spanId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      parentSpanId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // COMMON SIGNAL DATA
+      // ======================================================================
+
+      name: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      severity: {
+        type:
+          String,
+
+        enum: [
+          "debug",
+          "info",
+          "warning",
+          "error",
+          "critical",
+          "unknown",
+        ],
+
+        default:
+          "unknown",
+
+        index:
+          true,
+      },
+
+      timestamp: {
+        type:
+          Date,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      observedAt: {
+        type:
+          Date,
+
+        default:
+          Date.now,
+      },
+
+      attributes: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
+      },
+
+      resourceAttributes: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
+      },
+
+      scope: {
+        name: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        version: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+      },
+
+      // ======================================================================
+      // LOG
+      // ======================================================================
+
+      log: {
+        body: {
+          type:
+            mongoose.Schema.Types.Mixed,
+
+          default:
+            null,
+        },
+
+        severityText: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        severityNumber: {
+          type:
+            Number,
+
+          default:
+            null,
+        },
+      },
+
+      // ======================================================================
+      // METRIC
+      // ======================================================================
+
+      metric: {
+        metricType: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        unit: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        description: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        value: {
+          type:
+            mongoose.Schema.Types.Mixed,
+
+          default:
+            null,
+        },
+
+        aggregationTemporality: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        isMonotonic: {
+          type:
+            Boolean,
+
+          default:
+            null,
+        },
+      },
+
+      // ======================================================================
+      // TRACE
+      // ======================================================================
+
+      span: {
+        kind: {
+          type:
+            mongoose.Schema.Types.Mixed,
+
+          default:
+            null,
+        },
+
+        startTime: {
+          type:
+            Date,
+
+          default:
+            null,
+        },
+
+        endTime: {
+          type:
+            Date,
+
+          default:
+            null,
+        },
+
+        durationMs: {
+          type:
+            Number,
+
+          default:
+            null,
+        },
+
+        statusCode: {
+          type:
+            mongoose.Schema.Types.Mixed,
+
+          default:
+            null,
+        },
+
+        statusMessage: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+      },
+    },
+    {
+      timestamps:
+        true,
+
+      versionKey:
+        false,
+    }
+  );
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+otelSignalSchema.index(
+  {
+    organizationId:
+      1,
+
+    environmentId:
+      1,
+
+    integrationId:
+      1,
+
+    signalId:
+      1,
+  },
+  {
+    unique:
+      true,
+
+    name:
+      "unique_otel_signal_per_integration",
+  }
+);
+
+otelSignalSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  signalType:
+    1,
+
+  timestamp:
+    -1,
+});
+
+otelSignalSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  serviceName:
+    1,
+
+  signalType:
+    1,
+
+  timestamp:
+    -1,
+});
+
+otelSignalSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  traceId:
+    1,
+});
+
+const OpenTelemetrySignal =
+  mongoose.models
+    .OpenTelemetrySignal ||
+  mongoose.model(
+    "OpenTelemetrySignal",
+    otelSignalSchema,
+    "opentelemetry_signals"
+  );
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function hashPayload(
+  value
+) {
+  return crypto
+    .createHash(
+      "sha256"
+    )
+    .update(
+      JSON.stringify(
+        value
+      )
+    )
+    .digest(
+      "hex"
+    );
+}
+
+function normalizeAttributes(
+  attributes
+) {
+  if (
+    !Array.isArray(
+      attributes
+    )
+  ) {
+    if (
+      attributes &&
+      typeof attributes ===
+        "object"
+    ) {
+      return attributes;
+    }
+
+    return {};
+  }
+
+  const result = {};
+
+  for (
+    const attribute
+    of attributes
+  ) {
+    if (
+      !attribute ||
+      !attribute.key
+    ) {
+      continue;
+    }
+
+    result[
+      attribute.key
+    ] =
+      unwrapOtelValue(
+        attribute.value
+      );
+  }
+
+  return result;
+}
+
+function unwrapOtelValue(
+  value
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
+    return null;
+  }
+
+  if (
+    typeof value !==
+    "object"
+  ) {
+    return value;
+  }
+
+  const keys = [
+    "stringValue",
+    "boolValue",
+    "intValue",
+    "doubleValue",
+    "bytesValue",
+  ];
+
+  for (
+    const key
+    of keys
+  ) {
+    if (
+      value[key] !==
+      undefined
+    ) {
+      return value[
+        key
+      ];
+    }
+  }
+
+  if (
+    Array.isArray(
+      value.arrayValue
+        ?.values
+    )
+  ) {
+    return value
+      .arrayValue
+      .values
+      .map(
+        unwrapOtelValue
+      );
+  }
+
+  if (
+    Array.isArray(
+      value.kvlistValue
+        ?.values
+    )
+  ) {
+    return normalizeAttributes(
+      value
+        .kvlistValue
+        .values
+    );
+  }
+
+  return value;
+}
+
+function nanoToDate(
+  value
+) {
+  if (!value) {
+    return new Date();
+  }
+
+  try {
+    const nanos =
+      BigInt(
+        String(value)
+      );
+
+    return new Date(
+      Number(
+        nanos /
+        1000000n
+      )
+    );
+  } catch {
+    const parsed =
+      new Date(
+        value
+      );
+
+    return Number.isNaN(
+      parsed.getTime()
+    )
+      ? new Date()
+      : parsed;
+  }
+}
+
+function durationMs(
+  start,
+  end
+) {
+  if (
+    !start ||
+    !end
+  ) {
+    return null;
+  }
+
+  const diff =
+    end.getTime() -
+    start.getTime();
+
+  return diff >= 0
+    ? diff
+    : null;
+}
+
+function extractServiceName(
+  resourceAttributes
+) {
+  return (
+    resourceAttributes[
+      "service.name"
+    ] ||
+    resourceAttributes[
+      "service"
+    ] ||
+    null
+  );
+}
+
+function severityFromLog(
+  record
+) {
+  const text =
+    String(
+      record.severityText ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  if (
+    text.includes(
+      "fatal"
+    ) ||
+    text.includes(
+      "critical"
+    )
+  ) {
+    return "critical";
+  }
+
+  if (
+    text.includes(
+      "error"
+    )
+  ) {
+    return "error";
+  }
+
+  if (
+    text.includes(
+      "warn"
+    )
+  ) {
+    return "warning";
+  }
+
+  if (
+    text.includes(
+      "debug"
+    ) ||
+    text.includes(
+      "trace"
+    )
+  ) {
+    return "debug";
+  }
+
+  if (text) {
+    return "info";
+  }
+
+  return "unknown";
+}
+
+function getScope(
+  scope
+) {
+  return {
+    name:
+      scope?.name ||
+      null,
+
+    version:
+      scope?.version ||
+      null,
+  };
+}
+
+// ============================================================================
+// SERVICE
+// ============================================================================
+
+class OpenTelemetryIngestionService {
+  _scope(
+    context
+  ) {
+    if (
+      !context
+        ?.organizationId ||
+      !context
+        ?.environmentId ||
+      !context
+        ?.tenantId ||
+      !context
+        ?.integrationId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete OpenTelemetry context is required"
+        ),
+        {
+          code:
+            "OTEL_CONTEXT_REQUIRED",
+        }
+      );
+    }
+
+    return {
+      organizationId:
+        context.organizationId,
+
+      environmentId:
+        context.environmentId,
+
+      tenantId:
+        context.tenantId,
+
+      integrationId:
+        context.integrationId,
+    };
+  }
+
+  // ==========================================================================
+  // NORMALIZATION
+  // ==========================================================================
+
+  normalizePayload(
+    payload
+  ) {
+    if (
+      !payload ||
+      typeof payload !==
+        "object"
+    ) {
+      throw Object.assign(
+        new Error(
+          "OpenTelemetry payload must be an object"
+        ),
+        {
+          code:
+            "OTEL_PAYLOAD_INVALID",
+        }
+      );
+    }
+
+    return [
+      ...this
+        .normalizeLogs(
+          payload
+        ),
+
+      ...this
+        .normalizeMetrics(
+          payload
+        ),
+
+      ...this
+        .normalizeTraces(
+          payload
+        ),
+    ];
+  }
+
+  normalizeLogs(
+    payload
+  ) {
+    const result = [];
+
+    const resourceLogs =
+      Array.isArray(
+        payload.resourceLogs
+      )
+        ? payload.resourceLogs
+        : [];
+
+    for (
+      const resourceLog
+      of resourceLogs
+    ) {
+      const resourceAttributes =
+        normalizeAttributes(
+          resourceLog.resource
+            ?.attributes
+        );
+
+      const serviceName =
+        extractServiceName(
+          resourceAttributes
+        );
+
+      const scopeLogs =
+        resourceLog.scopeLogs ||
+        resourceLog
+          .instrumentationLibraryLogs ||
+        [];
+
+      for (
+        const scopeLog
+        of scopeLogs
+      ) {
+        const scope =
+          getScope(
+            scopeLog.scope ||
+            scopeLog
+              .instrumentationLibrary
+          );
+
+        const records =
+          Array.isArray(
+            scopeLog.logRecords
+          )
+            ? scopeLog.logRecords
+            : [];
+
+        for (
+          const record
+          of records
+        ) {
+          const timestamp =
+            nanoToDate(
+              record.timeUnixNano ||
+              record
+                .observedTimeUnixNano
+            );
+
+          const attributes =
+            normalizeAttributes(
+              record.attributes
+            );
+
+          const body =
+            unwrapOtelValue(
+              record.body
+            );
+
+          const rawIdentity = {
+            signalType:
+              "log",
+
+            traceId:
+              record.traceId ||
+              null,
+
+            spanId:
+              record.spanId ||
+              null,
+
+            timestamp:
+              timestamp
+                .toISOString(),
+
+            body,
+
+            attributes,
+          };
+
+          result.push({
+            signalType:
+              "log",
+
+            signalId:
+              `otel_${hashPayload(
+                rawIdentity
+              ).slice(
+                0,
+                48
+              )}`,
+
+            payloadHash:
+              hashPayload(
+                record
+              ),
+
+            serviceName,
+
+            traceId:
+              record.traceId ||
+              null,
+
+            spanId:
+              record.spanId ||
+              null,
+
+            name:
+              attributes[
+                "event.name"
+              ] ||
+              null,
+
+            severity:
+              severityFromLog(
+                record
+              ),
+
+            timestamp,
+
+            attributes,
+
+            resourceAttributes,
+
+            scope,
+
+            log: {
+              body,
+
+              severityText:
+                record
+                  .severityText ||
+                null,
+
+              severityNumber:
+                record
+                  .severityNumber ??
+                null,
+            },
+          });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  normalizeMetrics(
+    payload
+  ) {
+    const result = [];
+
+    const resourceMetrics =
+      Array.isArray(
+        payload.resourceMetrics
+      )
+        ? payload.resourceMetrics
+        : [];
+
+    for (
+      const resourceMetric
+      of resourceMetrics
+    ) {
+      const resourceAttributes =
+        normalizeAttributes(
+          resourceMetric.resource
+            ?.attributes
+        );
+
+      const serviceName =
+        extractServiceName(
+          resourceAttributes
+        );
+
+      const scopeMetrics =
+        resourceMetric
+          .scopeMetrics ||
+        resourceMetric
+          .instrumentationLibraryMetrics ||
+        [];
+
+      for (
+        const scopeMetric
+        of scopeMetrics
+      ) {
+        const scope =
+          getScope(
+            scopeMetric.scope ||
+            scopeMetric
+              .instrumentationLibrary
+          );
+
+        const metrics =
+          scopeMetric.metrics ||
+          [];
+
+        for (
+          const metric
+          of metrics
+        ) {
+          const metricData =
+            this
+              .getMetricData(
+                metric
+              );
+
+          if (!metricData) {
+            continue;
+          }
+
+          for (
+            const point
+            of metricData
+              .dataPoints
+          ) {
+            const timestamp =
+              nanoToDate(
+                point.timeUnixNano
+              );
+
+            const attributes =
+              normalizeAttributes(
+                point.attributes
+              );
+
+            const value =
+              this
+                .extractMetricValue(
+                  point,
+                  metricData.type
+                );
+
+            const rawIdentity = {
+              signalType:
+                "metric",
+
+              name:
+                metric.name,
+
+              serviceName,
+
+              timestamp:
+                timestamp
+                  .toISOString(),
+
+              attributes,
+
+              value,
+            };
+
+            result.push({
+              signalType:
+                "metric",
+
+              signalId:
+                `otel_${hashPayload(
+                  rawIdentity
+                ).slice(
+                  0,
+                  48
+                )}`,
+
+              payloadHash:
+                hashPayload(
+                  point
+                ),
+
+              serviceName,
+
+              name:
+                metric.name ||
+                null,
+
+              severity:
+                "unknown",
+
+              timestamp,
+
+              attributes,
+
+              resourceAttributes,
+
+              scope,
+
+              metric: {
+                metricType:
+                  metricData.type,
+
+                unit:
+                  metric.unit ||
+                  null,
+
+                description:
+                  metric.description ||
+                  null,
+
+                value,
+
+                aggregationTemporality:
+                  metricData
+                    .data
+                    ?.aggregationTemporality ??
+                  null,
+
+                isMonotonic:
+                  metricData
+                    .data
+                    ?.isMonotonic ??
+                  null,
+              },
+            });
+          }
+        }
+      }
+    }
+
+    return result;
+  }
+
+  getMetricData(
+    metric
+  ) {
+    const types = [
+      [
+        "gauge",
+        "gauge",
+      ],
+
+      [
+        "sum",
+        "sum",
+      ],
+
+      [
+        "histogram",
+        "histogram",
+      ],
+
+      [
+        "exponentialHistogram",
+        "exponential_histogram",
+      ],
+
+      [
+        "summary",
+        "summary",
+      ],
+    ];
+
+    for (
+      const [
+        field,
+        type,
+      ]
+      of types
+    ) {
+      if (
+        metric[field]
+      ) {
+        return {
+          type,
+
+          data:
+            metric[field],
+
+          dataPoints:
+            Array.isArray(
+              metric[field]
+                .dataPoints
+            )
+              ? metric[field]
+                  .dataPoints
+              : [],
+        };
+      }
+    }
+
+    return null;
+  }
+
+  extractMetricValue(
+    point,
+    type
+  ) {
+    if (
+      point.asDouble !==
+      undefined
+    ) {
+      return point.asDouble;
+    }
+
+    if (
+      point.asInt !==
+      undefined
+    ) {
+      return point.asInt;
+    }
+
+    if (
+      type ===
+      "histogram" ||
+      type ===
+      "exponential_histogram"
+    ) {
+      return {
+        count:
+          point.count ??
+          null,
+
+        sum:
+          point.sum ??
+          null,
+
+        min:
+          point.min ??
+          null,
+
+        max:
+          point.max ??
+          null,
+
+        bucketCounts:
+          point.bucketCounts ||
+          null,
+
+        explicitBounds:
+          point
+            .explicitBounds ||
+          null,
+      };
+    }
+
+    if (
+      type ===
+      "summary"
+    ) {
+      return {
+        count:
+          point.count ??
+          null,
+
+        sum:
+          point.sum ??
+          null,
+
+        quantileValues:
+          point
+            .quantileValues ||
+          [],
+      };
+    }
+
+    return null;
+  }
+
+  normalizeTraces(
+    payload
+  ) {
+    const result = [];
+
+    const resourceSpans =
+      Array.isArray(
+        payload.resourceSpans
+      )
+        ? payload.resourceSpans
+        : [];
+
+    for (
+      const resourceSpan
+      of resourceSpans
+    ) {
+      const resourceAttributes =
+        normalizeAttributes(
+          resourceSpan.resource
+            ?.attributes
+        );
+
+      const serviceName =
+        extractServiceName(
+          resourceAttributes
+        );
+
+      const scopeSpans =
+        resourceSpan
+          .scopeSpans ||
+        resourceSpan
+          .instrumentationLibrarySpans ||
+        [];
+
+      for (
+        const scopeSpan
+        of scopeSpans
+      ) {
+        const scope =
+          getScope(
+            scopeSpan.scope ||
+            scopeSpan
+              .instrumentationLibrary
+          );
+
+        const spans =
+          Array.isArray(
+            scopeSpan.spans
+          )
+            ? scopeSpan.spans
+            : [];
+
+        for (
+          const span
+          of spans
+        ) {
+          const startTime =
+            nanoToDate(
+              span
+                .startTimeUnixNano
+            );
+
+          const endTime =
+            span.endTimeUnixNano
+              ? nanoToDate(
+                  span
+                    .endTimeUnixNano
+                )
+              : null;
+
+          const attributes =
+            normalizeAttributes(
+              span.attributes
+            );
+
+          const rawIdentity = {
+            signalType:
+              "trace",
+
+            traceId:
+              span.traceId,
+
+            spanId:
+              span.spanId,
+          };
+
+          result.push({
+            signalType:
+              "trace",
+
+            signalId:
+              `otel_${hashPayload(
+                rawIdentity
+              ).slice(
+                0,
+                48
+              )}`,
+
+            payloadHash:
+              hashPayload(
+                span
+              ),
+
+            serviceName,
+
+            traceId:
+              span.traceId ||
+              null,
+
+            spanId:
+              span.spanId ||
+              null,
+
+            parentSpanId:
+              span
+                .parentSpanId ||
+              null,
+
+            name:
+              span.name ||
+              null,
+
+            severity:
+              this
+                .spanSeverity(
+                  span
+                ),
+
+            timestamp:
+              startTime,
+
+            attributes,
+
+            resourceAttributes,
+
+            scope,
+
+            span: {
+              kind:
+                span.kind ??
+                null,
+
+              startTime,
+
+              endTime,
+
+              durationMs:
+                durationMs(
+                  startTime,
+                  endTime
+                ),
+
+              statusCode:
+                span.status
+                  ?.code ??
+                null,
+
+              statusMessage:
+                span.status
+                  ?.message ||
+                null,
+            },
+          });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  spanSeverity(
+    span
+  ) {
+    const code =
+      span.status
+        ?.code;
+
+    if (
+      code ===
+      2 ||
+      String(
+        code
+      ).toUpperCase() ===
+      "STATUS_CODE_ERROR"
+    ) {
+      return "error";
+    }
+
+    return "info";
+  }
+
+  // ==========================================================================
+  // PERSISTENCE
+  // ==========================================================================
+
+  async ingest(
+  context,
+  payload
+) {
+  const scope =
+    this._scope(
+      context
+    );
+
+  const normalized =
+    this
+      .normalizePayload(
+        payload
+      );
+
+  const result = {
+    accepted:
+      0,
+
+    duplicates:
+      0,
+
+    signals: [],
+  };
+
+  for (
+    const signal
+    of normalized
+  ) {
+    const filter = {
+      organizationId:
+        scope.organizationId,
+
+      environmentId:
+        scope.environmentId,
+
+      integrationId:
+        scope.integrationId,
+
+      signalId:
+        signal.signalId,
+    };
+
+    try {
+      /*
+       * First perform an atomic upsert using the raw
+       * MongoDB result so we know whether an insert
+       * actually occurred.
+       */
+      const writeResult =
+        await OpenTelemetrySignal
+          .updateOne(
+            filter,
+
+            {
+              $setOnInsert: {
+                ...scope,
+
+                provider:
+                  "opentelemetry",
+
+                ...signal,
+              },
+            },
+
+            {
+              upsert:
+                true,
+
+              setDefaultsOnInsert:
+                true,
+            }
+          );
+
+      /*
+       * MongoDB reports an upsertedId only when this
+       * operation created the record.
+       */
+      if (
+        writeResult.upsertedCount ===
+          1 ||
+        writeResult.upsertedId
+      ) {
+        const inserted =
+          await OpenTelemetrySignal
+            .findOne(
+              filter
+            )
+            .lean();
+
+        if (!inserted) {
+          throw Object.assign(
+            new Error(
+              "Inserted OpenTelemetry signal could not be reloaded"
+            ),
+            {
+              code:
+                "OTEL_SIGNAL_RELOAD_FAILED",
+            }
+          );
+        }
+
+        result.accepted +=
+          1;
+
+        result.signals.push(
+          inserted
+        );
+
+        continue;
+      }
+
+      /*
+       * Matched an existing signal.
+       */
+      result.duplicates +=
+        1;
+    } catch (error) {
+      /*
+       * Concurrent insert race protection when the
+       * database unique index is also active.
+       */
+      if (
+        error?.code ===
+        11000
+      ) {
+        result.duplicates +=
+          1;
+
+        continue;
+      }
+
+      throw Object.assign(
+        new Error(
+          `Failed to persist OpenTelemetry signal: ${error.message}`
+        ),
+        {
+          code:
+            error.code ||
+            "OTEL_SIGNAL_PERSISTENCE_FAILED",
+
+          cause:
+            error,
+        }
+      );
+    }
+  }
+
+  return result;
+}
+
+  // ==========================================================================
+  // QUERIES
+  // ==========================================================================
+
+  async queryLogs(
+    context,
+    query = {}
+  ) {
+    return this
+      .querySignals(
+        context,
+        "log",
+        query
+      );
+  }
+
+  async queryMetrics(
+    context,
+    query = {}
+  ) {
+    return this
+      .querySignals(
+        context,
+        "metric",
+        query
+      );
+  }
+
+  async queryTraces(
+    context,
+    query = {}
+  ) {
+    return this
+      .querySignals(
+        context,
+        "trace",
+        query
+      );
+  }
+
+  async querySignals(
+    context,
+    signalType,
+    query
+  ) {
+    const scope =
+      this._scope(
+        context
+      );
+
+    const filter = {
+      ...scope,
+
+      signalType,
+    };
+
+    if (
+      query.serviceName
+    ) {
+      filter.serviceName =
+        query.serviceName;
+    }
+
+    if (
+      query.traceId
+    ) {
+      filter.traceId =
+        query.traceId;
+    }
+
+    if (
+      query.name
+    ) {
+      filter.name =
+        query.name;
+    }
+
+    if (
+      query.severity
+    ) {
+      filter.severity =
+        query.severity;
+    }
+
+    if (
+      query.from ||
+      query.to
+    ) {
+      filter.timestamp =
+        {};
+
+      if (
+        query.from
+      ) {
+        filter.timestamp
+          .$gte =
+          new Date(
+            query.from
+          );
+      }
+
+      if (
+        query.to
+      ) {
+        filter.timestamp
+          .$lte =
+          new Date(
+            query.to
+          );
+      }
+    }
+
+    const limit =
+      Math.min(
+        Math.max(
+          Number.parseInt(
+            query.limit,
+            10
+          ) ||
+          100,
+          1
+        ),
+        1000
+      );
+
+    return OpenTelemetrySignal
+      .find(
+        filter
+      )
+      .sort({
+        timestamp:
+          -1,
+      })
+      .limit(
+        limit
+      )
+      .lean();
+  }
+}
+
+const service =
+  new OpenTelemetryIngestionService();
+
+module.exports =
+  service;
+
+module.exports
+  .OpenTelemetryIngestionService =
+  OpenTelemetryIngestionService;
+
+module.exports
+  .OpenTelemetrySignal =
+  OpenTelemetrySignal;

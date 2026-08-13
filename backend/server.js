@@ -27,6 +27,7 @@ const { topLevelRouter: monitorTopLevelRoutes } = require("./routes/monitorRoute
 const incidentRoutes = require("./routes/incidentRoutes");
 const runbookRoutes  = require("./routes/runbookRoutes");
 const playbookRoutes = require("./routes/playbookRoutes");
+const inventoryRoutes = require("./routes/inventoryRoutes");
 const actionLogRoutes = require("./routes/actionLogRoutes");
 const environmentRoutes = require("./routes/environmentRoutes");
 const developmentRoutes = require("./routes/developmentRoutes");
@@ -73,7 +74,8 @@ const { getQueueService } = require("./services/infrastructure/queueService");
 const { getIdempotencyService } = require("./services/infrastructure/idempotencyService");
 const { runbookExecutionService } = require("./services/execution");
 const { getK8sClient } = require("./services/k8s");
-
+const signalRoutes =
+  require("./routes/signalRoutes");
 const { correlationIdMiddleware } = require("./middleware/correlationIdMiddleware");
 
 const app = express();
@@ -177,7 +179,12 @@ app.use(
 app.use(sanitizationMiddleware(null, { allowRichText: false })); // Sanitize ALL string fields
 app.use(killSwitchEnforcementMiddleware()); // Attach kill switch manager to requests
 app.use(confidenceCheckMiddleware); // Attach confidence enforcer to requests
-
+app.use(
+  "/api/v1/signals",
+  sessionAuthMiddleware,
+  browserEnvironmentContext,
+  signalRoutes
+);
 
 // Health check endpoint (no auth required)
 app.get("/", (req, res) => {
@@ -427,6 +434,13 @@ app.use("/api/v1/dashboard", sessionAuthMiddleware, dashboardRoutes);
  */
 app.use("/api/v1/services", sessionAuthMiddleware, browserEnvironmentContext, serviceRoutes);
 
+app.use(
+  "/api/v1/inventory",
+  sessionAuthMiddleware,
+  requestContextMiddleware,
+  environmentContextMiddleware,
+  inventoryRoutes
+);
 /**
  * MONITOR API — browser-session (cross-service monitor list + per-monitor operations)
  */

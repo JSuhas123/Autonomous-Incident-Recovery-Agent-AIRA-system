@@ -19,8 +19,10 @@ const Service = require("../models/Service");
 const {
   encryptSecret,
   decryptSecret,
-} = require("../services/integrations/secretStorage");
-
+  getSecretStorage,
+  SECRET_VERSION,
+} = require(
+  "../services/integrations/secretStorage");
 const {
   getAdapter,
 } = require("../services/integrations/adapterRegistry");
@@ -57,18 +59,36 @@ const router = express.Router();
 // Serialisers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function safeConnection(doc) {
+function safeConnection(
+  doc
+) {
+  /*
+   * encryptedSecretReference normally has select:false.
+   *
+   * Therefore secretVersion/secretUpdatedAt are the safe
+   * indicators that credentials exist.
+   */
+  const hasSecret =
+    Boolean(
+      doc.secretUpdatedAt ||
+      doc.secretVersion ||
+      doc.encryptedSecretReference
+    );
+
   return {
     id:
-      doc._id?.toString?.() ??
+      doc._id
+        ?.toString?.() ??
       doc._id,
 
     organizationId:
-      doc.organizationId?.toString?.() ??
+      doc.organizationId
+        ?.toString?.() ??
       doc.organizationId,
 
     environmentId:
-      doc.environmentId?.toString?.() ??
+      doc.environmentId
+        ?.toString?.() ??
       null,
 
     tenantId:
@@ -80,8 +100,15 @@ function safeConnection(doc) {
     name:
       doc.name,
 
+    externalAccountId:
+      doc.externalAccountId ??
+      null,
+
     serviceIds:
-      (doc.serviceIds ?? []).map(
+      (
+        doc.serviceIds ??
+        []
+      ).map(
         (id) =>
           id?.toString?.() ??
           id
@@ -96,11 +123,24 @@ function safeConnection(doc) {
     nonSecretConfig:
       doc.nonSecretConfig,
 
-    // Never expose raw or decrypted secrets.
-    hasSecret:
-      Boolean(
-        doc.encryptedSecretReference
-      ),
+    hasSecret,
+
+    secretVersion:
+      doc.secretVersion ??
+      null,
+
+    secretUpdatedAt:
+      doc.secretUpdatedAt ??
+      null,
+
+    healthStatus:
+      doc.healthStatus,
+
+    lastHealthCheckAt:
+      doc.lastHealthCheckAt,
+
+    lastLatencyMs:
+      doc.lastLatencyMs,
 
     lastEventAt:
       doc.lastEventAt,
@@ -108,14 +148,31 @@ function safeConnection(doc) {
     lastSuccessfulEventAt:
       doc.lastSuccessfulEventAt,
 
-    healthStatus:
-      doc.healthStatus,
+    lastErrorAt:
+      doc.lastErrorAt,
+
+    consecutiveFailures:
+      doc.consecutiveFailures ??
+      0,
 
     errorSummary:
       doc.errorSummary,
 
+    connectedAt:
+      doc.connectedAt,
+
+    disconnectedAt:
+      doc.disconnectedAt,
+
+    disabledAt:
+      doc.disabledAt,
+
+    disabledReason:
+      doc.disabledReason,
+
     createdBy:
-      doc.createdBy?.toString?.() ??
+      doc.createdBy
+        ?.toString?.() ??
       doc.createdBy,
 
     createdAt:
@@ -123,9 +180,6 @@ function safeConnection(doc) {
 
     updatedAt:
       doc.updatedAt,
-
-    disabledAt:
-      doc.disabledAt,
   };
 }
 
@@ -133,64 +187,102 @@ function safeConnection(doc) {
 // Connection isolation helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function loadConnection(req, res) {
+async function loadConnection(
+  req,
+  res,
+  {
+    includeSecret = false,
+  } = {}
+) {
   const {
     integrationId,
-  } = req.params;
+  } =
+    req.params;
 
   if (
-    !mongoose.Types.ObjectId.isValid(
-      integrationId
-    )
+    !mongoose.Types.ObjectId
+      .isValid(
+        integrationId
+      )
   ) {
-    res.status(404).json({
-      error:
-        "Integration not found",
-      code:
-        "INTEGRATION_NOT_FOUND",
-    });
+    res
+      .status(404)
+      .json({
+        error:
+          "Integration not found",
+
+        code:
+          "INTEGRATION_NOT_FOUND",
+      });
 
     return null;
   }
 
   const organizationId =
-    req.context?.organizationId ||
-    req.auth?.organizationId;
+    req.context
+      ?.organizationId ||
+    req.auth
+      ?.organizationId;
 
   const environmentId =
-    req.context?.environmentId;
+    req.context
+      ?.environmentId;
 
   if (
     !organizationId ||
     !environmentId
   ) {
-    res.status(400).json({
-      error:
-        "Environment context is required",
-      code:
-        "ENVIRONMENT_REQUIRED",
-    });
+    res
+      .status(400)
+      .json({
+        error:
+          "Environment context is required",
+
+        code:
+          "ENVIRONMENT_REQUIRED",
+      });
 
     return null;
   }
 
+  let query =
+    IntegrationConnection
+      .findOne({
+        _id:
+          integrationId,
+
+        organizationId,
+
+        environmentId,
+      });
+
+  /*
+   * Credential access is opt-in.
+   *
+   * Ordinary GET/PATCH requests cannot accidentally read ciphertext.
+   */
+  if (
+    includeSecret
+  ) {
+    query =
+      query.select(
+        "+encryptedSecretReference"
+      );
+  }
+
   const connection =
-    await IntegrationConnection.findOne({
-      _id:
-        integrationId,
-      organizationId,
-      environmentId,
-    });
+    await query;
 
   if (!connection) {
-    // Do not reveal whether an integration exists
-    // in another tenant/environment.
-    res.status(404).json({
-      error:
-        "Integration not found",
-      code:
-        "INTEGRATION_NOT_FOUND",
-    });
+    res
+      .status(404)
+      .json({
+        error:
+          "Integration not found",
+
+        code:
+          "INTEGRATION_NOT_FOUND",
+      });
 
     return null;
   }
@@ -303,22 +395,40 @@ async function validateScopedServiceIds(
  * - Never persisted.
  * - Must be cleared after use.
  */
-function withDecryptedSecret(conn) {
-  if (
-    conn.encryptedSecretReference
-  ) {
-    try {
-      conn._decryptedSecret =
-        decryptSecret(
-          conn.encryptedSecretReference
-        );
-    } catch {
-      conn._decryptedSecret =
-        null;
-    }
+function withDecryptedSecret(
+  connection
+) {
+  if (!connection) {
+    return connection;
   }
 
-  return conn;
+  if (
+    connection
+      .encryptedSecretReference
+  ) {
+    connection
+      ._decryptedSecret =
+      decryptSecret(
+        connection
+          .encryptedSecretReference
+      );
+  } else {
+    connection
+      ._decryptedSecret =
+      null;
+  }
+
+  return connection;
+}
+
+function clearRuntimeSecret(
+  connection
+) {
+  if (connection) {
+    connection
+      ._decryptedSecret =
+      undefined;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,8 +461,8 @@ const createSchema =
 
     secret:
       Joi.string()
+        .min(1)
         .max(65536)
-        .allow("")
         .optional(),
   });
 
@@ -380,8 +490,8 @@ const rotateSecretSchema =
   Joi.object({
     secret:
       Joi.string()
+        .min(1)
         .max(65536)
-        .allow("")
         .required(),
   });
 
@@ -826,11 +936,30 @@ router.post(
     const connection =
       await loadConnection(
         req,
-        res
+        res,
+        {
+          includeSecret:
+            true,
+        }
       );
 
     if (!connection) {
       return;
+    }
+
+    if (
+      connection.status ===
+      "disabled"
+    ) {
+      return res
+        .status(409)
+        .json({
+          error:
+            "Integration is disabled",
+
+          code:
+            "INTEGRATION_DISABLED",
+        });
     }
 
     let adapter;
@@ -840,14 +969,19 @@ router.post(
         getAdapter(
           connection.provider
         );
-    } catch (err) {
+    } catch (error) {
       return res
         .status(
-          err.status ?? 501
+          error.status ??
+          501
         )
         .json({
           error:
-            err.message,
+            error.message,
+
+          code:
+            error.code ||
+            "ADAPTER_NOT_AVAILABLE",
         });
     }
 
@@ -866,46 +1000,118 @@ router.post(
       const now =
         new Date();
 
-      await IntegrationConnection
-        .findOneAndUpdate(
-          {
-            _id:
-              connection._id,
+      if (
+        result.success
+      ) {
+        await IntegrationConnection
+          .findOneAndUpdate(
+            {
+              _id:
+                connection._id,
 
-            organizationId:
-              connection.organizationId,
+              organizationId:
+                connection
+                  .organizationId,
 
-            environmentId:
-              connection.environmentId,
-          },
-          {
-            $set: {
-              healthStatus:
-                result.success
-                  ? "healthy"
-                  : "unhealthy",
-
-              errorSummary:
-                result.success
-                  ? null
-                  : (
-                      result.detail ??
-                      "Test failed"
-                    ),
-
-              lastEventAt:
-                result.success
-                  ? now
-                  : connection.lastEventAt,
-
-              lastSuccessfulEventAt:
-                result.success
-                  ? now
-                  : connection
-                      .lastSuccessfulEventAt,
+              environmentId:
+                connection
+                  .environmentId,
             },
-          }
-        );
+            {
+              $set: {
+                status:
+                  "connected",
+
+                healthStatus:
+                  "healthy",
+
+                connectedAt:
+                  connection
+                    .connectedAt ||
+                  now,
+
+                disconnectedAt:
+                  null,
+
+                lastHealthCheckAt:
+                  now,
+
+                lastLatencyMs:
+                  result
+                    .latencyMs ??
+                  null,
+
+                errorSummary:
+                  null,
+
+                lastErrorAt:
+                  null,
+
+                consecutiveFailures:
+                  0,
+              },
+            }
+          );
+      } else {
+        await IntegrationConnection
+          .findOneAndUpdate(
+            {
+              _id:
+                connection._id,
+
+              organizationId:
+                connection
+                  .organizationId,
+
+              environmentId:
+                connection
+                  .environmentId,
+            },
+            {
+              $set: {
+                status:
+                  connection
+                    .connectedAt
+                    ? "degraded"
+                    : "disconnected",
+
+                healthStatus:
+                  "unhealthy",
+
+                disconnectedAt:
+                  connection
+                    .connectedAt
+                    ? null
+                    : now,
+
+                lastHealthCheckAt:
+                  now,
+
+                lastLatencyMs:
+                  result
+                    .latencyMs ??
+                  null,
+
+                lastErrorAt:
+                  now,
+
+                errorSummary:
+                  String(
+                    result.detail ||
+                    "Connection test failed"
+                  ).slice(
+                    0,
+                    512
+                  ),
+              },
+
+              $inc: {
+                consecutiveFailures:
+                  1,
+              },
+            }
+          );
+      }
 
       return res.json({
         success:
@@ -916,8 +1122,12 @@ router.post(
 
         detail:
           result.detail,
+
+        metadata:
+          result.metadata ||
+          null,
       });
-    } catch (err) {
+    } catch (error) {
       return res
         .status(500)
         .json({
@@ -925,11 +1135,16 @@ router.post(
             false,
 
           error:
-            err.message,
+            error.message,
+
+          code:
+            error.code ||
+            "INTEGRATION_TEST_FAILED",
         });
     } finally {
-      connection._decryptedSecret =
-        undefined;
+      clearRuntimeSecret(
+        connection
+      );
     }
   }
 );
@@ -1019,7 +1234,11 @@ router.post(
     const connection =
       await loadConnection(
         req,
-        res
+        res,
+        {
+          includeSecret:
+            true,
+        }
       );
 
     if (!connection) {
@@ -1030,9 +1249,10 @@ router.post(
       error,
       value,
     } =
-      rotateSecretSchema.validate(
-        req.body
-      );
+      rotateSecretSchema
+        .validate(
+          req.body
+        );
 
     if (error) {
       return res
@@ -1047,13 +1267,38 @@ router.post(
         });
     }
 
-    connection
-      .encryptedSecretReference =
-      value.secret
-        ? encryptSecret(
-            value.secret
-          )
-        : null;
+    const secretStorage =
+      getSecretStorage();
+
+    await secretStorage
+      .rotateSecret(
+        connection,
+        value.secret
+      );
+
+    /*
+     * Credentials changed.
+     *
+     * We cannot trust the old health/connection state
+     * until the new credential is tested.
+     */
+    connection.status =
+      "disconnected";
+
+    connection.healthStatus =
+      "unknown";
+
+    connection.disconnectedAt =
+      new Date();
+
+    connection.errorSummary =
+      null;
+
+    connection.lastErrorAt =
+      null;
+
+    connection.consecutiveFailures =
+      0;
 
     await connection.save();
 
@@ -1069,7 +1314,8 @@ router.post(
           req.auth.userId,
 
         organizationId:
-          connection.organizationId,
+          connection
+            .organizationId,
 
         tenantId:
           connection.tenantId,
@@ -1079,14 +1325,36 @@ router.post(
             connection._id,
 
           environmentId:
-            connection.environmentId,
+            connection
+              .environmentId,
+
+          secretVersion:
+            connection
+              .secretVersion,
         },
       }
-    ).catch(() => {});
+    ).catch(
+      () => {}
+    );
 
     return res.json({
       success:
         true,
+
+      status:
+        connection.status,
+
+      healthStatus:
+        connection
+          .healthStatus,
+
+      secretVersion:
+        connection
+          .secretVersion,
+
+      secretUpdatedAt:
+        connection
+          .secretUpdatedAt,
     });
   }
 );
@@ -1103,7 +1371,11 @@ router.get(
     const connection =
       await loadConnection(
         req,
-        res
+        res,
+        {
+          includeSecret:
+            true,
+        }
       );
 
     if (!connection) {
@@ -1177,8 +1449,7 @@ router.get(
       const tenantId =
         connection.tenantId ||
         req.context?.tenantId ||
-        req.auth.tenantId ||
-        req.auth.organizationId;
+        req.auth.tenantId;
 
       const persisted =
         await kubernetesInventoryService
@@ -1186,10 +1457,12 @@ router.get(
             tenantId,
 
             organizationId:
-              connection.organizationId,
+              connection
+                .organizationId,
 
             environmentId:
-              connection.environmentId,
+              connection
+                .environmentId,
 
             integrationId:
               connection._id,
@@ -1207,13 +1480,18 @@ router.get(
             tenantId,
 
             organizationId:
-              connection.organizationId,
+              connection
+                .organizationId,
 
             environmentId:
-              connection.environmentId,
+              connection
+                .environmentId,
 
             integrationId:
               connection._id,
+
+            syncId:
+              persisted.syncId,
           });
 
       const now =
@@ -1226,24 +1504,44 @@ router.get(
               connection._id,
 
             organizationId:
-              connection.organizationId,
+              connection
+                .organizationId,
 
             environmentId:
-              connection.environmentId,
+              connection
+                .environmentId,
           },
           {
             $set: {
+              status:
+                "connected",
+
               healthStatus:
                 "healthy",
+
+              connectedAt:
+                connection
+                  .connectedAt ||
+                now,
+
+              disconnectedAt:
+                null,
+
+              lastHealthCheckAt:
+                now,
+
+              lastLatencyMs:
+                Date.now() -
+                startedAt,
 
               errorSummary:
                 null,
 
-              lastEventAt:
-                now,
+              lastErrorAt:
+                null,
 
-              lastSuccessfulEventAt:
-                now,
+              consecutiveFailures:
+                0,
             },
           }
         );
@@ -1253,7 +1551,8 @@ router.get(
           connection._id,
 
         environmentId:
-          connection.environmentId,
+          connection
+            .environmentId,
 
         provider:
           connection.provider,
@@ -1263,6 +1562,9 @@ router.get(
 
         healthStatus:
           "healthy",
+
+        syncId:
+          persisted.syncId,
 
         inventory:
           persisted,
@@ -1280,17 +1582,22 @@ router.get(
               ?.toString(),
 
           organizationId:
-            connection.organizationId
+            connection
+              .organizationId
               ?.toString(),
 
           environmentId:
-            connection.environmentId
+            connection
+              .environmentId
               ?.toString(),
 
           error:
             error.message,
         }
       );
+
+      const failedAt =
+        new Date();
 
       await IntegrationConnection
         .findOneAndUpdate(
@@ -1299,22 +1606,46 @@ router.get(
               connection._id,
 
             organizationId:
-              connection.organizationId,
+              connection
+                .organizationId,
 
             environmentId:
-              connection.environmentId,
+              connection
+                .environmentId,
           },
           {
             $set: {
+              status:
+                "degraded",
+
               healthStatus:
                 "unhealthy",
 
+              lastHealthCheckAt:
+                failedAt,
+
+              lastErrorAt:
+                failedAt,
+
               errorSummary:
-                error.message,
+                String(
+                  error.message ||
+                  "Discovery failed"
+                ).slice(
+                  0,
+                  512
+                ),
+            },
+
+            $inc: {
+              consecutiveFailures:
+                1,
             },
           }
         )
-        .catch(() => {});
+        .catch(
+          () => {}
+        );
 
       return res
         .status(502)
@@ -1329,8 +1660,9 @@ router.get(
             "KUBERNETES_DISCOVERY_FAILED",
         });
     } finally {
-      connection._decryptedSecret =
-        undefined;
+      clearRuntimeSecret(
+        connection
+      );
     }
   }
 );
@@ -1345,14 +1677,19 @@ router.delete(
     const connection =
       await loadConnection(
         req,
-        res
+        res,
+        {
+          includeSecret:
+            true,
+        }
       );
 
     if (!connection) {
       return;
     }
 
-    let adapter;
+    let adapter =
+      null;
 
     try {
       adapter =
@@ -1370,10 +1707,13 @@ router.delete(
         "function"
     ) {
       try {
-        await adapter.revoke(
+        const runtimeConnection =
           withDecryptedSecret(
             connection
-          )
+          );
+
+        await adapter.revoke(
+          runtimeConnection
         );
       } catch (error) {
         console.warn(
@@ -1384,7 +1724,8 @@ router.delete(
                 ?.toString(),
 
             environmentId:
-              connection.environmentId
+              connection
+                .environmentId
                 ?.toString(),
 
             provider:
@@ -1395,8 +1736,9 @@ router.delete(
           }
         );
       } finally {
-        connection._decryptedSecret =
-          undefined;
+        clearRuntimeSecret(
+          connection
+        );
       }
     }
 
@@ -1406,10 +1748,12 @@ router.delete(
           connection._id,
 
         organizationId:
-          connection.organizationId,
+          connection
+            .organizationId,
 
         environmentId:
-          connection.environmentId,
+          connection
+            .environmentId,
       });
 
     auditRecord(
@@ -1424,7 +1768,8 @@ router.delete(
           req.auth.userId,
 
         organizationId:
-          connection.organizationId,
+          connection
+            .organizationId,
 
         tenantId:
           connection.tenantId,
@@ -1434,13 +1779,16 @@ router.delete(
             connection._id,
 
           environmentId:
-            connection.environmentId,
+            connection
+              .environmentId,
 
           provider:
             connection.provider,
         },
       }
-    ).catch(() => {});
+    ).catch(
+      () => {}
+    );
 
     return res
       .status(204)

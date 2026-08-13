@@ -1,107 +1,95 @@
 "use strict";
+const crypto =
+  require("node:crypto");
 
 const KubernetesResource =
-  require("../../models/KubernetesResource");
+  require(
+    "../../models/KubernetesResource"
+  );
 
 const KubernetesResourceRelation =
-  require("../../models/KubernetesResourceRelation");
+  require(
+    "../../models/KubernetesResourceRelation"
+  );
+
+const kubernetesInventoryAdapter =
+  require(
+    "../inventory/kubernetesInventoryAdapter"
+  );
 
 class KubernetesRelationshipService {
-  /**
-   * Rebuild Kubernetes topology relationships for one integration.
-   *
-   * Authoritative relationships:
-   *
-   * Deployment
-   *   ↓ ownerReference
-   * ReplicaSet
-   *   ↓ ownerReference
-   * Pod
-   *   ↓ nodeName
-   * Node
-   *
-   * Service → Pod remains selector-based because that is how
-   * Kubernetes Services actually target workloads.
-   *
-   * Deployment → Pod label matching is retained only as fallback.
-   */
- async rebuildRelationships({
-  tenantId,
+  async rebuildRelationships({
+    tenantId,
   organizationId,
   environmentId,
   integrationId,
-}) {
-  if (
-    !tenantId ||
-    !organizationId ||
-    !environmentId ||
-    !integrationId
-  ) {
-    throw Object.assign(
-      new Error(
-        "Complete Kubernetes ownership context is required"
-      ),
-      {
-        code:
-          "K8S_RELATIONSHIP_CONTEXT_REQUIRED",
-      }
-    );
-  }
+  syncCanonical = true,
+  syncId = null,
+  }) {
+    this._validateContext({
+      tenantId,
+      organizationId,
+      environmentId,
+      integrationId,
+    });
 
-  /**
-   * Only resources belonging to this exact
-   * organization + environment + integration
-   * may participate in this topology graph.
-   */
-  const resources =
-    await KubernetesResource
-      .find({
-        organizationId,
+    const currentSyncId =
+      syncId ||
+      `k8s-topology-${crypto.randomUUID()}`;
 
-        environmentId,
+    const resources =
+      await KubernetesResource
+        .find({
+          organizationId,
+          environmentId,
+          integrationId,
 
-        integrationId,
-
-        active:
-          true,
-      })
-      .lean();
+          active:
+            true,
+        })
+        .lean();
 
     const services =
       resources.filter(
         (resource) =>
-          resource.kind === "service"
+          resource.kind ===
+          "service"
       );
 
     const deployments =
       resources.filter(
         (resource) =>
-          resource.kind === "deployment"
+          resource.kind ===
+          "deployment"
       );
 
     const replicaSets =
       resources.filter(
         (resource) =>
-          resource.kind === "replicaset"
+          resource.kind ===
+          "replicaset"
       );
 
     const pods =
       resources.filter(
         (resource) =>
-          resource.kind === "pod"
+          resource.kind ===
+          "pod"
       );
 
     const nodes =
       resources.filter(
         (resource) =>
-          resource.kind === "node"
+          resource.kind ===
+          "node"
       );
 
-    const seenRelations = [];
+    const seenRelations =
+      [];
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Lookup maps
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // LOOKUP MAPS
+    // ========================================================================
 
     const deploymentByUid =
       new Map(
@@ -115,6 +103,7 @@ class KubernetesRelationshipService {
               String(
                 deployment.uid
               ),
+
               deployment,
             ]
           )
@@ -132,6 +121,7 @@ class KubernetesRelationshipService {
               String(
                 replicaSet.uid
               ),
+
               replicaSet,
             ]
           )
@@ -147,17 +137,15 @@ class KubernetesRelationshipService {
           .map(
             (node) => [
               node.name,
+
               node,
             ]
           )
       );
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Service → Pod
-    //
-    // Kubernetes Services select pods through label selectors.
-    // This relationship is therefore authoritative when selectors match.
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // SERVICE -> POD
+    // ========================================================================
 
     for (
       const service
@@ -190,7 +178,8 @@ class KubernetesRelationshipService {
         if (
           this._labelsMatch(
             selector,
-            pod.labels || {}
+            pod.labels ||
+              {}
           )
         ) {
           seenRelations.push({
@@ -213,18 +202,17 @@ class KubernetesRelationshipService {
               selector,
 
               podLabels:
-                pod.labels || {},
+                pod.labels ||
+                {},
             },
           });
         }
       }
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Deployment → ReplicaSet
-    //
-    // Authoritative ownership through Kubernetes ownerReferences.
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // DEPLOYMENT -> REPLICASET
+    // ========================================================================
 
     for (
       const replicaSet
@@ -235,23 +223,23 @@ class KubernetesRelationshipService {
           ?.ownerReferences ||
         [];
 
-      const deploymentOwner =
+      const owner =
         owners.find(
-          (owner) =>
-            owner.kind ===
+          (reference) =>
+            reference.kind ===
               "Deployment" &&
-            owner.controller ===
+            reference.controller ===
               true
         );
 
-      if (!deploymentOwner) {
+      if (!owner) {
         continue;
       }
 
       const deployment =
         deploymentByUid.get(
           String(
-            deploymentOwner.uid
+            owner.uid
           )
         );
 
@@ -284,24 +272,22 @@ class KubernetesRelationshipService {
             "ownerReference",
 
           ownerKind:
-            deploymentOwner.kind,
+            owner.kind,
 
           ownerName:
-            deploymentOwner.name,
+            owner.name,
 
           ownerUid:
-            deploymentOwner.uid,
+            owner.uid,
         },
       });
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // ReplicaSet → Pod
-    //
-    // Authoritative ownership through Kubernetes ownerReferences.
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // REPLICASET -> POD
+    // ========================================================================
 
-    const podsWithAuthoritativeOwners =
+    const podsWithOwners =
       new Set();
 
     for (
@@ -313,23 +299,23 @@ class KubernetesRelationshipService {
           ?.ownerReferences ||
         [];
 
-      const replicaSetOwner =
+      const owner =
         owners.find(
-          (owner) =>
-            owner.kind ===
+          (reference) =>
+            reference.kind ===
               "ReplicaSet" &&
-            owner.controller ===
+            reference.controller ===
               true
         );
 
-      if (!replicaSetOwner) {
+      if (!owner) {
         continue;
       }
 
       const replicaSet =
         replicaSetByUid.get(
           String(
-            replicaSetOwner.uid
+            owner.uid
           )
         );
 
@@ -362,36 +348,26 @@ class KubernetesRelationshipService {
             "ownerReference",
 
           ownerKind:
-            replicaSetOwner.kind,
+            owner.kind,
 
           ownerName:
-            replicaSetOwner.name,
+            owner.name,
 
           ownerUid:
-            replicaSetOwner.uid,
+            owner.uid,
         },
       });
 
-      podsWithAuthoritativeOwners.add(
+      podsWithOwners.add(
         String(
           pod._id
         )
       );
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Deployment → Pod fallback
-    //
-    // Only used when the pod could NOT be authoritatively mapped through
-    // ReplicaSet ownerReferences.
-    //
-    // This exists for:
-    // - incomplete RBAC permissions
-    // - partial discovery
-    // - older/unusual workloads
-    //
-    // Confidence is deliberately lower.
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // DEPLOYMENT -> POD FALLBACK
+    // ========================================================================
 
     for (
       const deployment
@@ -415,7 +391,7 @@ class KubernetesRelationshipService {
         of pods
       ) {
         if (
-          podsWithAuthoritativeOwners.has(
+          podsWithOwners.has(
             String(
               pod._id
             )
@@ -434,7 +410,8 @@ class KubernetesRelationshipService {
         if (
           this._labelsMatch(
             selector,
-            pod.labels || {}
+            pod.labels ||
+              {}
           )
         ) {
           seenRelations.push({
@@ -457,18 +434,17 @@ class KubernetesRelationshipService {
               selector,
 
               podLabels:
-                pod.labels || {},
+                pod.labels ||
+                {},
             },
           });
         }
       }
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Pod → Node
-    //
-    // nodeName is authoritative scheduling information from Kubernetes.
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // POD -> NODE
+    // ========================================================================
 
     for (
       const pod
@@ -513,9 +489,9 @@ class KubernetesRelationshipService {
       });
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Persist relationships
-    // ────────────────────────────────────────────────────────────────────────
+       // ========================================================================
+    // PHASE A — PERSIST PROVIDER RELATIONSHIPS
+    // ========================================================================
 
     const now =
       new Date();
@@ -528,21 +504,20 @@ class KubernetesRelationshipService {
       of seenRelations
     ) {
       const key = {
-  organizationId,
+        organizationId,
+        environmentId,
+        integrationId,
 
-  environmentId,
+        sourceResourceId:
+          relation.source._id,
 
-  integrationId,
+        targetResourceId:
+          relation.target._id,
 
-  sourceResourceId:
-    relation.source._id,
-
-  targetResourceId:
-    relation.target._id,
-
-  relationType:
-    relation.relationType,
-};
+        relationType:
+          relation
+            .relationType,
+      };
 
       activeRelationKeys.push(
         key
@@ -552,17 +527,18 @@ class KubernetesRelationshipService {
         .findOneAndUpdate(
           key,
           {
-          $set: {
-  tenantId,
+            $set: {
+              tenantId,
 
-  organizationId,
+              organizationId,
 
-  environmentId,
+              environmentId,
 
-  integrationId,
+              integrationId,
 
-  confidence:
-                relation.confidence ??
+              confidence:
+                relation
+                  .confidence ??
                 1,
 
               evidence:
@@ -587,26 +563,33 @@ class KubernetesRelationshipService {
 
             new:
               true,
+
+            setDefaultsOnInsert:
+              true,
+
+            runValidators:
+              true,
           }
         );
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // Mark stale relationships inactive
-    // ────────────────────────────────────────────────────────────────────────
+    // ========================================================================
+    // PHASE B — RECONCILE PROVIDER RELATIONSHIPS
+    // ========================================================================
 
     const existingRelations =
-  await KubernetesResourceRelation
-    .find({
-      organizationId,
+      await KubernetesResourceRelation
+        .find({
+          organizationId,
+          environmentId,
+          integrationId,
 
-      environmentId,
+          active:
+            true,
+        });
 
-      integrationId,
-
-      active:
-        true,
-    });
+    let staleCount =
+      0;
 
     for (
       const existing
@@ -616,14 +599,16 @@ class KubernetesRelationshipService {
         activeRelationKeys.some(
           (key) =>
             String(
-              key.sourceResourceId
+              key
+                .sourceResourceId
             ) ===
               String(
                 existing
                   .sourceResourceId
               ) &&
             String(
-              key.targetResourceId
+              key
+                .targetResourceId
             ) ===
               String(
                 existing
@@ -639,12 +624,44 @@ class KubernetesRelationshipService {
           false;
 
         await existing.save();
+
+        staleCount++;
       }
     }
 
+    // ========================================================================
+    // PHASE C — CANONICAL GRAPH
+    // ========================================================================
+
+    let canonicalRelationships =
+      null;
+
+    if (syncCanonical) {
+      canonicalRelationships =
+        await kubernetesInventoryAdapter
+          .syncRelationships({
+            tenantId,
+
+            organizationId,
+
+            environmentId,
+
+            integrationId,
+
+            syncId:
+              currentSyncId,
+          });
+    }
+
     return {
+      syncId:
+        currentSyncId,
+
       total:
         seenRelations.length,
+
+      stale:
+        staleCount,
 
       serviceToPod:
         this._countRelations(
@@ -680,7 +697,8 @@ class KubernetesRelationshipService {
         seenRelations.filter(
           (relation) =>
             (
-              relation.confidence ??
+              relation
+                .confidence ??
               1
             ) === 1
         ).length,
@@ -689,16 +707,47 @@ class KubernetesRelationshipService {
         seenRelations.filter(
           (relation) =>
             (
-              relation.confidence ??
+              relation
+                .confidence ??
               1
             ) < 1
         ).length,
+
+      canonicalRelationships,
     };
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Helpers
-  // ──────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // VALIDATION
+  // ==========================================================================
+
+  _validateContext({
+    tenantId,
+    organizationId,
+    environmentId,
+    integrationId,
+  }) {
+    if (
+      !tenantId ||
+      !organizationId ||
+      !environmentId ||
+      !integrationId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete Kubernetes ownership context is required"
+        ),
+        {
+          code:
+            "K8S_RELATIONSHIP_CONTEXT_REQUIRED",
+        }
+      );
+    }
+  }
+
+  // ==========================================================================
+  // HELPERS
+  // ==========================================================================
 
   _labelsMatch(
     selector,
@@ -737,7 +786,8 @@ class KubernetesRelationshipService {
   ) {
     return relations.filter(
       (relation) =>
-        relation.relationType ===
+        relation
+          .relationType ===
         relationType
     ).length;
   }
@@ -745,3 +795,7 @@ class KubernetesRelationshipService {
 
 module.exports =
   new KubernetesRelationshipService();
+
+module.exports
+  .KubernetesRelationshipService =
+  KubernetesRelationshipService;

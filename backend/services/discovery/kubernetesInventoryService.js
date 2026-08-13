@@ -1,160 +1,267 @@
 "use strict";
 
+const crypto =
+  require("node:crypto");
+
 const KubernetesResource =
-  require("../../models/KubernetesResource");
+  require(
+    "../../models/KubernetesResource"
+  );
 
 const KubernetesClusterSnapshot =
-  require("../../models/KubernetesClusterSnapshot");
+  require(
+    "../../models/KubernetesClusterSnapshot"
+  );
+
+const kubernetesInventoryAdapter =
+  require(
+    "../inventory/kubernetesInventoryAdapter"
+  );
 
 class KubernetesInventoryService {
-async persistDiscovery({
-  tenantId,
-  organizationId,
-  environmentId,
-  integrationId,
-  discovery,
-  durationMs = null,
-}) {
-  if (!tenantId) {
-    throw Object.assign(
-      new Error(
-        "tenantId is required for Kubernetes inventory persistence"
-      ),
-      {
-        code:
-          "K8S_TENANT_CONTEXT_REQUIRED",
-      }
-    );
-  }
-
-  if (!organizationId) {
-    throw Object.assign(
-      new Error(
-        "organizationId is required for Kubernetes inventory persistence"
-      ),
-      {
-        code:
-          "K8S_ORGANIZATION_CONTEXT_REQUIRED",
-      }
-    );
-  }
-
-  if (!environmentId) {
-    throw Object.assign(
-      new Error(
-        "environmentId is required for Kubernetes inventory persistence"
-      ),
-      {
-        code:
-          "K8S_ENVIRONMENT_CONTEXT_REQUIRED",
-      }
-    );
-  }
-
-  if (!integrationId) {
-    throw Object.assign(
-      new Error(
-        "integrationId is required for Kubernetes inventory persistence"
-      ),
-      {
-        code:
-          "K8S_INTEGRATION_CONTEXT_REQUIRED",
-      }
-    );
-  }
-
-  if (!discovery) {
-    throw Object.assign(
-      new Error(
-        "discovery payload is required"
-      ),
-      {
-        code:
-          "K8S_DISCOVERY_REQUIRED",
-      }
-    );
-  }
-
-  const now =
-    new Date();
-
-  const resources = [
-    ...this._normaliseNamespaces(
-      discovery.namespaces || []
-    ),
-
-    ...this._normaliseDeployments(
-      discovery.deployments || []
-    ),
-
-    ...this._normaliseReplicaSets(
-      discovery.replicaSets || []
-    ),
-
-    ...this._normalisePods(
-      discovery.pods || []
-    ),
-
-    ...this._normaliseServices(
-      discovery.services || []
-    ),
-
-    ...this._normaliseNodes(
-      discovery.nodes || []
-    ),
-  ];
-
-  /**
-   * Keep only the canonical resource identity fields
-   * needed to determine whether an active resource
-   * disappeared from the latest discovery.
-   */
-  const seenKeys =
-    [];
-
-  for (
-    const resource
-    of resources
-  ) {
-    if (!resource.name) {
-      continue;
-    }
-
-    const key = {
+  async persistDiscovery({
+    tenantId,
+    organizationId,
+    environmentId,
+    integrationId,
+    discovery,
+    durationMs = null,
+    syncCanonical = true,
+    syncId = null,
+  }) {
+    this._validateContext({
+      tenantId,
       organizationId,
-
       environmentId,
-
       integrationId,
-
-      kind:
-        resource.kind,
-
-      namespace:
-        resource.namespace ||
-        null,
-
-      name:
-        resource.name,
-    };
-
-    seenKeys.push({
-      kind:
-        resource.kind,
-
-      namespace:
-        resource.namespace ||
-        null,
-
-      name:
-        resource.name,
+      discovery,
     });
 
-    await KubernetesResource
-      .findOneAndUpdate(
-        key,
-        {
-          $set: {
+    const currentSyncId =
+      syncId ||
+      `k8s-discovery-${crypto.randomUUID()}`;
+
+    const now =
+      new Date();
+
+    const resources = [
+      ...this
+        ._normaliseNamespaces(
+          discovery.namespaces ||
+          []
+        ),
+
+      ...this
+        ._normaliseDeployments(
+          discovery.deployments ||
+          []
+        ),
+
+      ...this
+        ._normaliseReplicaSets(
+          discovery.replicaSets ||
+          []
+        ),
+
+      ...this
+        ._normalisePods(
+          discovery.pods ||
+          []
+        ),
+
+      ...this
+        ._normaliseServices(
+          discovery.services ||
+          []
+        ),
+
+      ...this
+        ._normaliseNodes(
+          discovery.nodes ||
+          []
+        ),
+    ];
+
+    const seenKeys =
+      [];
+
+    /*
+     * ========================================================================
+     * PHASE A — PROVIDER INVENTORY
+     * ========================================================================
+     *
+     * All provider records are persisted BEFORE anything is marked inactive.
+     *
+     * If one write fails, this method throws and provider stale cleanup,
+     * canonical reconciliation and snapshot finalization are skipped.
+     */
+
+    for (
+      const resource
+      of resources
+    ) {
+      if (!resource.name) {
+        continue;
+      }
+
+      const key = {
+        organizationId,
+        environmentId,
+        integrationId,
+
+        kind:
+          resource.kind,
+
+        namespace:
+          resource.namespace ||
+          null,
+
+        name:
+          resource.name,
+      };
+
+      seenKeys.push({
+        kind:
+          resource.kind,
+
+        namespace:
+          resource.namespace ||
+          null,
+
+        name:
+          resource.name,
+      });
+
+      await KubernetesResource
+        .findOneAndUpdate(
+          key,
+          {
+            $set: {
+              tenantId,
+
+              organizationId,
+
+              environmentId,
+
+              integrationId,
+
+              uid:
+                resource.uid ||
+                null,
+
+              labels:
+                resource.labels ||
+                {},
+
+              metadata:
+                resource.metadata ||
+                {},
+
+              status:
+                resource.status ||
+                {},
+
+              spec:
+                resource.spec ||
+                {},
+
+              discoveredAt:
+                now,
+
+              lastSeenAt:
+                now,
+
+              active:
+                true,
+            },
+
+            $setOnInsert: {
+              provider:
+                "kubernetes",
+            },
+          },
+          {
+            upsert:
+              true,
+
+            new:
+              true,
+
+            setDefaultsOnInsert:
+              true,
+
+            runValidators:
+              true,
+          }
+        );
+    }
+
+    /*
+     * ========================================================================
+     * PHASE B — PROVIDER RECONCILIATION
+     * ========================================================================
+     *
+     * Reached only if every discovered provider resource was persisted.
+     */
+
+    const activeResources =
+      await KubernetesResource
+        .find({
+          organizationId,
+          environmentId,
+          integrationId,
+
+          active:
+            true,
+        });
+
+    let inactiveCount =
+      0;
+
+    for (
+      const existing
+      of activeResources
+    ) {
+      const stillPresent =
+        seenKeys.some(
+          (key) =>
+            key.kind ===
+              existing.kind &&
+            (
+              key.namespace ||
+              null
+            ) ===
+              (
+                existing.namespace ||
+                null
+              ) &&
+            key.name ===
+              existing.name
+        );
+
+      if (!stillPresent) {
+        existing.active =
+          false;
+
+        await existing.save();
+
+        inactiveCount++;
+      }
+    }
+
+    /*
+     * ========================================================================
+     * PHASE C — CANONICAL INVENTORY
+     * ========================================================================
+     */
+
+    let canonicalInventory =
+      null;
+
+    if (syncCanonical) {
+      canonicalInventory =
+        await kubernetesInventoryAdapter
+          .syncResources({
             tenantId,
 
             organizationId,
@@ -163,194 +270,229 @@ async persistDiscovery({
 
             integrationId,
 
-            uid:
-              resource.uid ||
-              null,
+            /*
+             * Same discovery run ID is propagated to canonical inventory.
+             */
+            syncId:
+              currentSyncId,
+          });
+    }
 
-            labels:
-              resource.labels ||
-              {},
+    /*
+     * ========================================================================
+     * PHASE D — SUCCESS SNAPSHOT
+     * ========================================================================
+     *
+     * Snapshot is written AFTER provider + canonical persistence succeeds.
+     *
+     * Therefore success=true means inventory reconciliation actually
+     * completed rather than merely Kubernetes API discovery completing.
+     */
 
-            metadata:
-              resource.metadata ||
-              {},
+    const snapshot =
+      await KubernetesClusterSnapshot
+        .create({
+          tenantId,
 
-            status:
-              resource.status ||
-              {},
+          organizationId,
 
-            spec:
-              resource.spec ||
-              {},
+          environmentId,
 
-            discoveredAt:
-              now,
+          integrationId,
 
-            lastSeenAt:
-              now,
+          discoveredAt:
+            now,
 
-            active:
-              true,
+          summary: {
+            namespaces:
+              discovery.summary
+                ?.namespaces ??
+              0,
+
+            deployments:
+              discovery.summary
+                ?.deployments ??
+              0,
+
+            replicaSets:
+              discovery.summary
+                ?.replicaSets ??
+              0,
+
+            pods:
+              discovery.summary
+                ?.pods ??
+              0,
+
+            services:
+              discovery.summary
+                ?.services ??
+              0,
+
+            nodes:
+              discovery.summary
+                ?.nodes ??
+              0,
+
+            unhealthyPods:
+              discovery.summary
+                ?.unhealthyPods ??
+              0,
+
+            unhealthyNodes:
+              discovery.summary
+                ?.unhealthyNodes ??
+              0,
           },
 
-          $setOnInsert: {
-            provider:
-              "kubernetes",
-          },
-        },
-        {
-          upsert:
+          durationMs,
+
+          success:
             true,
 
-          new:
-            true,
+          error:
+            null,
+        });
 
-          setDefaultsOnInsert:
-            true,
-        }
-      );
+    return {
+      syncId:
+        currentSyncId,
+
+      snapshotId:
+        snapshot._id,
+
+      environmentId:
+        snapshot.environmentId,
+
+      resourceCount:
+        resources.length,
+
+      activeResourceCount:
+        seenKeys.length,
+
+      inactiveResourceCount:
+        inactiveCount,
+
+      summary:
+        discovery.summary ||
+        {},
+
+      canonicalInventory,
+    };
   }
 
-  /**
-   * Existing resources that disappeared from this exact
-   * environment + integration become inactive.
-   *
-   * We never inspect inventory belonging to another
-   * environment while performing stale-resource cleanup.
-   */
-  const activeResources =
-    await KubernetesResource
-      .find({
-        organizationId,
+  // ==========================================================================
+  // VALIDATION
+  // ==========================================================================
 
-        environmentId,
-
-        integrationId,
-
-        active:
-          true,
-      });
-
-  for (
-    const existing
-    of activeResources
-  ) {
-    const stillPresent =
-      seenKeys.some(
-        (key) =>
-          key.kind ===
-            existing.kind &&
-          (
-            key.namespace ||
-            null
-          ) ===
-            (
-              existing.namespace ||
-              null
-            ) &&
-          key.name ===
-            existing.name
+  _validateContext({
+    tenantId,
+    organizationId,
+    environmentId,
+    integrationId,
+    discovery,
+  }) {
+    if (!tenantId) {
+      throw Object.assign(
+        new Error(
+          "tenantId is required for Kubernetes inventory persistence"
+        ),
+        {
+          code:
+            "K8S_TENANT_CONTEXT_REQUIRED",
+        }
       );
+    }
 
-    if (!stillPresent) {
-      existing.active =
-        false;
+    if (!organizationId) {
+      throw Object.assign(
+        new Error(
+          "organizationId is required for Kubernetes inventory persistence"
+        ),
+        {
+          code:
+            "K8S_ORGANIZATION_CONTEXT_REQUIRED",
+        }
+      );
+    }
 
-      await existing.save();
+    if (!environmentId) {
+      throw Object.assign(
+        new Error(
+          "environmentId is required for Kubernetes inventory persistence"
+        ),
+        {
+          code:
+            "K8S_ENVIRONMENT_CONTEXT_REQUIRED",
+        }
+      );
+    }
+
+    if (!integrationId) {
+      throw Object.assign(
+        new Error(
+          "integrationId is required for Kubernetes inventory persistence"
+        ),
+        {
+          code:
+            "K8S_INTEGRATION_CONTEXT_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      !discovery ||
+      typeof discovery !==
+        "object"
+    ) {
+      throw Object.assign(
+        new Error(
+          "discovery payload is required"
+        ),
+        {
+          code:
+            "K8S_DISCOVERY_REQUIRED",
+        }
+      );
+    }
+
+    const requiredArrays = [
+      "namespaces",
+      "deployments",
+      "replicaSets",
+      "pods",
+      "services",
+      "nodes",
+    ];
+
+    for (
+      const field
+      of requiredArrays
+    ) {
+      if (
+        discovery[field] !==
+          undefined &&
+        !Array.isArray(
+          discovery[field]
+        )
+      ) {
+        throw Object.assign(
+          new Error(
+            `Invalid Kubernetes discovery field: ${field}`
+          ),
+          {
+            code:
+              "K8S_DISCOVERY_INVALID",
+          }
+        );
+      }
     }
   }
 
-  /**
-   * Every discovery produces an immutable environment-scoped
-   * cluster snapshot.
-   */
-  const snapshot =
-    await KubernetesClusterSnapshot
-      .create({
-        tenantId,
-
-        organizationId,
-
-        environmentId,
-
-        integrationId,
-
-        discoveredAt:
-          now,
-
-        summary: {
-          namespaces:
-            discovery.summary
-              ?.namespaces ??
-            0,
-
-          deployments:
-            discovery.summary
-              ?.deployments ??
-            0,
-
-          replicaSets:
-            discovery.summary
-              ?.replicaSets ??
-            0,
-
-          pods:
-            discovery.summary
-              ?.pods ??
-            0,
-
-          services:
-            discovery.summary
-              ?.services ??
-            0,
-
-          nodes:
-            discovery.summary
-              ?.nodes ??
-            0,
-
-          unhealthyPods:
-            discovery.summary
-              ?.unhealthyPods ??
-            0,
-
-          unhealthyNodes:
-            discovery.summary
-              ?.unhealthyNodes ??
-            0,
-        },
-
-        durationMs,
-
-        success:
-          true,
-
-        error:
-          null,
-      });
-
-  return {
-    snapshotId:
-      snapshot._id,
-
-    environmentId:
-      snapshot.environmentId,
-
-    resourceCount:
-      resources.length,
-
-    activeResourceCount:
-      seenKeys.length,
-
-    summary:
-      discovery.summary ||
-      {},
-  };
-}
-  // ───────────────────────────────────────────────────────────────────────────
-  // Namespaces
-  // ───────────────────────────────────────────────────────────────────────────
-
+  // KEEP ALL YOUR EXISTING _normaliseNamespaces,
+  // _normaliseDeployments, _normaliseReplicaSets,
+  // _normalisePods, _normaliseServices and _normaliseNodes
+  // METHODS HERE UNCHANGED.
   _normaliseNamespaces(
     items
   ) {
@@ -366,10 +508,12 @@ async persistDiscovery({
           null,
 
         uid:
-          item.uid || null,
+          item.uid ||
+          null,
 
         labels:
-          item.labels || {},
+          item.labels ||
+          {},
 
         status: {
           phase:
@@ -392,9 +536,9 @@ async persistDiscovery({
     );
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Deployments
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // DEPLOYMENTS
+  // ==========================================================================
 
   _normaliseDeployments(
     items
@@ -412,10 +556,12 @@ async persistDiscovery({
           null,
 
         uid:
-          item.uid || null,
+          item.uid ||
+          null,
 
         labels:
-          item.labels || {},
+          item.labels ||
+          {},
 
         status: {
           readyReplicas:
@@ -482,9 +628,9 @@ async persistDiscovery({
     );
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // ReplicaSets
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // REPLICASETS
+  // ==========================================================================
 
   _normaliseReplicaSets(
     items
@@ -515,7 +661,8 @@ async persistDiscovery({
             0,
 
           fullyLabeledReplicas:
-            item.fullyLabeledReplicas ??
+            item
+              .fullyLabeledReplicas ??
             0,
 
           readyReplicas:
@@ -558,9 +705,9 @@ async persistDiscovery({
     );
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Pods
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // PODS
+  // ==========================================================================
 
   _normalisePods(
     items
@@ -641,7 +788,8 @@ async persistDiscovery({
             null,
 
           serviceAccountName:
-            item.serviceAccountName ||
+            item
+              .serviceAccountName ||
             null,
 
           restartPolicy:
@@ -674,9 +822,9 @@ async persistDiscovery({
     );
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Kubernetes Services
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // KUBERNETES SERVICES
+  // ==========================================================================
 
   _normaliseServices(
     items
@@ -750,9 +898,9 @@ async persistDiscovery({
     );
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Nodes
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // NODES
+  // ==========================================================================
 
   _normaliseNodes(
     items
@@ -809,11 +957,13 @@ async persistDiscovery({
             null,
 
           kubeProxyVersion:
-            item.kubeProxyVersion ||
+            item
+              .kubeProxyVersion ||
             null,
 
           containerRuntimeVersion:
-            item.containerRuntimeVersion ||
+            item
+              .containerRuntimeVersion ||
             null,
 
           kernelVersion:
@@ -849,3 +999,7 @@ async persistDiscovery({
 
 module.exports =
   new KubernetesInventoryService();
+
+module.exports
+  .KubernetesInventoryService =
+  KubernetesInventoryService;
