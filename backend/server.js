@@ -45,6 +45,15 @@ const {
   confidenceThresholdsEndpoint,
   confidenceThresholdsUpdateEndpoint,
 } = require("./config/confidenceThresholds");
+const recoveryDecisionRoutes =
+  require(
+    "./routes/recoveryDecisionRoutes"
+  );
+
+  const executionRoutes =
+  require(
+    "./routes/executionRoutes"
+  );
 
 const { dbService } = require("./services/infrastructure");
 const { 
@@ -76,11 +85,24 @@ const { runbookExecutionService } = require("./services/execution");
 const { getK8sClient } = require("./services/k8s");
 const signalRoutes =
   require("./routes/signalRoutes");
+const diagnosisRoutes =
+  require(
+    "./routes/diagnosisRoutes"
+  );
 const { correlationIdMiddleware } = require("./middleware/correlationIdMiddleware");
-
+const diagnosisQueueConsumer =
+  require(
+    "./services/diagnosis/diagnosisQueueConsumer");
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
-
+const verificationRoutes =
+  require(
+    "./routes/verificationRoutes"
+  );
+const lifecycleRoutes =
+  require(
+    "./routes/lifecycleRoutes"
+  );
 // ---------------------------------------------------------------------------
 // CORS configuration
 // ---------------------------------------------------------------------------
@@ -160,7 +182,10 @@ app.use(cookieParser());
 
 // CRITICAL AUDIT: Add correlation ID tracking (must be early)
 app.use(correlationIdMiddleware);
-
+app.use(
+  "/api",
+  recoveryDecisionRoutes
+);
 // Human auth routes mount before sanitization so passwords are not XSS-stripped
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/environments",environmentRoutes);
@@ -174,6 +199,17 @@ app.use(
   "/api/v1/dev",
   developmentRoutes
 );
+
+app.use(
+  "/api",
+  sessionAuthMiddleware,
+  requestContextMiddleware,
+  environmentContextMiddleware,
+ executionRoutes,
+   verificationRoutes,
+   lifecycleRoutes,
+
+);
 // PHASE 1 SAFETY: Apply sanitization and kill switch enforcement
 // These must be applied early, before any handlers
 app.use(sanitizationMiddleware(null, { allowRichText: false })); // Sanitize ALL string fields
@@ -186,6 +222,10 @@ app.use(
   signalRoutes
 );
 
+const recoveryDecisionQueueConsumer =
+  require(
+    "./services/recovery/recoveryDecisionQueueConsumer"
+  );
 // Health check endpoint (no auth required)
 app.get("/", (req, res) => {
   res.json({
@@ -594,6 +634,26 @@ async function startServer() {
       queueService = await getQueueService();
       console.log("[server] ✓ Mock queue service initialized");
     }
+    
+    try {
+  if (
+    queueService.connected
+  ) {
+    await recoveryDecisionQueueConsumer
+      .start();
+
+    console.log(
+      "[recovery] ✓ Recovery decision consumer ready"
+    );
+  }
+} catch (
+  error
+) {
+  console.error(
+    "[recovery] Could not start recovery decision consumer:",
+    error.message
+  );
+}
 
     // 5. Initialize idempotency service (Redis)
     try {
@@ -852,7 +912,34 @@ async function shutdown() {
       console.warn("[server] Error disconnecting queue service:", error.message);
     }
   }
+  
+  try {
+  if (
+    queueService.connected
+  ) {
+    await diagnosisQueueConsumer
+      .start();
 
+    console.log(
+      "[diagnosis] ✓ Async diagnosis consumer ready"
+    );
+  } else {
+    console.warn(
+      "[diagnosis] Diagnosis consumer not started because RabbitMQ is unavailable"
+    );
+  }
+} catch (
+  error
+) {
+  /*
+   * Diagnosis intelligence is important, but its startup failure must
+   * not make the entire API unavailable.
+   */
+  console.error(
+    "[diagnosis] Failed to start diagnosis consumer:",
+    error.message
+  );
+}
   if (idempotencyService) {
     try {
       await idempotencyService.disconnect();

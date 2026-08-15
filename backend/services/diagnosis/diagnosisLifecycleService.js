@@ -1,0 +1,532 @@
+"use strict";
+
+/**
+ * AIRA Diagnosis Lifecycle Service
+ *
+ * Phase 6.14
+ *
+ * Bridges the incident lifecycle into the Phase 6 diagnosis pipeline.
+ *
+ * Responsibilities:
+ *
+ * - receive incident lifecycle events
+ * - decide whether diagnosis should run
+ * - prevent unnecessary duplicate diagnosis runs
+ * - invoke DiagnosisCoordinator
+ * - persist diagnosis revisions
+ *
+ * Safety:
+ *
+ * - no remediation execution
+ * - no playbook execution
+ * - no execution authorization
+ */
+
+const diagnosisCoordinator =
+  require(
+    "./diagnosisCoordinator"
+  );
+
+const diagnosisPersistenceService =
+  require(
+    "./diagnosisPersistenceService"
+  );
+
+const AgentIntelligenceRun =
+  require(
+    "../../models/AgentIntelligenceRun"
+  );
+
+class DiagnosisLifecycleService {
+  constructor(
+    options = {}
+  ) {
+    this.coordinator =
+      options.coordinator ||
+      diagnosisCoordinator;
+
+    this.persistence =
+      options.persistence ||
+      diagnosisPersistenceService;
+
+    this.minimumRerunIntervalMs =
+      Number(
+        options.minimumRerunIntervalMs ||
+        process.env
+          .DIAGNOSIS_MIN_RERUN_INTERVAL_MS
+      ) ||
+      30 * 1000;
+  }
+
+  // ==========================================================================
+  // INCIDENT DETECTED
+  // ==========================================================================
+
+  async onIncidentDetected(
+    payload,
+    dependencies = {}
+  ) {
+    this.assertPayload(
+      payload
+    );
+
+    const {
+      organizationId,
+      environmentId,
+      incidentId,
+    } =
+      payload;
+
+    const shouldRun =
+      await this.shouldRunDiagnosis({
+        organizationId,
+        environmentId,
+        incidentId,
+        reason:
+          "incident_detected",
+      });
+
+    if (
+      !shouldRun.run
+    ) {
+      return {
+        triggered:
+          false,
+
+        reason:
+          shouldRun.reason,
+
+        incidentId,
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    return this.runDiagnosis({
+      organizationId,
+      environmentId,
+      incidentId,
+      reason:
+        "incident_detected",
+      dependencies,
+    });
+  }
+
+  // ==========================================================================
+  // INCIDENT UPDATED
+  // ==========================================================================
+
+  async onIncidentUpdated(
+    payload,
+    dependencies = {}
+  ) {
+    this.assertPayload(
+      payload
+    );
+
+    if (
+      !this.isMeaningfulUpdate(
+        payload
+      )
+    ) {
+      return {
+        triggered:
+          false,
+
+        reason:
+          "incident_update_not_diagnostically_meaningful",
+
+        incidentId:
+          payload.incidentId,
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    const shouldRun =
+      await this.shouldRunDiagnosis({
+        organizationId:
+          payload.organizationId,
+
+        environmentId:
+          payload.environmentId,
+
+        incidentId:
+          payload.incidentId,
+
+        reason:
+          payload.reason ||
+          payload.changeType ||
+          "incident_updated",
+      });
+
+    if (
+      !shouldRun.run
+    ) {
+      return {
+        triggered:
+          false,
+
+        reason:
+          shouldRun.reason,
+
+        incidentId:
+          payload.incidentId,
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    return this.runDiagnosis({
+      organizationId:
+        payload.organizationId,
+
+      environmentId:
+        payload.environmentId,
+
+      incidentId:
+        payload.incidentId,
+
+      reason:
+        payload.reason ||
+        payload.changeType ||
+        "incident_updated",
+
+      dependencies,
+    });
+  }
+
+  // ==========================================================================
+  // SIGNAL ATTACHED
+  // ==========================================================================
+
+  async onSignalAttached(
+    payload,
+    dependencies = {}
+  ) {
+    this.assertPayload(
+      payload
+    );
+
+    const shouldRun =
+      await this.shouldRunDiagnosis({
+        organizationId:
+          payload.organizationId,
+
+        environmentId:
+          payload.environmentId,
+
+        incidentId:
+          payload.incidentId,
+
+        reason:
+          "new_signal",
+      });
+
+    if (
+      !shouldRun.run
+    ) {
+      return {
+        triggered:
+          false,
+
+        reason:
+          shouldRun.reason,
+
+        incidentId:
+          payload.incidentId,
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    return this.runDiagnosis({
+      organizationId:
+        payload.organizationId,
+
+      environmentId:
+        payload.environmentId,
+
+      incidentId:
+        payload.incidentId,
+
+      reason:
+        "new_signal",
+
+      dependencies,
+    });
+  }
+
+  // ==========================================================================
+  // RUN DIAGNOSIS
+  // ==========================================================================
+
+  async runDiagnosis({
+    organizationId,
+    environmentId,
+    incidentId,
+    reason,
+    dependencies = {},
+  }) {
+    const coordinatorResult =
+      await this.coordinator
+        .diagnose(
+          {
+            organizationId,
+            environmentId,
+          },
+
+          incidentId,
+
+          dependencies
+        );
+
+    coordinatorResult
+      .context
+      .metadata = {
+        ...(
+          coordinatorResult
+            .context
+            .metadata ||
+          {}
+        ),
+
+        lifecycleTrigger:
+          reason,
+      };
+
+    const persisted =
+      await this.persistence
+        .persist(
+          coordinatorResult
+        );
+
+    return {
+      triggered:
+        true,
+
+      reason,
+
+      incidentId,
+
+      runId:
+        coordinatorResult
+          .runId,
+
+      diagnosisId:
+        persisted
+          .diagnosis
+          ._id,
+
+      revision:
+        persisted.revision,
+
+      decision:
+        coordinatorResult
+          .confidence
+          ?.decision ||
+        null,
+
+      confidence:
+        coordinatorResult
+          .confidence
+          ?.confidence ??
+        null,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  // ==========================================================================
+  // SHOULD RUN?
+  // ==========================================================================
+
+  async shouldRunDiagnosis({
+    organizationId,
+    environmentId,
+    incidentId,
+  }) {
+    const previous =
+      await AgentIntelligenceRun
+        .findOne({
+          organizationId,
+          environmentId,
+          incidentId,
+        })
+        .sort({
+          createdAt:
+            -1,
+        })
+        .select({
+          createdAt:
+            1,
+
+          status:
+            1,
+
+          completedAt:
+            1,
+        })
+        .lean();
+
+    if (
+      !previous
+    ) {
+      return {
+        run:
+          true,
+
+        reason:
+          "first_diagnosis",
+      };
+    }
+
+    const timestamp =
+      previous.completedAt ||
+      previous.createdAt;
+
+    if (
+      !timestamp
+    ) {
+      return {
+        run:
+          true,
+
+        reason:
+          "previous_run_timestamp_missing",
+      };
+    }
+
+    const elapsed =
+      Date.now() -
+      new Date(
+        timestamp
+      )
+        .getTime();
+
+    if (
+      elapsed <
+      this.minimumRerunIntervalMs
+    ) {
+      return {
+        run:
+          false,
+
+        reason:
+          "diagnosis_debounce_active",
+      };
+    }
+
+    return {
+      run:
+        true,
+
+      reason:
+        "diagnosis_refresh_allowed",
+    };
+  }
+
+  // ==========================================================================
+  // MEANINGFUL UPDATE
+  // ==========================================================================
+
+  isMeaningfulUpdate(
+    payload
+  ) {
+    if (
+      payload.forceDiagnosis ===
+      true
+    ) {
+      return true;
+    }
+
+    const changeType =
+      String(
+        payload.changeType ||
+        payload.reason ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    return [
+      "new_signal",
+      "severity_changed",
+      "incident_reopened",
+      "correlation_updated",
+      "blast_radius_changed",
+      "topology_changed",
+      "new_evidence",
+      "provider_added",
+      "occurrence_increased",
+    ]
+      .includes(
+        changeType
+      );
+  }
+
+  // ==========================================================================
+  // VALIDATE PAYLOAD
+  // ==========================================================================
+
+  assertPayload(
+    payload
+  ) {
+    if (
+      !payload
+        ?.organizationId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Diagnosis lifecycle event requires organizationId"
+        ),
+        {
+          code:
+            "DIAGNOSIS_LIFECYCLE_ORGANIZATION_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      !payload
+        ?.environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Diagnosis lifecycle event requires environmentId"
+        ),
+        {
+          code:
+            "DIAGNOSIS_LIFECYCLE_ENVIRONMENT_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      !payload
+        ?.incidentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Diagnosis lifecycle event requires incidentId"
+        ),
+        {
+          code:
+            "DIAGNOSIS_LIFECYCLE_INCIDENT_REQUIRED",
+        }
+      );
+    }
+  }
+}
+
+module.exports =
+  new DiagnosisLifecycleService();
+
+module.exports
+  .DiagnosisLifecycleService =
+  DiagnosisLifecycleService;

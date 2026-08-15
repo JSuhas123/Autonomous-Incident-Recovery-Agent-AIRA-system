@@ -1,423 +1,1361 @@
-# Autonomous Incident Recovery Agent (AIRA)
+# AIRA — Autonomous Incident Recovery Agent
 
-> **Live**: Frontend → [Vercel](https://autonomous-incident-recovery-agent-ten.vercel.app) · Backend → [Railway](https://autonomous-incident-recovery-agent-aira-system-production.up.railway.app)  
-> **Repo**: [JSuhas123/Autonomous-Incident-Recovery-Agent-AIRA-system](https://github.com/JSuhas123/Autonomous-Incident-Recovery-Agent-AIRA-system)
+> **Policy-driven, AI-assisted, deterministic incident recovery for production infrastructure.**
 
----
+AIRA observes operational signals, investigates incidents, reasons about likely causes, selects approved recovery strategies, executes only policy-authorized deterministic actions, verifies whether recovery actually worked, and manages the incident until closure, retry, rollback, or escalation.
 
-## Overview
-
-AIRA is a policy-driven incident recovery platform. It sits between your observability stack (Prometheus, Datadog) and your infrastructure, making safe, explainable, auditable decisions with human-in-the-loop approval gates.
-
-> **AI DOES NOT DIRECTLY EXECUTE INFRASTRUCTURE.** The 8-agent intelligence pipeline produces playbook recommendations and parameters. All infrastructure mutations are performed exclusively by the deterministic V1 Playbook/Runbook Engine, subject to human approval gates and policy enforcement.
-
----
-
-## Agent Intelligence Platform (v2)
-
-### Architecture
-
-```
-Observability Signal
-        │
-        ▼
-POST /api/v1/incidents/:id/analyze
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    AgentOrchestrator (v2)                           │
-│                                                                     │
-│  1. CorrelationAgent      — groups signals into a single incident   │
-│  2. InvestigationAgent    — collects k8s/DB/log evidence (reduced)  │
-│  3. DiagnosisAgent        — infers root cause + confidence dims     │
-│  4. PlaybookSelectionAgent— recommends playbook from V1 catalogue   │
-│  5. ParameterResolutionAgent — resolves playbook parameters safely  │
-│       │                                                             │
-│       ▼  handoff to DETERMINISTIC V1 engine                         │
-│  6. RecoveryMonitoringAgent — monitors V1 execution outcome         │
-│  7. ExplanationAgent      — produces human-readable audit narrative │
-│  8. LearningAgent         — proposes improvements (human-approved)  │
-└─────────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-  AgentIntelligenceRun (MongoDB) — full trace + confidence + audit
-        │
-        ▼
-  Frontend AgentIntelligencePanel — live-polling UI (4s interval)
-```
-
-### Agent Summary
-
-| Agent | Input | Output | Failure Mode |
-|---|---|---|---|
-| CorrelationAgent | signals[] | incidentGroup, evidenceIds[] | MANUAL_REQUIRED |
-| InvestigationAgent | incidentGroup | evidencePackage[] (reduced) | MANUAL_REQUIRED |
-| DiagnosisAgent | evidencePackage | hypotheses[], rootCause, confidence | MANUAL_REQUIRED |
-| PlaybookSelectionAgent | diagnosis | selectedPlaybook, rationale | NO_SAFE_PLAYBOOK |
-| ParameterResolutionAgent | selectedPlaybook | candidates[], readyForExecution | MANUAL_REQUIRED |
-| RecoveryMonitoringAgent | executionResult | status, recommendation, rollback | ESCALATE |
-| ExplanationAgent | full context | narrative, timeline, audienceLevel | degrades gracefully |
-| LearningAgent | outcome | recommendations (requiresHumanApproval) | MANUAL_REQUIRED |
-
-### Safety Boundaries
-
-- **No infrastructure execution** — agents never call `kubectl`, `aws`, or any infra API directly
-- **Hallucination guards** — evidence IDs and playbook IDs are validated against real data; fabricated references are stripped
-- **Prompt injection defense** — signal messages are treated as untrusted data; structural attacks cannot alter agent decisions
-- **Secret redaction** — parameters tagged `secret: true` are masked before being written to audit logs
-- **Learning approval gate** — `LearningAgent` always sets `requiresHumanApproval: true`; no automated policy mutation
-- **Evidence reduction** — log arrays truncated to 100 lines × 512 chars; evidence items limited to 50; total bytes budgeted
-
-### Cost Controls
-
-All limits are configurable via `AIRA_BUDGET_<KEY>` environment variables (see `backend/agents/v2/config/agentBudgets.js`):
-
-| Budget Key | Default | Description |
-|---|---|---|
-| `maxModelCallsPerIncident` | 20 | Hard cap on LLM calls per incident analysis |
-| `agentTimeoutMs` | 15000 | Per-agent execution timeout |
-| `orchestratorTimeoutMs` | 120000 | Total orchestrator timeout |
-| `maxLogLines` | 100 | Max log lines per evidence item |
-| `maxLogLineChars` | 512 | Max chars per log line |
-| `maxContextChars` | 8000 | Max chars of context sent to LLM |
-| `maxEvidenceItems` | 50 | Max evidence items per package |
-| `maxEvidenceItemBytes` | 4096 | Max bytes per evidence item |
-
-### Manual Escalation Codes
-
-When agents cannot safely proceed, they produce a `manualReason`:
-
-| Code | Meaning |
-|---|---|
-| `AGENT_UNAVAILABLE` | Reasoning provider unreachable |
-| `AGENT_OUTPUT_INVALID` | LLM response failed contract validation |
-| `AGENT_CONFIDENCE_TOO_LOW` | Confidence below threshold for autonomous action |
-| `EVIDENCE_INSUFFICIENT` | Not enough evidence to form a safe diagnosis |
-| `AGENT_TIMEOUT` | Agent exceeded time budget |
-| `LEGACY_PATH_BLOCKED` | Attempted to use deprecated legacy execution path |
-
-### API Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/api/v1/incidents/:id/analyze` | Trigger agent analysis |
-| `POST` | `/api/v1/incidents/:id/analyze/retry` | Retry failed analysis |
-| `GET` | `/api/v1/incidents/:id/intelligence` | Latest AgentIntelligenceRun |
-| `GET` | `/api/v1/incidents/:id/agent-evidence` | Evidence package |
-| `GET` | `/api/v1/incidents/:id/agent-diagnosis` | Diagnosis output |
-| `GET` | `/api/v1/incidents/:id/agent-trace` | Full agent execution trace |
+> **Core safety principle**
+>
+> AI in AIRA does **not** receive unrestricted infrastructure execution authority.
+>
+> AI reasons.  
+> Policies constrain.  
+> Playbooks define strategy.  
+> Runbooks define deterministic actions.  
+> Authorization grants permission.  
+> The execution boundary performs approved mutations.  
+> Verification proves whether recovery worked.
 
 ---
 
-## Playbook + Runbook Platform V1 (Frozen)
+## Live Project
 
-> V1 is the authoritative execution layer. It is **never modified** by agent outputs. Agents recommend; V1 executes — after human approval where required.
+**Frontend:**  
+https://autonomous-incident-recovery-agent-ten.vercel.app
 
-### Architecture
+**Backend:**  
+https://autonomous-incident-recovery-agent-aira-system-production.up.railway.app
 
-```
-Observability Signal
-        │
-        ▼
-   Incident Model (MongoDB)
-        │
-        ▼
- incidentPlaybookService
-  ├── analyseIncident()  →  playbookMatcher.matchPlaybooks()
-  │                         └── resolveMatchOutcome()
-  └── executeForIncident()
-        │
-        ▼
-   PlaybookExecutionEngine
-        │  reads playbookDef → policy → approval mode → stages
-        ▼
-   RunbookExecutionEngine  ──►  Action Handlers (kubernetes/*, wait/*)
-        │
-        ├── Verification steps
-        ├── Rollback (on failure)
-        └── Escalation (on unrecoverable)
-        │
-        ▼
-   DecisionTrace + AuditEvent (MongoDB)
-```
+**Repository:**  
+https://github.com/JSuhas123/Autonomous-Incident-Recovery-Agent-AIRA-system
 
 ---
 
-## Authentication Architecture (v2)
+# Why AIRA Exists
 
-AIRA uses **two separate auth paths**:
+Modern production incidents rarely fail because teams have no monitoring.
 
-### Browser / Human Users — Cookie Session Auth
-- `POST /api/v1/auth/register` — creates User + Organization + TenantConfig atomically
-- `POST /api/v1/auth/login` — validates password (Argon2id), issues `HttpOnly` session cookie
-- `GET /api/v1/auth/session` — bootstraps client state on page load
-- `POST /api/v1/auth/logout` — destroys session, clears cookie
-- `GET /api/v1/auth/csrf` — returns fresh CSRF token for the current session
+They fail because monitoring produces information faster than humans can correlate, reason about, validate, and safely act upon.
 
-**Session cookie:**
-| Environment | Cookie Name | SameSite | Secure |
-|---|---|---|---|
-| Production | `__Host-aira_session` | `None` | `true` |
-| Development | `aira_session_dev` | `Lax` | `false` |
+A typical incident looks like:
 
-All browser state-mutating requests require `X-CSRF-Token` header (HMAC-SHA256 derived from server-side secret). CSRF is validated server-side; no secrets are stored in the browser.
+```text
+Alert
+  ↓
+another alert
+  ↓
+20 related alerts
+  ↓
+engineer checks metrics
+  ↓
+engineer checks logs
+  ↓
+engineer checks deployment history
+  ↓
+engineer forms hypothesis
+  ↓
+engineer searches runbook
+  ↓
+engineer evaluates risk
+  ↓
+engineer executes recovery
+  ↓
+engineer checks whether it worked
 
-### Machine / API Clients — HMAC Signature Auth
-- Requests to `/api/v1/tenants/:tenantId/*` authenticate via `X-Tenant-ID`, `X-Key-ID`, `X-Timestamp`, `X-Signature` headers
-- Signature: `HMAC-SHA256(keySecret, "tenantId:keyId:timestamp:method:path")`
-- Machine clients bypass CSRF checks (they use the HMAC path, not session cookies)
+AIRA turns that into a controlled recovery pipeline:
 
----
+Operational Signals
+        │
+        ▼
+Signal Processing
+        │
+        ▼
+Incident
+        │
+        ▼
+AI Investigation
+        │
+        ▼
+Diagnosis
+        │
+        ▼
+Recovery Decision
+        │
+        ▼
+Policy + Risk + Approval
+        │
+        ▼
+Authorized Execution
+        │
+        ▼
+Verification
+        │
+        ▼
+Lifecycle Management
+        │
+        ▼
+Close / Retry / Rollback / Escalate
 
-## Stack
+The goal is not to replace reliability engineering with an LLM.
 
-| Layer | Tech |
-|---|---|
-| Backend | Node.js 20 · Express 4 · CommonJS |
-| Database | MongoDB (Mongoose 8) |
-| Password hashing | `@node-rs/argon2` (Argon2id) |
-| Frontend | React 18 · TypeScript 5 · Vite 6 |
-| State management | Zustand 5 — no persistence for auth |
-| Styling | Tailwind CSS · shadcn/ui · Framer Motion |
-| Backend tests | Jest 29 · mongodb-memory-server · supertest |
+The goal is to automate the repetitive reasoning and operational workflow while keeping infrastructure mutations behind deterministic, policy-controlled safety boundaries.
 
----
+System Architecture
 
-## Quick Start (Local)
+┌──────────────────────────────────────────────────────────────────────┐
+│                         CUSTOMER INFRASTRUCTURE                      │
+│                                                                      │
+│   Kubernetes │ APIs │ Databases │ Queues │ Cloud │ Services │ CI/CD │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                │ telemetry / alerts / state
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         OBSERVABILITY LAYER                          │
+│                                                                      │
+│ Prometheus │ Grafana │ Datadog │ CloudWatch │ OpenTelemetry │ K8s   │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                           SIGNAL PIPELINE                            │
+│                                                                      │
+│  Ingest                                                              │
+│    ↓                                                                 │
+│  Normalize                                                           │
+│    ↓                                                                 │
+│  Deduplicate                                                         │
+│    ↓                                                                 │
+│  Enrich                                                              │
+│    ↓                                                                 │
+│  Correlate                                                           │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+                           ┌──────────┐
+                           │ INCIDENT │
+                           └────┬─────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                        AI INVESTIGATION LAYER                        │
+│                                                                      │
+│ Symptom Analysis                                                     │
+│       ↓                                                              │
+│ Correlation                                                          │
+│       ↓                                                              │
+│ Investigation                                                        │
+│       ↓                                                              │
+│ Topology Analysis                                                    │
+│       ↓                                                              │
+│ Change Analysis                                                      │
+│       ↓                                                              │
+│ Historical Analysis                                                  │
+│       ↓                                                              │
+│ Root-Cause Hypothesis                                                │
+│       ↓                                                              │
+│ Diagnosis                                                            │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+                            DIAGNOSIS
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      RECOVERY INTELLIGENCE                           │
+│                                                                      │
+│ Playbook Discovery                                                   │
+│       ↓                                                              │
+│ Applicability                                                        │
+│       ↓                                                              │
+│ Risk / Impact Analysis                                               │
+│       ↓                                                              │
+│ Policy Eligibility                                                   │
+│       ↓                                                              │
+│ Candidate Ranking                                                    │
+│       ↓                                                              │
+│ Recovery Decision                                                    │
+│       ↓                                                              │
+│ Decision Critic                                                      │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+                       RECOVERY DECISION
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                     POLICY + SAFETY BOUNDARY                         │
+│                                                                      │
+│ Policy Rules → Risk → Approval Requirement → Authorization           │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                   ┌────────────┴────────────┐
+                   │                         │
+                BLOCKED                  AUTHORIZED
+                   │                         │
+                   ▼                         ▼
+               ESCALATE              EXECUTION REQUEST
+                                             │
+                                             ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         EXECUTION BOUNDARY                           │
+│                                                                      │
+│ Runtime Checkpoint                                                   │
+│       ↓                                                              │
+│ Idempotency                                                          │
+│       ↓                                                              │
+│ Authorization Revalidation                                           │
+│       ↓                                                              │
+│ Immutable Plan Validation                                            │
+│       ↓                                                              │
+│ Approved Playbook / Runbook                                          │
+│       ↓                                                              │
+│ Deterministic Executor                                               │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+                      INFRASTRUCTURE MUTATION
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         VERIFICATION                                 │
+│                                                                      │
+│ Health ─────┐                                                        │
+│ Metrics ────┤                                                        │
+│ Logs ───────┼──→ Evidence Aggregation                                │
+│ State ──────┘             ↓                                          │
+│                    Verification Decision                             │
+│                            ↓                                         │
+│                         Critic                                       │
+└───────────────────────────────┬──────────────────────────────────────┘
+                                │
+                                ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                      INCIDENT LIFECYCLE                              │
+│                                                                      │
+│ Stability Observation                                                │
+│        ↓                                                             │
+│ Closure Eligibility                                                  │
+│        │                                                             │
+│   ┌────┴───────────────┬─────────────────┐                           │
+│   ▼                    ▼                 ▼                           │
+│ CLOSE              RETRY HANDOFF    ROLLBACK HANDOFF                 │
+│                                           │                          │
+│                                           ▼                          │
+│                                       ESCALATION                     │
+└──────────────────────────────────────────────────────────────────────┘
 
-```bash
-# Backend
+
+What Each Layer Does
+1. Signal Pipeline
+
+The signal layer converts noisy operational telemetry into structured incident evidence.
+
+External Alert
+     │
+     ▼
+Signal Ingestion
+     │
+     │ accepts external operational information
+     ▼
+Normalization
+     │
+     │ converts provider-specific formats
+     ▼
+Deduplication
+     │
+     │ removes repeated copies of the same signal
+     ▼
+Enrichment
+     │
+     │ adds service / resource / tenant context
+     ▼
+Correlation
+     │
+     │ determines which signals belong together
+     ▼
+Incident
+Why it matters
+
+Without this layer:
+
+100 alerts
+   ↓
+100 apparent problems
+
+With correlation:
+
+100 alerts
+   ↓
+7 related signal groups
+   ↓
+1 underlying incident
+AI Investigation System
+
+AIRA uses specialized agents instead of asking one model to perform the entire incident workflow.
+
+Incident
+   │
+   ▼
+Symptom Analysis
+   │
+   ▼
+"What is visibly failing?"
+   │
+   ▼
+Correlation Analysis
+   │
+   ▼
+"What evidence is connected?"
+   │
+   ▼
+Investigation
+   │
+   ▼
+"What additional evidence do we need?"
+   │
+   ▼
+Topology Analysis
+   │
+   ▼
+"What depends on the affected resource?"
+   │
+   ▼
+Change Analysis
+   │
+   ▼
+"What changed before the incident?"
+   │
+   ▼
+Historical Analysis
+   │
+   ▼
+"Has this happened before?"
+   │
+   ▼
+Root-Cause Hypothesis
+   │
+   ▼
+"What could explain all evidence?"
+   │
+   ▼
+Diagnosis
+   │
+   ▼
+"What is the most defensible diagnosis?"
+
+Additional agents support recovery planning, risk evaluation, verification criticism, explanation, learning and post-recovery monitoring.
+
+AI responsibilities
+
+AI is allowed to:
+
+Analyze evidence
+      ↓
+Form hypotheses
+      ↓
+Estimate confidence
+      ↓
+Rank recovery candidates
+      ↓
+Explain decisions
+
+AI is not allowed to:
+
+Invent arbitrary infrastructure commands
+      ↓
+Bypass policy
+      ↓
+Bypass authorization
+      ↓
+Grant itself execution authority
+      ↓
+Silently modify safety policy
+Playbooks vs Runbooks
+
+AIRA separates strategy from execution instructions.
+
+                       PLAYBOOK
+              "How should this type of
+                  incident be handled?"
+                         │
+          ┌──────────────┼───────────────┐
+          │              │               │
+          ▼              ▼               ▼
+      Preconditions     Risk         Recovery Path
+                                           │
+                                           ▼
+                                        RUNBOOK
+                                "What exact approved
+                                  steps are available?"
+                                           │
+                      ┌────────────────────┼──────────────────┐
+                      ▼                    ▼                  ▼
+                   Step 1               Step 2             Step 3
+                  inspect               mutate              verify
+Playbook
+
+A playbook describes the recovery strategy:
+
+when it applies;
+risk level;
+required approvals;
+candidate runbooks;
+recovery/rollback behavior;
+verification expectations.
+Runbook
+
+A runbook contains exact deterministic operational steps.
+
+Example:
+
+Runbook: Kubernetes Pod Restart
+
+
+Check pod exists
+      ↓
+Collect current state
+      ↓
+Restart approved pod
+      ↓
+Wait for readiness
+      ↓
+Verify health
+Why this separation matters
+AI recommendation
+      ≠
+raw infrastructure command
+
+Instead:
+
+AI recommendation
+      ↓
+approved playbook
+      ↓
+approved runbook
+      ↓
+policy
+      ↓
+authorization
+      ↓
+deterministic executor
+Recovery Decision Pipeline
+
+AIRA does not jump directly from diagnosis to execution.
+
+Diagnosis
+   │
+   ▼
+Playbook Discovery
+   │
+   ▼
+Candidate Playbooks
+   │
+   ▼
+Applicability Check
+   │
+   ▼
+Risk Analysis
+   │
+   ▼
+Policy Eligibility
+   │
+   ▼
+Approval Requirement
+   │
+   ▼
+Candidate Ranking
+   │
+   ▼
+Recovery Decision Engine
+   │
+   ▼
+Recovery Decision Critic
+   │
+   ├── rejected ──→ fallback / escalation
+   │
+   ▼
+Persist Decision
+Components
+
+Playbook discovery
+
+Diagnosis
+   ↓
+"What approved recovery strategies exist?"
+
+Applicability
+
+Candidate
+   ↓
+"Can this actually be used here?"
+
+Risk analysis
+
+Action
+   ↓
+"What is the blast radius and failure risk?"
+
+Policy eligibility
+
+Action
+   ↓
+"Is AIRA permitted to do this?"
+
+Candidate ranking
+
+Safe candidates
+   ↓
+"Which option is best?"
+
+Decision critic
+
+Proposed decision
+   ↓
+"Is there a reason this should NOT proceed?"
+Execution Safety Model
+
+Execution is intentionally separated from reasoning.
+
+Recovery Decision
+       │
+       ▼
+Execution Request
+       │
+       ▼
+Immutable Execution Plan
+       │
+       ├── planId
+       └── planHash
+       │
+       ▼
+Policy
+       │
+       ▼
+Approval
+       │
+       ▼
+Execution Authorization
+       │
+       ▼
+Execution Worker
+       │
+       ▼
+Runtime Checkpoint
+       │
+       ▼
+Idempotency
+       │
+       ▼
+Reload persisted request
+       │
+       ▼
+Reload persisted authorization
+       │
+       ▼
+Revalidate authorization
+       │
+       ▼
+Revalidate immutable plan
+       │
+       ▼
+Approved Executor
+       │
+       ▼
+Infrastructure
+
+Before mutation, AIRA effectively asks:
+
+Correct organization?
+       ↓
+Correct environment?
+       ↓
+Correct incident?
+       ↓
+Correct execution request?
+       ↓
+Correct recovery decision?
+       ↓
+Correct approved playbook?
+       ↓
+Correct immutable plan hash?
+       ↓
+Policy allows it?
+       ↓
+Required approval exists?
+       ↓
+Authorization is valid?
+       ↓
+Operation is not a duplicate?
+       ↓
+EXECUTE
+Idempotent Distributed Processing
+
+Queue-based systems can deliver the same logical operation more than once.
+
+Without protection:
+
+Execution Message
+      ↓
+restart pod
+      ↓
+queue redelivery
+      ↓
+restart pod again
+      ↓
+potential recovery amplification
+
+AIRA uses deterministic idempotency identities.
+
+Worker receives operation
+        │
+        ▼
+Construct logical identity
+        │
+        ▼
+Generate idempotency key
+        │
+        ▼
+Atomic claim
+        │
+ ┌──────┼───────────────┐
+ │      │               │
+ ▼      ▼               ▼
+NEW   PROCESSING      COMPLETED
+ │      │               │
+ ▼      ▼               ▼
+CLAIM  DO NOT          RETURN
+ │     DUPLICATE      PREVIOUS
+ ▼                    RESULT
+WORK
+ │
+ ▼
+COMPLETE
+
+This protects recovery decision, execution, verification and lifecycle processing.
+
+Worker Ownership and Leases
+
+Distributed workers may crash while owning work.
+
+AIRA therefore uses leases and claim tokens.
+
+Worker A
+   │
+   ├── claimToken = AAA
+   ▼
+PROCESSING
+   │
+   X crashes
+   │
+   ▼
+lease expires
+   │
+   ▼
+Worker B
+   │
+   ├── claimToken = BBB
+   ▼
+RECLAIMED
+
+If Worker A somehow returns later:
+
+Worker A
+   │
+   ▼
+tries token AAA
+   │
+   ▼
+current token = BBB
+   │
+   ▼
+REJECT UPDATE
+
+A stale process cannot overwrite the new owner's result.
+
+Crash-Safe Runtime Recovery
+
+AIRA maintains durable runtime recovery checkpoints for critical stages.
+
+Worker
+   │
+   ▼
+Checkpoint
+   │
+   ▼
+CLAIM
+   │
+   ▼
+PROCESSING
+   │
+   ├── heartbeat
+   │
+   ▼
+WORK
+   │
+   ▼
+COMPLETED
+
+If the process dies:
+
+PROCESSING
+    │
+    X
+process dies
+    │
+    ▼
+heartbeat stops
+    │
+    ▼
+lease expires
+    │
+    ▼
+AIRA restart
+    │
+    ▼
+Stale Operation Detector
+    │
+    ▼
+Recovery Coordinator
+    │
+    ▼
+Resume-State Resolver
+
+The resolver deliberately distinguishes safe computational/observational work from uncertain external mutations.
+
+                    CRASHED STAGE
+                         │
+        ┌────────────────┼─────────────────┐
+        │                │                 │
+ Recovery Decision   Verification      Lifecycle
+        │                │                 │
+        ▼                ▼                 ▼
+      SAFE             SAFE              SAFE
+        │                │                 │
+        └────────────────┼─────────────────┘
+                         ▼
+                       RESUME
+                         │
+                         ▼
+                    Idempotency
+                         │
+                         ▼
+                 Protected Worker
+
+Execution is different:
+
+EXECUTION
+    │
+    X process dies
+    │
+    ▼
+Did infrastructure mutation happen?
+    │
+    ▼
+UNKNOWN
+    │
+    ▼
+DO NOT REPLAY
+    │
+    ▼
+REQUIRES_RECONCILIATION
+    │
+    ▼
+MANUAL INTERVENTION
+
+This prevents a restart from accidentally repeating an external infrastructure mutation.
+
+Verification: Execution Is Not Recovery
+
+A successful command does not prove the incident is resolved.
+
+Execution
+    ↓
+"Command succeeded"
+
+is different from:
+
+Verification
+    ↓
+"System recovered"
+
+AIRA therefore performs post-execution verification.
+
+Execution Result
+      │
+      ▼
+Verification Plan
+      │
+ ┌────┼─────┬─────────────┐
+ │    │     │             │
+ ▼    ▼     ▼             ▼
+Health Metrics Logs   Incident State
+ │    │     │             │
+ └────┴─────┴─────────────┘
+             │
+             ▼
+      Evidence Aggregator
+             │
+             ▼
+       Evidence Package
+             │
+             ▼
+      Verification Decision
+             │
+             ▼
+       Verification Critic
+             │
+             ▼
+        Outcome Router
+Incident Lifecycle
+
+AIRA does not immediately close an incident after one good verification result.
+
+Verification says recovered
+            │
+            ▼
+     Stability Observation
+            │
+            ▼
+    Continue watching system
+            │
+       ┌────┴─────┐
+       │          │
+     STABLE     REGRESSION
+       │          │
+       ▼          ▼
+    Closure    Reopen / Retry /
+               Rollback / Escalate
+
+Why?
+
+one healthy response
+        ≠
+stable recovery
+
+Lifecycle management provides:
+
+stability observation;
+closure eligibility;
+incident closure;
+regression detection;
+retry handoff;
+rollback handoff;
+escalation;
+audit;
+notification;
+persistent lifecycle transitions.
+AI and Deterministic Trust Boundary
+
+One of AIRA's most important architectural boundaries is:
+
+             NON-DETERMINISTIC INTELLIGENCE
+                         │
+                         ▼
+                    AI Agents
+                         │
+              analyze / reason / rank
+                         │
+                         ▼
+                Structured Decision
+                         │
+══════════════════ TRUST BOUNDARY ══════════════════
+                         │
+                         ▼
+                Deterministic Systems
+                         │
+       ┌─────────────────┼────────────────┐
+       ▼                 ▼                ▼
+     Policy           Playbook          Runbook
+       │                 │                │
+       └─────────────────┼────────────────┘
+                         ▼
+                  Authorization
+                         │
+                         ▼
+                 Execution Engine
+                         │
+                         ▼
+                  Infrastructure
+
+AI can influence what is recommended.
+
+AI cannot independently decide what is permitted to mutate.
+
+Safety Principles
+
+AIRA follows a fail-closed model.
+
+UNCERTAIN
+   ↓
+DO NOT GUESS
+   ↓
+BLOCK / ESCALATE
+
+Major invariants include:
+
+AI never receives unrestricted infrastructure access.
+Unknown execution authorization fails closed.
+Unknown plan identity fails closed.
+Policy denial cannot be bypassed.
+High-risk actions can require human approval.
+Duplicate execution is blocked by idempotency.
+Stale workers cannot overwrite current owners.
+Interrupted infrastructure execution is never blindly replayed.
+Verification cannot start new infrastructure execution.
+Lifecycle retry and rollback are controlled handoffs, not direct mutations.
+Learning cannot silently modify execution policy.
+Tenant and environment boundaries are preserved throughout the pipeline.
+Operational decisions are recorded for auditing.
+Observability and Auditability
+
+AIRA records more than the final outcome.
+
+Decision
+   │
+   ├─────────────┐
+   ▼             ▼
+Structured     Metrics
+Logging
+   │             │
+   └──────┬──────┘
+          ▼
+      Audit Events
+          │
+          ▼
+     Decision Trace
+          │
+          ▼
+"Why did AIRA make this decision?"
+
+The system includes:
+
+structured logging;
+Prometheus-compatible metrics;
+action audit records;
+decision traces;
+execution history;
+verification evidence;
+lifecycle transitions;
+agent intelligence traces.
+Learning Loop
+
+AIRA can use previous incidents and outcomes to improve future reasoning.
+
+Incident
+   ↓
+Diagnosis
+   ↓
+Recovery
+   ↓
+Verification
+   ↓
+Outcome
+   ↓
+Feedback
+   ↓
+Incident Memory
+   ↓
+Historical Intelligence
+   ↓
+Future Investigation
+
+Learning is deliberately constrained.
+
+Learning
+   ≠
+automatically rewriting safety policy
+
+
+Learning
+   ≠
+inventing executable infrastructure actions
+
+
+Learning
+   =
+better evidence
+better historical comparison
+better confidence
+better candidate ranking
+better recommendations
+Authentication and Multi-Tenant Security
+
+AIRA maintains separate authentication paths for humans and machine clients.
+
+Human / Browser Authentication
+User
+ ↓
+Register / Login
+ ↓
+Argon2id Password Verification
+ ↓
+Server-side Session
+ ↓
+HttpOnly Cookie
+ ↓
+CSRF Protection
+ ↓
+Authenticated AIRA UI/API
+Machine Authentication
+Machine Client
+      ↓
+Tenant ID + Key ID + Timestamp
+      ↓
+HMAC Signature
+      ↓
+Replay Window Validation
+      ↓
+Tenant Context
+      ↓
+Authorized API
+
+Tenant-isolation and environment-context middleware prevent cross-organization or cross-environment operations.
+
+Current Major Components
+backend/
+│
+├── agents/v2/
+│   ├── agents/              AI investigation/reasoning specialists
+│   ├── runtime/             Agent orchestration + reasoning provider
+│   ├── contracts/           Structured agent contracts/confidence
+│   ├── tools/               Read-oriented investigation tools
+│   └── tests/
+│
+├── models/
+│   ├── Incident
+│   ├── IncidentDiagnosis
+│   ├── RecoveryDecision
+│   ├── ExecutionRequest
+│   ├── ExecutionAuthorization
+│   ├── RecoveryVerification
+│   ├── IncidentLifecycle
+│   ├── IdempotencyRecord
+│   ├── RuntimeRecoveryCheckpoint
+│   ├── Playbook
+│   ├── Runbook
+│   ├── DecisionTrace
+│   └── AuditEvent
+│
+├── services/
+│   ├── signals/             Signal processing
+│   ├── recovery/            Recovery-decision pipeline
+│   ├── execution/           Authorization/execution services
+│   ├── verification/        Post-execution verification
+│   ├── lifecycle/           Stability/closure/retry/rollback
+│   ├── idempotency/         Distributed duplicate protection
+│   ├── recoveryRuntime/     Crash/restart recovery
+│   ├── observability/       Metrics/logging/audit
+│   ├── playbooks/
+│   └── learning/
+│
+├── workers/
+│   ├── recoveryDecisionWorker.js
+│   ├── executionWorker.js
+│   ├── verificationWorker.js
+│   ├── lifecycleWorker.js
+│   └── runtimeRecoveryWorker.js
+│
+├── controllers/
+├── middleware/
+├── routes/
+└── tests/
+Frontend
+
+The frontend provides operational visibility into AIRA's decisions and state.
+
+React UI
+   │
+   ├── Dashboard
+   ├── Incidents
+   ├── Agent Intelligence
+   ├── Services
+   ├── Integrations
+   ├── Monitors
+   ├── Policies
+   ├── Approvals
+   ├── Runbooks
+   ├── Verification
+   ├── Safety
+   └── Audit / Analytics
+
+The React frontend uses typed API hooks for incidents, integrations, approvals, decisions, policies, runbooks, verification, monitoring, analytics and agent intelligence.
+
+Technology Stack
+Layer	Technology
+Backend	Node.js 20, Express
+Language	JavaScript/CommonJS backend
+Frontend	React 18, TypeScript, Vite
+Database	MongoDB + Mongoose
+Queue / async architecture	RabbitMQ-based worker flows
+Cache / coordination	Redis where configured
+Authentication	Argon2id, server sessions, HMAC machine auth
+Infrastructure	Docker, Kubernetes
+Observability	Prometheus-style metrics, structured logging
+Testing	Jest, Supertest, MongoDB memory testing
+Deployment	Railway backend, Vercel frontend
+Local Development
+Backend
 cd backend
-cp .env.example .env          # fill in MONGODB_URI, SESSION_SECRET, etc.
+cp .env.example .env
 npm install
-npm start                     # http://localhost:5000
+npm start
 
-# Frontend
-cd frontend
-cp .env.example .env          # set VITE_API_URL=http://localhost:5000
-npm install
-npm run dev                   # http://localhost:5173
-```
+Default development backend:
 
-**Required env vars (backend):**
-```
+http://localhost:5000
+
+Typical backend environment variables:
+
 MONGODB_URI=
-SESSION_SECRET=               # 64+ random bytes
+SESSION_SECRET=
 CORS_ORIGINS=http://localhost:5173
 NODE_ENV=development
-```
+Frontend
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
 
----
+Set:
 
-## Project Structure
+VITE_API_URL=http://localhost:5000
 
-```
-backend/
-  agents/
-    v2/                    # 8-agent intelligence platform (authoritative)
-      agents/              # correlationAgent, investigationAgent, diagnosisAgent,
-                           # playbookSelectionAgent, parameterResolutionAgent,
-                           # recoveryMonitoringAgent, explanationAgent, learningAgent
-      runtime/             # agentOrchestrator, baseAgent, reasoningProvider
-      contracts/           # agentContracts, confidenceModel
-      config/              # agentBudgets (cost controls + env overrides)
-      tests/               # 12 test suites, 72+ tests
-      index.js             # public API: buildAgentOrchestrator + all exports
-    analysisAgent.js       # DEPRECATED — no-op start/stop
-    decisionAgent.js       # DEPRECATED — no-op start/stop
-    actionAgent.js         # DEPRECATED — performAction returns LEGACY_PATH_BLOCKED
-    batchDecisionAgent.js  # DEPRECATED — class retained for import compat only
-  models/                  # Mongoose models (User, Organization, AgentIntelligenceRun, …)
-  routes/                  # Express routers (authRoutes, agentIntelligenceRoutes, …)
-  middleware/              # sessionAuthMiddleware, csrfMiddleware, killSwitchMiddleware, …
-  services/
-    identity/              # authService, sessionService, passwordService, csrfHelper
-  tests/
-    unit/                  # playbookValidator, playbookGoldenPath, runbookSchema, …
-    integration/           # auth, incident, approvals, services, monitor, …
+Default frontend:
 
-frontend/
-  src/
-    api/
-      client.ts            # cookie-based fetch wrapper + agent intelligence methods
-      hooks/
-        useAgentIntelligence.ts  # polling hooks for agent analysis (4s, terminal-state aware)
-    components/
-      incidents/
-        AgentIntelligencePanel.tsx  # full agent intelligence UI panel
-    types/
-      agentIntelligence.ts         # TypeScript types for all agent API responses
-    pages/
-      IncidentDetailPage.tsx       # renders AgentIntelligencePanel
-    store/
-      authStore.ts         # Zustand store — no persist middleware, no secrets
-```
+http://localhost:5173
+Running Tests
 
----
+Run the full backend test suite:
 
-## Running Tests
-
-```bash
 cd backend
+npx jest --runInBand
 
-# V2 agent intelligence platform (72 tests, 12 suites)
-npx jest --testPathPattern="agents/v2/tests" --no-coverage --forceExit
+Critical recovery pipeline:
 
-# Legacy agent migration + prompt injection (integration)
-npx jest --testPathPattern="agentIntegration" --no-coverage --forceExit
+npx jest \
+  services/recovery \
+  services/execution \
+  services/verification \
+  services/lifecycle \
+  services/idempotency \
+  services/recoveryRuntime \
+  --runInBand
 
-# Cost controls + evidence reduction
-npx jest --testPathPattern="costControls" --no-coverage --forceExit
+Runtime crash-recovery tests cover:
 
-# V1 Playbook/Runbook unit tests
-npx jest --testPathPattern="unit" --no-coverage --forceExit
+Checkpoint persistence
+        ↓
+Lease ownership
+        ↓
+Stale detection
+        ↓
+Resume-state resolution
+        ↓
+Recovery coordination
+        ↓
+Crash simulation
+        ↓
+Restart/resume E2E
+        ↓
+Execution replay prohibition
+Deployment
+Backend
 
-# All tests (743 passing, 27 suites; integration tests require MongoDB)
-npx jest --no-coverage --forceExit
-```
+Hosted on Railway.
+
+Production configuration should include at minimum:
+
+NODE_ENV=production
+MONGODB_URI=
+SESSION_SECRET=
+CORS_ORIGINS=
+Frontend
+
+Hosted on Vercel.
+
+VITE_API_URL=<Railway backend URL>
+Engineering Evolution
+
+AIRA has evolved in layers rather than being built as one large autonomous agent.
+
+Foundation
+    ↓
+Authentication + Tenant Isolation
+    ↓
+Signals + Monitoring
+    ↓
+Infrastructure Understanding
+    ↓
+AI Investigation
+    ↓
+Diagnosis
+    ↓
+Playbooks + Runbooks
+    ↓
+Recovery Decision
+    ↓
+Controlled Execution
+    ↓
+Post-Execution Verification
+    ↓
+Incident Lifecycle
+    ↓
+Distributed Idempotency
+    ↓
+Crash-Safe Runtime Recovery
+    ↓
+Production Reliability Hardening
+
+Later phases exist because earlier capabilities expose new reliability problems.
+
+Example:
+
+AIRA can execute recovery
+        ↓
+But command success does not prove recovery
+        ↓
+Verification becomes necessary
+
+Then:
+
+Verification exists
+        ↓
+But recovery needs stability observation and closure
+        ↓
+Lifecycle becomes necessary
+
+Then:
+
+Full pipeline exists
+        ↓
+But queue delivery can duplicate work
+        ↓
+Idempotency becomes necessary
+
+Then:
+
+Idempotency exists
+        ↓
+But a worker may crash midway
+        ↓
+Runtime crash recovery becomes necessary
+
+This incremental architecture is intentional.
+
+Documentation
+
+Detailed engineering documentation lives under:
+
+docs/
+│
+├── architecture/
+│   ├── SYSTEM_ARCHITECTURE.md
+│   ├── AGENT_ARCHITECTURE.md
+│   ├── RECOVERY_PIPELINE.md
+│   ├── EXECUTION_SAFETY.md
+│   ├── CRASH_RECOVERY.md
+│   └── SAFETY_MODEL.md
+│
+├── phases/
+│   ├── PHASE_01.md
+│   ├── PHASE_02.md
+│   ├── PHASE_03.md
+│   ├── ...
+│   ├── PHASE_10.md
+│   └── PHASE_11.md
+│
+├── PHASE_HISTORY.md
+└── CURRENT_STATUS.md
+Design Philosophy
+
+AIRA follows one central philosophy:
+
+             INTELLIGENCE
+                  │
+                  ▼
+         Understand the problem
+                  │
+                  ▼
+          Recommend an action
+                  │
+                  ▼
+             SAFETY GATE
+                  │
+                  ▼
+           Prove permission
+                  │
+                  ▼
+           EXECUTION GATE
+                  │
+                  ▼
+        Perform deterministic work
+                  │
+                  ▼
+            VERIFICATION
+                  │
+                  ▼
+          Prove recovery worked
+
+The objective is not maximum autonomy.
+
+The objective is:
+
+the maximum safe autonomy that can be justified by evidence, policy, deterministic controls, and verifiable outcomes.
+
+Current Development Direction
+
+The current reliability work is strengthening the distributed execution model around:
+
+worker ownership;
+durable checkpoints;
+crash recovery;
+safe replay rules;
+message ordering;
+duplicate protection;
+recovery reconciliation;
+execution safety;
+distributed coordination.
+
+The next architecture layers continue toward production-grade autonomous incident recovery while maintaining the core rule:
+
+When AIRA cannot prove an operation is safe, it must stop rather than guess.
+
+Author
+
+J Suhas
+
+AIRA — Autonomous Incident Recovery Agent
+
+
 
 ---
 
-## Security Notes
+### The docs I recommend creating next
 
-- Passwords: Argon2id, `select: false` in Mongoose schema
-- Sessions: `HttpOnly` cookie, server-side store in MongoDB, 30-day expiry with sliding window
-- CSRF: double-submit with HMAC derivation — token never stored in `localStorage`
-- CORS: exact Vercel origin only, `credentials: true`, `X-CSRF-Token` in allowed headers
-- Machine secrets: never logged; HMAC replay window = 5 minutes
 
----
 
-## Deployment
 
-- **Backend**: Railway — set `NODE_ENV=production`, `SESSION_SECRET`, `MONGODB_URI`, `CORS_ORIGINS`
-- **Frontend**: Vercel — set `VITE_API_URL` to Railway backend URL
+```text
+README.md                                  ← THIS ONE
 
----
 
-## Playbook + Runbook Platform V1
+docs/PHASE_HISTORY.md                      ← Phase 1 → current evolution
+docs/CURRENT_STATUS.md                     ← what is actually finished today
 
-### Architecture
 
-```
-Observability Signal
-        │
-        ▼
-   Incident Model (MongoDB)
-        │
-        ▼
- incidentPlaybookService
-  ├── analyseIncident()  →  playbookMatcher.matchPlaybooks()
-  │                         └── resolveMatchOutcome()
-  └── executeForIncident()
-        │
-        ▼
-   PlaybookExecutionEngine
-        │  reads playbookDef → policy → approval mode → stages
-        ▼
-   RunbookExecutionEngine  ──►  Action Handlers (kubernetes/*, wait/*)
-        │
-        ├── Verification steps
-        ├── Rollback (on failure)
-        └── Escalation (on unrecoverable)
-        │
-        ▼
-   DecisionTrace + AuditEvent (MongoDB)
-```
+docs/architecture/SYSTEM_ARCHITECTURE.md   ← complete internal architecture
+docs/architecture/AGENT_ARCHITECTURE.md    ← every agent + what it does
+docs/architecture/RECOVERY_PIPELINE.md     ← diagnosis → recovery → execution
+docs/architecture/PLAYBOOK_RUNBOOK.md      ← strategy vs deterministic steps
+docs/architecture/EXECUTION_SAFETY.md      ← authorization + immutable plans
+docs/architecture/VERIFICATION.md          ← proof of recovery
+docs/architecture/LIFECYCLE.md             ← closure/retry/rollback
+docs/architecture/IDEMPOTENCY.md           ← Phase 11.1
+docs/architecture/CRASH_RECOVERY.md        ← Phase 11.2
+docs/architecture/SAFETY_MODEL.md           ← all fail-closed invariants
 
-### Playbook Catalogue (21 playbooks, 18 canonical families)
 
-| Family | Playbook ID | Category | Approval |
-|---|---|---|---|
-| K8S CrashLoopBackOff | PB-K8S-CRASHLOOP-001 | kubernetes | CONDITIONAL |
-| K8S OOMKilled | PB-K8S-OOM-001 | kubernetes | CONDITIONAL |
-| K8S Node NotReady | PB-K8S-NODE-NOTREADY-001 | kubernetes | MANUAL |
-| K8S ImagePullBackOff | PB-K8S-IMAGEPULL-001 | kubernetes | MANUAL |
-| K8S PVC Bound | PB-K8S-PVC-001 | kubernetes | MANUAL |
-| K8S HPA Exhausted | PB-K8S-HPA-001 | kubernetes | MANUAL |
-| DB Connection Pool | PB-DB-CONNPOOL-001 | database | CONDITIONAL |
-| DB Replication Lag | PB-DB-REPLICATION-LAG-001 | database | MANUAL |
-| DB Disk Full | PB-DB-DISK-001 | database | MANUAL |
-| DB Slow Queries | PB-DB-SLOW-QUERY-001 | database | AUTOMATIC |
-| API High Latency | PB-API-LATENCY-001 | api | CONDITIONAL |
-| API High Error Rate | PB-API-ERROR-RATE-001 | api | CONDITIONAL |
-| API Rate Limit | PB-API-RATELIMIT-001 | api | AUTOMATIC |
-| Queue Backlog | PB-QUEUE-BACKLOG-001 | queue | CONDITIONAL |
-| Queue DLQ Spike | PB-QUEUE-DLQ-001 | queue | MANUAL |
-| Memory Leak | PB-MEMORY-LEAK-001 | resource | MANUAL |
-| CPU Throttle | PB-CPU-THROTTLE-001 | resource | CONDITIONAL |
-| Disk IO Saturation | PB-DISK-IO-001 | resource | CONDITIONAL |
-| TLS Expiry | PB-CERT-EXPIRY-001 | security | MANUAL |
-| Auth Failure Spike | PB-AUTH-FAILURE-001 | security | MANUAL |
-| Network Packet Loss | PB-NETWORK-LOSS-001 | network | CONDITIONAL |
-
-### Runbook Registry (1 runbook, lifecycle: DRAFT)
-
-| Runbook ID | Name | Semver | Lifecycle | Handlers |
-|---|---|---|---|---|
-| RB-K8S-POD-RESTART | Kubernetes Pod Restart | 1.0.0 | DRAFT | 5 steps, all IMPLEMENTED |
-
-**Lifecycle promotion path**: `DRAFT → VALIDATED → APPROVED → ACTIVE`  
-A runbook reaches ACTIVE only after operator promotion in MongoDB. The PB-K8S-CRASHLOOP-001 golden path is blocked on RB-K8S-POD-RESTART reaching ACTIVE — all action handlers are present and implemented.
-
-### Action Handlers (8 registered)
-
-| Handler | Module |
-|---|---|
-| `kubernetes/restart_pod` | kubernetesHandlers.js |
-| `kubernetes/restart_deployment` | kubernetesHandlers.js |
-| `kubernetes/scale_deployment` | kubernetesHandlers.js |
-| `kubernetes/list_pods` | kubernetesHandlers.js |
-| `kubernetes/get_logs` | kubernetesHandlers.js |
-| `kubernetes/check_pod_health` | kubernetesHandlers.js |
-| `kubernetes/get_deployment_status` | kubernetesHandlers.js |
-| `wait/poll_condition` | waitHandlers.js |
-
-### Execution Outcome Codes (26 total)
-
-`NO_SAFE_PLAYBOOK`, `NO_ACTIVE_PLAYBOOK`, `RUNBOOK_NOT_EXECUTABLE`, `MISSING_ACTION_HANDLER`, `MISSING_EVIDENCE`, `INSUFFICIENT_CONFIDENCE`, `PARAMETER_UNRESOLVED`, `RESOURCE_AMBIGUOUS`, `PRECONDITION_FAILED`, `POLICY_DENIED`, `APPROVAL_REJECTED`, `SUGGEST_ONLY`, `KILL_SWITCH_ACTIVE`, `BLAST_RADIUS_EXCEEDED`, `HIGH_RISK_ACTION`, `DESTRUCTIVE_ACTION`, `NON_REVERSIBLE_ACTION`, `EXECUTION_FAILED`, `RETRY_EXHAUSTED`, `VERIFICATION_FAILED`, `ROLLBACK_UNAVAILABLE`, `ROLLBACK_FAILED`, `INTEGRATION_UNAVAILABLE`, `INFRASTRUCTURE_UNREACHABLE`, `SECURITY_VIOLATION`, `TENANT_BOUNDARY_VIOLATION`
-
-### API Endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/v1/playbooks` | List playbooks (filter: lifecycle, category) |
-| GET | `/api/v1/playbooks/:playbookId` | Get playbook definition |
-| POST | `/api/v1/playbooks/match` | Match playbooks to incident (read-only) |
-| POST | `/api/v1/playbooks/:id/:v/execute` | Execute best matching playbook |
-| GET | `/api/v1/incidents/:id/playbooks` | Analyse matching playbooks for incident |
-| POST | `/api/v1/incidents/:id/playbooks/execute` | Execute playbook for incident |
-
-### Test Coverage
-
-| Suite | Tests | Status |
-|---|---|---|
-| Golden Path (PB-K8S-CRASHLOOP-001) | 24 | ✅ All passing |
-| All backend unit tests | 816 | ✅ All passing |
-
-### Frozen Contracts (`backend/services/index.js`)
-
-```js
-getPlaybookMatchingService()   // playbookMatcher
-getRunbookExecutionEngine()    // RunbookExecutionEngine
-getDecisionTraceService()      // DecisionTrace model
-getAuditEventService()         // AuditEvent model
-getActionRegistry()            // ActionRegistry
-getRunbookRegistry()           // RunbookRegistry
-getPlaybookRegistry()          // PlaybookRegistry
-getIncidentPlaybookService()   // incidentPlaybookService
-```
-
-### Future: AI Agent Layer (NOT YET IMPLEMENTED)
-
-The following 8 agents are planned for V2 but are intentionally NOT built in V1:
-1. Signal Ingestion Agent
-2. Incident Classification Agent
-3. Context Enrichment Agent
-4. Risk Assessment Agent
-5. Execution Supervisor Agent
-6. Verification Agent
-7. Escalation Agent
-8. Continuous Learning Agent
-
----
+docs/phases/PHASE_01.md
+...
+docs/phases/PHASE_11.md

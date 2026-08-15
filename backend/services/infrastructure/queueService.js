@@ -81,7 +81,16 @@ class QueueService {
 
         INCIDENT_DETECTED:
           "incident.detected",
+        
+         DIAGNOSIS_REQUESTED:
+    "diagnosis.requested",
 
+  DIAGNOSIS_COMPLETED:
+    "diagnosis.completed",
+
+  DIAGNOSIS_FAILED:
+    "diagnosis.failed",
+    
         INCIDENT_UPDATED:
           "incident.updated",
 

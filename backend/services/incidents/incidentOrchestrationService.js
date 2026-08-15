@@ -14,6 +14,11 @@ const {
     "../../models/SignalCorrelation"
   );
 
+const diagnosisQueueService =
+  require(
+    "../diagnosis/diagnosisQueueService"
+  );
+  
 const incidentEnrichmentService =
   require(
     "./incidentEnrichmentService"
@@ -327,6 +332,133 @@ class IncidentOrchestrationService {
         );
       }
 
+            // ----------------------------------------------------------------------
+      // PHASE 6 ASYNC DIAGNOSIS
+      // ----------------------------------------------------------------------
+
+      /*
+       * Diagnosis no longer executes inside the signal ingestion path.
+       *
+       * We publish a small immutable job and return immediately.
+       *
+       * A dedicated diagnosis worker performs:
+       *
+       * queue
+       *   -> lifecycle service
+       *   -> coordinator
+       *   -> persistence
+       *
+       * Queue failure must never invalidate the canonical incident.
+       */
+      try {
+        const diagnosisIncident =
+          enrichedIncident ||
+          canonicalIncident ||
+          result.incident;
+
+        if (
+          diagnosisIncident?._id &&
+          diagnosisIncident
+            .organizationId &&
+          diagnosisIncident
+            .environmentId
+        ) {
+          let trigger =
+            "occurrence_increased";
+
+          if (
+            result.created &&
+            !recurrenceResult
+              .recurrence
+          ) {
+            trigger =
+              "incident_detected";
+          } else if (
+            recurrenceResult
+              .recurrence
+          ) {
+            trigger =
+              "incident_reopened";
+          } else if (
+            mergeResult
+              .merged
+          ) {
+            trigger =
+              "correlation_updated";
+          }
+
+          await diagnosisQueueService
+            .requestDiagnosis({
+              organizationId:
+                diagnosisIncident
+                  .organizationId,
+
+              environmentId:
+                diagnosisIncident
+                  .environmentId,
+
+              incidentId:
+                diagnosisIncident
+                  ._id,
+
+              correlationId:
+                signal
+                  .correlationId ||
+                null,
+
+              correlationGroupId:
+                evaluation
+                  .correlationGroup
+                  ?.correlationGroupId ||
+                signal
+                  .correlationGroupId ||
+                null,
+
+              trigger,
+
+              metadata: {
+                signalId:
+                  signal.signalId ||
+                  null,
+
+                incidentCreated:
+                  Boolean(
+                    result.created
+                  ),
+
+                incidentUpdated:
+                  Boolean(
+                    result.updated
+                  ),
+
+                recurrence:
+                  Boolean(
+                    recurrenceResult
+                      .recurrence
+                  ),
+
+                merged:
+                  Boolean(
+                    mergeResult
+                      .merged
+                  ),
+              },
+            });
+        }
+      } catch (
+        error
+      ) {
+        /*
+         * Diagnosis queueing is downstream intelligence.
+         *
+         * Signal ingestion and canonical incident creation remain
+         * authoritative even if the queue is unavailable.
+         */
+        console.error(
+          "[incident-orchestration] Could not queue diagnosis:",
+          error.message
+        );
+      }
       // ----------------------------------------------------------------------
       // RESULT
       // ----------------------------------------------------------------------

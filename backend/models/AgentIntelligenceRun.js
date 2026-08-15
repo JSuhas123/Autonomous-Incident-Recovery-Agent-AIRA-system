@@ -1,56 +1,939 @@
-const mongoose = require('mongoose');
+"use strict";
 
-/**
- * AgentIntelligenceRun — persistent record of one full orchestrator run.
- * Reuses correlationId/incidentId for cross-reference with V1 audit.
- */
-const agentRunSchema = new mongoose.Schema(
-  {
-    runId:         { type: String, required: true, unique: true },
-    incidentId:    { type: String, required: true },
-    correlationId: { type: String, required: true },
-    tenantId:      { type: String, required: true },
-    state:         { type: String, required: true },
-    startedAt:     { type: Date,   required: true },
-    completedAt:   { type: Date },
-    manualRequired:{ type: Boolean, default: false },
-    manualReason:  { type: String },
-    error:         { type: String },
+const mongoose =
+  require(
+    "mongoose"
+  );
 
-    agentTrace: [
-      {
-        agent:        String,
-        version:      String,
-        status:       String,
-        startedAt:    String,
-        completedAt:  String,
-        durationMs:   Number,
-        confidence:   Number,
-        evidenceUsed: [String],
-        // Structured rationale summary only — NOT raw chain-of-thought
-        result:       mongoose.Schema.Types.Mixed,
-        warnings:     [String],
-        error:        String,
-        model:        String,
-        provider:     String,
-        fallbackUsed: Boolean,
-        tokenEstimate:Number,
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const RUN_STATUSES = [
+  "pending",
+  "running",
+  "partial",
+  "completed",
+  "manual_required",
+  "failed",
+];
+
+const RUN_PHASES = [
+  "context_building",
+  "evidence_collection",
+  "symptom_analysis",
+  "topology_analysis",
+  "change_analysis",
+  "historical_analysis",
+  "hypothesis_generation",
+  "verification",
+  "risk_analysis",
+  "confidence_aggregation",
+  "completed",
+];
+
+const AGENT_RESULT_STATUSES = [
+  "SUCCESS",
+  "PARTIAL",
+  "FAILED",
+  "MANUAL_REQUIRED",
+  "SKIPPED",
+];
+
+// ============================================================================
+// AGENT TRACE ENTRY
+// ============================================================================
+
+const agentTraceEntrySchema =
+  new mongoose.Schema(
+    {
+      agent: {
+        type:
+          String,
+
+        required:
+          true,
+
+        trim:
+          true,
       },
-    ],
 
-    // Summary references — not full objects (those live in V1)
-    playbookExecutionId: String,
-    explanationTitle:    String,
-    finalOutcome:        String,
-    learningCount:       Number,
-  },
-  { collection: 'agent_intelligence_runs', timestamps: true },
-);
+      version: {
+        type:
+          String,
 
-agentRunSchema.index({ tenantId: 1, incidentId: 1 });
-agentRunSchema.index({ tenantId: 1, createdAt: -1 });
-agentRunSchema.index({ tenantId: 1, state: 1 });
-// TTL: 30 days
-agentRunSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 });
+        default:
+          null,
+      },
 
-module.exports = mongoose.model('AgentIntelligenceRun', agentRunSchema);
+      phase: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      status: {
+        type:
+          String,
+
+        enum:
+          AGENT_RESULT_STATUSES,
+
+        required:
+          true,
+      },
+
+      startedAt: {
+        type:
+          Date,
+
+        required:
+          true,
+      },
+
+      completedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      durationMs: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        default:
+          null,
+      },
+
+      confidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      evidenceUsed: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      findingIds: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      warnings: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      error: {
+        type:
+          String,
+
+        maxlength:
+          2048,
+
+        default:
+          null,
+      },
+
+      model: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      provider: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      fallbackUsed: {
+        type:
+          Boolean,
+
+        default:
+          false,
+      },
+
+      tokenEstimate: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        default:
+          null,
+      },
+
+      metadata: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
+      },
+    },
+    {
+      _id:
+        true,
+    }
+  );
+
+// ============================================================================
+// CONFIDENCE SNAPSHOT
+// ============================================================================
+
+const confidenceSchema =
+  new mongoose.Schema(
+    {
+      correlationConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      evidenceCompleteness: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      symptomConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      topologyConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      changeConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      historicalConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      diagnosisConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      verificationConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      riskConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+
+      overallConfidence: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        max:
+          1,
+
+        default:
+          null,
+      },
+    },
+    {
+      _id:
+        false,
+    }
+  );
+
+// ============================================================================
+// MODEL
+// ============================================================================
+
+const agentIntelligenceRunSchema =
+  new mongoose.Schema(
+    {
+      // ======================================================================
+      // OWNERSHIP
+      // ======================================================================
+
+      organizationId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "Organization",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      environmentId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "Environment",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      tenantId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // INCIDENT
+      // ======================================================================
+
+      incidentId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "Incident",
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      correlationId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+      },
+
+      correlationGroupId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      diagnosisId: {
+        type:
+          mongoose.Schema.Types.ObjectId,
+
+        ref:
+          "IncidentDiagnosis",
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // RUN IDENTITY
+      // ======================================================================
+
+      runId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        unique:
+          true,
+
+        index:
+          true,
+      },
+
+      status: {
+        type:
+          String,
+
+        enum:
+          RUN_STATUSES,
+
+        default:
+          "pending",
+
+        index:
+          true,
+      },
+
+      phase: {
+        type:
+          String,
+
+        enum:
+          RUN_PHASES,
+
+        default:
+          "context_building",
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // TIMING
+      // ======================================================================
+
+      startedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      completedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      failedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      durationMs: {
+        type:
+          Number,
+
+        min:
+          0,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // CONTEXT SNAPSHOT
+      // ======================================================================
+
+      contextSummary: {
+        signalCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        incidentEventCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        providerCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        affectedServiceCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        affectedResourceCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        historicalIncidentCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+
+        changeCount: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            0,
+        },
+      },
+
+      // ======================================================================
+      // CONFIDENCE
+      // ======================================================================
+
+      confidence: {
+        type:
+          confidenceSchema,
+
+        default:
+          {},
+      },
+
+      // ======================================================================
+      // AGENT TRACE
+      // ======================================================================
+
+      agentTrace: {
+        type:
+          [agentTraceEntrySchema],
+
+        default:
+          [],
+      },
+
+      // ======================================================================
+      // FINDINGS
+      // ======================================================================
+
+      findingIds: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      hypothesisIds: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      contradictionIds: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      // ======================================================================
+      // OUTCOME
+      // ======================================================================
+
+      outcome: {
+        type:
+          String,
+
+        enum: [
+          "ROOT_CAUSE_IDENTIFIED",
+          "PROBABLE_CAUSE_IDENTIFIED",
+          "MULTIPLE_PLAUSIBLE_CAUSES",
+          "INSUFFICIENT_EVIDENCE",
+          "CONTRADICTORY_EVIDENCE",
+          "FALSE_POSITIVE_SUSPECTED",
+          "UNKNOWN",
+          null,
+        ],
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      summary: {
+        type:
+          String,
+
+        maxlength:
+          4096,
+
+        default:
+          null,
+      },
+
+      manualReason: {
+        type:
+          String,
+
+        maxlength:
+          2048,
+
+        default:
+          null,
+      },
+
+      warnings: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      error: {
+        type:
+          String,
+
+        maxlength:
+          4096,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // SAFETY
+      // ======================================================================
+
+      /*
+       * Phase 6 must never authorize execution.
+       */
+      executionAuthorized: {
+        type:
+          Boolean,
+
+        default:
+          false,
+
+        immutable:
+          true,
+      },
+
+      // ======================================================================
+      // ENGINE METADATA
+      // ======================================================================
+
+      coordinatorVersion: {
+        type:
+          String,
+
+        default:
+          "phase6-v1",
+      },
+
+      reasoningProvider: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      model: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      fallbackUsed: {
+        type:
+          Boolean,
+
+        default:
+          false,
+      },
+
+      metadata: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
+      },
+    },
+    {
+      timestamps:
+        true,
+
+      versionKey:
+        false,
+    }
+  );
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+agentIntelligenceRunSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  incidentId:
+    1,
+
+  createdAt:
+    -1,
+});
+
+agentIntelligenceRunSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  status:
+    1,
+
+  createdAt:
+    -1,
+});
+
+agentIntelligenceRunSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  phase:
+    1,
+
+  status:
+    1,
+});
+
+agentIntelligenceRunSchema.index({
+  organizationId:
+    1,
+
+  environmentId:
+    1,
+
+  correlationGroupId:
+    1,
+
+  createdAt:
+    -1,
+});
+
+agentIntelligenceRunSchema.index({
+  incidentId:
+    1,
+
+  completedAt:
+    -1,
+});
+
+// ============================================================================
+// RETENTION
+// ============================================================================
+
+const AGENT_INTELLIGENCE_RETENTION_SECONDS =
+  Number(
+    process.env
+      .AGENT_INTELLIGENCE_RETENTION_SECONDS
+  ) ||
+  180 * 24 * 60 * 60;
+
+/*
+ * Keep active/failed investigation history.
+ *
+ * Only explicitly archived runs should eventually expire.
+ *
+ * We intentionally do NOT add an unconditional TTL here.
+ * Phase 10 / compliance policy can archive runs first.
+ */
+
+// ============================================================================
+// EXPORT
+// ============================================================================
+
+const AgentIntelligenceRun =
+  mongoose.model(
+    "AgentIntelligenceRun",
+    agentIntelligenceRunSchema
+  );
+
+module.exports =
+  AgentIntelligenceRun;
+
+module.exports.RUN_STATUSES =
+  RUN_STATUSES;
+
+module.exports.RUN_PHASES =
+  RUN_PHASES;
+
+module.exports.AGENT_RESULT_STATUSES =
+  AGENT_RESULT_STATUSES;
+
+module.exports.AGENT_INTELLIGENCE_RETENTION_SECONDS =
+  AGENT_INTELLIGENCE_RETENTION_SECONDS;

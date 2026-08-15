@@ -1,44 +1,68 @@
 "use strict";
 
 /**
- * Investigation Agent
+ * AIRA Investigation / Evidence Collector Agent
  *
- * Collects the evidence needed to diagnose an incident.
- * Uses READ-ONLY operations exclusively.
+ * Phase 6 responsibility:
+ *
+ * 1. Consume trusted InvestigationContext built by
+ *    investigationContextService.
+ *
+ * 2. Reuse canonical AIRA evidence first.
+ *
+ * 3. Collect additional READ-ONLY evidence only when useful.
+ *
+ * 4. Evaluate:
+ *      - completeness
+ *      - missing evidence
+ *      - stale evidence
+ *      - conflicts
+ *
+ * 5. Never mutate infrastructure.
  *
  * SAFETY INVARIANTS:
+ *
+ * - NO playbook execution
+ * - NO runbook execution
  * - NO infrastructure mutation
- * - NO playbook/runbook execution
- * - NO direct Kubernetes mutation API access
- * - Kubernetes evidence comes from read-only inventory/topology tools
- * - Legacy k8sService is read-only fallback only
- * - Evidence is reduced before being exposed downstream
+ * - NO arbitrary shell commands
+ * - NO Kubernetes mutation APIs
+ * - NO execution authorization
  */
 
 const {
   BaseAgent,
-} = require("../runtime/baseAgent");
+} =
+  require(
+    "../runtime/baseAgent"
+  );
 
 const {
   EVIDENCE_TYPE,
   EVIDENCE_SOURCE_TYPE,
   createEvidenceItem,
   createEvidencePackage,
-} = require("../contracts/agentContracts");
+} =
+  require(
+    "../contracts/agentContracts"
+  );
 
 const {
   getReasoningProvider,
-} = require("../runtime/reasoningProvider");
+} =
+  require(
+    "../runtime/reasoningProvider"
+  );
 
 const AGENT_NAME =
   "InvestigationAgent";
 
 const AGENT_VERSION =
-  "2.0.0";
+  "3.0.0";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Investigation Agent
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================================================
+// AGENT
+// ============================================================================
 
 class InvestigationAgent
   extends BaseAgent {
@@ -55,9 +79,14 @@ class InvestigationAgent
       config;
 
     this._reasoning =
-      config.reasoningProvider ||
+      config
+        .reasoningProvider ||
       null;
   }
+
+  // ==========================================================================
+  // EXECUTE
+  // ==========================================================================
 
   async execute(
     context,
@@ -67,249 +96,401 @@ class InvestigationAgent
       new Date();
 
     try {
+      this.assertContext(
+        context
+      );
+
       const {
         incidentId,
         correlationId,
         tenantId,
         incident,
         service,
-        resource,
-        environment,
-      } = context;
+      } =
+        context;
+
+      // ======================================================================
+      // 1. START WITH CANONICAL PHASE-6 EVIDENCE
+      // ======================================================================
 
       const evidenceItems =
-        [];
-
-      const missing =
-        [];
-
-      // ───────────────────────────────────────────────────────────────────────
-      // 1. Kubernetes evidence
-      //
-      // Preferred:
-      // KubernetesInvestigationTools → persisted inventory/topology.
-      //
-      // Fallback:
-      // legacy read-only k8sService.
-      // ───────────────────────────────────────────────────────────────────────
-
-      await _collectK8sEvidence(
-        {
-          incidentId,
-          correlationId,
-          tenantId,
-          incident,
-          resource,
-          service,
-
-          provider:
-            context.provider,
-
-          integrationId:
-            context.integrationId,
-        },
-
-        dependencies,
-
-        evidenceItems,
-
-        missing
-      );
-
-      // ───────────────────────────────────────────────────────────────────────
-      // 2. Monitoring / metrics
-      // ───────────────────────────────────────────────────────────────────────
-
-      await _collectMonitoringEvidence(
-        {
-          incidentId,
-          correlationId,
-          service,
-          resource,
-        },
-
-        dependencies,
-
-        evidenceItems,
-
-        missing
-      );
-
-      // ───────────────────────────────────────────────────────────────────────
-      // 3. Historical incidents / IncidentMemory
-      // ───────────────────────────────────────────────────────────────────────
-
-      await _collectHistoricalEvidence(
-        {
-          tenantId,
-          incidentId,
-          correlationId,
-          incident,
-        },
-
-        dependencies,
-
-        evidenceItems,
-
-        missing
-      );
-
-      // ───────────────────────────────────────────────────────────────────────
-      // 4. Deployment history
-      // ───────────────────────────────────────────────────────────────────────
-
-      await _collectDeploymentEvidence(
-        {
-          service,
-          resource,
-          incidentId,
-          correlationId,
-        },
-
-        dependencies,
-
-        evidenceItems,
-
-        missing
-      );
-
-      // ───────────────────────────────────────────────────────────────────────
-      // Evidence reduction
-      //
-      // Never send unrestricted topology/log/event payloads to reasoning.
-      // ───────────────────────────────────────────────────────────────────────
-
-      const reducedEvidenceItems =
-        reduceEvidencePackage(
-          evidenceItems,
-          _resolveEvidenceBudgets(
-            this._config
-          )
+        this.cloneCanonicalEvidence(
+          context
         );
 
-      // ───────────────────────────────────────────────────────────────────────
-      // 5. AI reasoning
-      //
-      // AI assesses evidence completeness only.
-      // It does NOT execute or recommend direct mutation here.
-      // ───────────────────────────────────────────────────────────────────────
+      const missing =
+        new Set(
+          context
+            .evidence
+            ?.missingEvidence ||
+          []
+        );
+
+      // ======================================================================
+      // 2. COLLECT MISSING KUBERNETES EVIDENCE
+      // ======================================================================
+
+      await this.collectKubernetesEvidence(
+        context,
+        dependencies,
+        evidenceItems,
+        missing
+      );
+
+      // ======================================================================
+      // 3. COLLECT MISSING METRICS
+      // ======================================================================
+
+      await this.collectMonitoringEvidence(
+        context,
+        dependencies,
+        evidenceItems,
+        missing
+      );
+
+      // ======================================================================
+      // 4. COLLECT HISTORICAL MEMORY
+      // ======================================================================
+
+      await this.collectHistoricalEvidence(
+        context,
+        dependencies,
+        evidenceItems
+      );
+
+      // ======================================================================
+      // 5. COLLECT CHANGE / DEPLOYMENT EVIDENCE
+      // ======================================================================
+
+      await this.collectDeploymentEvidence(
+        context,
+        dependencies,
+        evidenceItems,
+        missing
+      );
+
+      // ======================================================================
+      // 6. REMOVE DUPLICATE EVIDENCE
+      // ======================================================================
+
+      const uniqueEvidence =
+        deduplicateEvidence(
+          evidenceItems
+        );
+
+      // ======================================================================
+      // 7. REDUCE EVIDENCE BEFORE REASONING
+      // ======================================================================
+
+      const budgets =
+        resolveEvidenceBudgets(
+          this._config
+        );
+
+      const reducedEvidence =
+        reduceEvidencePackage(
+          uniqueEvidence,
+          budgets
+        );
+
+      // ======================================================================
+      // 8. DETERMINISTIC COMPLETENESS
+      // ======================================================================
+
+      const deterministicCompleteness =
+        estimateCompleteness(
+          reducedEvidence,
+          Array.from(
+            missing
+          ),
+          context
+        );
+
+      // ======================================================================
+      // 9. AI EVIDENCE ASSESSMENT
+      // ======================================================================
 
       const provider =
         this._reasoning ||
         getReasoningProvider();
 
       const reasoning =
-        await provider.reason({
-          task:
-            "investigation",
+        await provider
+          .reason({
+            task:
+              "investigation",
 
-          systemInstructions:
-            INVESTIGATION_SYSTEM_PROMPT,
+            systemInstructions:
+              INVESTIGATION_SYSTEM_PROMPT,
 
-          structuredInput: {
-            incident,
+            structuredInput: {
+              incident: {
+                id:
+                  incidentId,
 
-            service,
+                title:
+                  incident
+                    ?.title,
 
-            resource,
+                description:
+                  incident
+                    ?.description,
 
-            environment,
+                severity:
+                  incident
+                    ?.severity,
 
-            collectedEvidenceTypes:
-              reducedEvidenceItems.map(
-                (evidence) =>
-                  evidence.type
-              ),
+                status:
+                  incident
+                    ?.status,
 
-            evidence:
-              reducedEvidenceItems.map(
-                (evidence) => ({
-                  id:
-                    evidence.id,
+                source:
+                  incident
+                    ?.source,
+              },
 
-                  type:
-                    evidence.type,
+              service,
 
-                  source:
-                    evidence.source,
+              blastRadius:
+                context
+                  .blastRadius ||
+                {},
 
-                  summary:
-                    evidence.summary,
+              topology:
+                context
+                  .topology ||
+                {},
 
-                  structuredData:
+              evidence: reducedEvidence
+                .map(
+                  (
                     evidence
-                      .structuredData,
-                })
-              ),
+                  ) => ({
+                    id:
+                      evidence.id,
 
-            missingEvidence:
-              missing,
+                    type:
+                      evidence.type,
 
-            signalCount:
-              (
-                context.signals ||
-                []
-              ).length +
-              (
-                context.alerts ||
-                []
-              ).length,
-          },
+                    source:
+                      evidence.source,
 
-          outputSchema: {
-            required: [
-              "completeness",
-              "recommendedNextEvidence",
-            ],
+                    summary:
+                      evidence.summary,
 
-            properties: {
-              completeness: {
-                type:
-                  "number",
-              },
+                    confidence:
+                      evidence
+                        .confidence,
 
-              missingEvidence: {
-                type:
-                  "array",
-              },
+                    observedAt:
+                      evidence
+                        .observedAt,
 
-              staleEvidence: {
-                type:
-                  "array",
-              },
+                    structuredData:
+                      evidence
+                        .structuredData,
+                  })
+                ),
 
-              conflicts: {
-                type:
-                  "array",
-              },
+              currentlyMissingEvidence:
+                Array.from(
+                  missing
+                ),
 
-              recommendedNextEvidence: {
-                type:
-                  "array",
+              currentCompleteness:
+                deterministicCompleteness,
+
+              providerCoverage:
+                context
+                  .evidence
+                  ?.providerCoverage ||
+                [],
+
+              signalCount:
+                context
+                  .signals
+                  ?.length ||
+                0,
+
+              metricCount:
+                context
+                  .metrics
+                  ?.length ||
+                0,
+
+              logCount:
+                context
+                  .logs
+                  ?.length ||
+                0,
+
+              traceCount:
+                context
+                  .traces
+                  ?.length ||
+                0,
+
+              alertCount:
+                context
+                  .alerts
+                  ?.length ||
+                0,
+            },
+
+            outputSchema: {
+              required: [
+                "completeness",
+                "recommendedNextEvidence",
+              ],
+
+              properties: {
+                completeness: {
+                  type:
+                    "number",
+                },
+
+                missingEvidence: {
+                  type:
+                    "array",
+                },
+
+                staleEvidence: {
+                  type:
+                    "array",
+                },
+
+                conflicts: {
+                  type:
+                    "array",
+                },
+
+                recommendedNextEvidence: {
+                  type:
+                    "array",
+                },
               },
             },
-          },
 
-          metadata: {
-            incidentId,
-            correlationId,
-          },
-        });
+            metadata: {
+              incidentId,
+
+              correlationId,
+
+              organizationId:
+                context
+                  .organizationId,
+
+              environmentId:
+                context
+                  .environmentId,
+            },
+          });
 
       const aiOutput =
-        reasoning.output ||
+        reasoning
+          .output ||
         {};
 
-      const completeness =
+      // ======================================================================
+      // 10. FINAL COMPLETENESS
+      // ======================================================================
+
+      const aiCompleteness =
         typeof aiOutput
           .completeness ===
         "number"
-          ? aiOutput
-              .completeness
-          : _estimateCompleteness(
-              reducedEvidenceItems,
+          ? clamp01(
+              aiOutput
+                .completeness
+            )
+          : null;
+
+      /*
+       * Never allow an LLM to magically claim perfect evidence when
+       * deterministic evidence coverage is poor.
+       *
+       * AI can refine the score, but deterministic evidence remains the
+       * dominant safety signal.
+       */
+      const hasCanonicalPhase6Context =
+  Boolean(
+    context.organizationId &&
+    context.environmentId &&
+    context.evidence &&
+    Array.isArray(
+      context.evidence.items
+    )
+  );
+
+let completeness;
+
+if (
+  aiCompleteness ===
+  null
+) {
+  completeness =
+    deterministicCompleteness;
+} else if (
+  !hasCanonicalPhase6Context
+) {
+  /*
+   * Backwards compatibility for the existing V2 agent runtime/tests.
+   *
+   * Legacy AgentContext does not contain the canonical Phase 5/6
+   * evidence package required for deterministic completeness scoring.
+   *
+   * In that case preserve the original InvestigationAgent behaviour
+   * and use the reasoning provider's completeness assessment directly.
+   */
+  completeness =
+    aiCompleteness;
+} else {
+  /*
+   * Canonical Phase 6 production path.
+   *
+   * Deterministic evidence coverage remains dominant so an LLM cannot
+   * claim strong completeness without actual telemetry/evidence.
+   */
+  completeness =
+    Number(
+      (
+        deterministicCompleteness *
+          0.7 +
+        aiCompleteness *
+          0.3
+      )
+        .toFixed(
+          4
+        )
+    );
+}
+
+      // ======================================================================
+      // 11. FINAL MISSING EVIDENCE
+      // ======================================================================
+
+      const finalMissing =
+        Array.from(
+          new Set([
+            ...Array.from(
               missing
-            );
+            ),
+
+            ...(
+              Array.isArray(
+                aiOutput
+                  .missingEvidence
+              )
+                ? aiOutput
+                    .missingEvidence
+                : []
+            ),
+          ])
+        );
+
+      // ======================================================================
+      // 12. CREATE CANONICAL EVIDENCE PACKAGE
+      // ======================================================================
 
       const evidencePackage =
         createEvidencePackage({
@@ -317,37 +498,119 @@ class InvestigationAgent
 
           correlationId,
 
+          correlationGroupId:
+            context
+              .correlationGroupId ||
+            null,
+
           items:
-            reducedEvidenceItems,
+            reducedEvidence,
 
           completeness,
 
           missingEvidence:
-            aiOutput
-              .missingEvidence ||
-            missing,
+            finalMissing,
 
           staleEvidence:
-            aiOutput
-              .staleEvidence ||
-            [],
+            Array.isArray(
+              aiOutput
+                .staleEvidence
+            )
+              ? aiOutput
+                  .staleEvidence
+              : [],
 
           conflicts:
-            aiOutput
-              .conflicts ||
-            [],
+            Array.isArray(
+              aiOutput
+                .conflicts
+            )
+              ? aiOutput
+                  .conflicts
+              : [],
 
           recommendedNextEvidence:
-            aiOutput
-              .recommendedNextEvidence ||
-            [],
+            Array.isArray(
+              aiOutput
+                .recommendedNextEvidence
+            )
+              ? aiOutput
+                  .recommendedNextEvidence
+              : [],
+
+          providerCoverage:
+            Array.from(
+              new Set([
+                ...(
+                  context
+                    .evidence
+                    ?.providerCoverage ||
+                  []
+                ),
+
+                ...reducedEvidence
+                  .map(
+                    (
+                      evidence
+                    ) =>
+                      evidence.source
+                  )
+                  .filter(
+                    Boolean
+                  ),
+              ])
+            ),
+
+          signalCount:
+            context
+              .signals
+              ?.length ||
+            0,
+
+          collectedAt:
+            new Date()
+              .toISOString(),
         });
+
+      // ======================================================================
+      // 13. SUCCESS
+      // ======================================================================
 
       return this._success(
         startedAt,
 
         {
           evidencePackage,
+
+          evidenceSummary: {
+            totalEvidenceCount:
+              reducedEvidence
+                .length,
+
+            completeness,
+
+            missingEvidenceCount:
+              finalMissing
+                .length,
+
+            conflictCount:
+              evidencePackage
+                .conflicts
+                .length,
+
+            staleEvidenceCount:
+              evidencePackage
+                .staleEvidence
+                .length,
+
+            providerCount:
+              evidencePackage
+                .providerCoverage
+                .length,
+          },
+
+          executionAuthorized:
+            false,
         },
 
         {
@@ -355,10 +618,13 @@ class InvestigationAgent
             completeness,
 
           evidenceUsed:
-            reducedEvidenceItems.map(
-              (evidence) =>
-                evidence.id
-            ),
+            reducedEvidence
+              .map(
+                (
+                  evidence
+                ) =>
+                  evidence.id
+              ),
 
           model:
             reasoning
@@ -371,8 +637,10 @@ class InvestigationAgent
               ?.provider,
 
           fallbackUsed:
-            reasoning
-              .fallbackUsed,
+            Boolean(
+              reasoning
+                .fallbackUsed
+            ),
 
           warnings:
             reasoning
@@ -390,179 +658,273 @@ class InvestigationAgent
     }
   }
 
-  validateOutput(
-    record
-  ) {
-    const base =
-      super.validateOutput(
-        record
-      );
+  // ==========================================================================
+  // CONTEXT VALIDATION
+  // ==========================================================================
 
-    if (!base.valid) {
-      return base;
+  assertContext(
+    context
+  ) {
+    if (
+      !context
+        ?.incidentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Investigation context incidentId is required"
+        ),
+        {
+          code:
+            "INVESTIGATION_CONTEXT_INCIDENT_REQUIRED",
+        }
+      );
     }
 
-    return {
-      valid:
-        true,
-
-      errors:
-        [],
-    };
+    /*
+     * Canonical Phase 6 contexts require these fields.
+     *
+     * Legacy V2 tests may not supply them, so only enforce them when
+     * either one is present. This preserves migration compatibility.
+     */
+    if (
+      (
+        context
+          .organizationId ||
+        context
+          .environmentId
+      ) &&
+      (
+        !context
+          .organizationId ||
+        !context
+          .environmentId
+      )
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete organization and environment context is required"
+        ),
+        {
+          code:
+            "INVESTIGATION_CONTEXT_SCOPE_INCOMPLETE",
+        }
+      );
+    }
   }
 
-  getCapabilities() {
-    return {
-      ...super.getCapabilities(),
+  // ==========================================================================
+  // CANONICAL EVIDENCE
+  // ==========================================================================
 
-      reads: [
-        "kubernetes.inventory",
-        "kubernetes.topology",
-        "kubernetes.pods",
-        "kubernetes.replicasets",
-        "kubernetes.deployments",
-        "kubernetes.services",
-        "kubernetes.nodes",
-        "monitoring.metrics",
-        "incidentMemory",
-        "decisionTrace",
-      ],
+  cloneCanonicalEvidence(
+    context
+  ) {
+    const items =
+      context
+        .evidence
+        ?.items;
 
-      writes: [
-        "context.evidence",
-      ],
+    if (
+      !Array.isArray(
+        items
+      )
+    ) {
+      return [];
+    }
 
-      requiresLLM:
-        true,
+    /*
+     * Evidence contracts are frozen objects.
+     *
+     * Spread into new objects before reduction so downstream mutation does
+     * not touch canonical context.
+     */
+    return items.map(
+      (
+        evidence
+      ) => ({
+        ...evidence,
 
-      infrastructureMutation:
-        false,
-    };
-  }
-}
+        resource: {
+          ...(
+            evidence
+              .resource ||
+            {}
+          ),
+        },
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Kubernetes evidence collector
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function _collectK8sEvidence(
-  {
-    incidentId,
-    correlationId,
-    tenantId,
-    incident,
-    resource,
-    service,
-    provider,
-    integrationId,
-  },
-
-  dependencies,
-
-  items,
-
-  missing
-) {
-  const tools =
-    dependencies
-      .kubernetesInvestigationTools ||
-    null;
-
-  const namespace =
-    resource?.namespace ||
-    incident
-      ?.evidence
-      ?.namespace ||
-    incident
-      ?.signal
-      ?.namespace ||
-    null;
-
-  const podName =
-    resource?.pod ||
-    incident
-      ?.evidence
-      ?.pod ||
-    incident
-      ?.signal
-      ?.pod ||
-    null;
-
-  const deploymentName =
-    resource
-      ?.deployment ||
-    incident
-      ?.evidence
-      ?.deployment ||
-    incident
-      ?.signal
-      ?.deployment ||
-    null;
-
-  const resolvedIntegrationId =
-    integrationId ||
-    incident
-      ?.integrationId ||
-    incident
-      ?.signal
-      ?.integrationId ||
-    null;
-
-  const isKubernetes =
-    provider ===
-      "kubernetes" ||
-    incident?.provider ===
-      "kubernetes" ||
-    Boolean(
-      namespace ||
-      podName ||
-      deploymentName
+        structuredData:
+          cloneStructuredData(
+            evidence
+              .structuredData
+          ),
+      })
     );
-
-  if (!isKubernetes) {
-    return;
   }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Preferred Phase-2 inventory/topology path
-  // ───────────────────────────────────────────────────────────────────────────
+  // ==========================================================================
+  // KUBERNETES EVIDENCE
+  // ==========================================================================
 
-  if (tools) {
-    try {
-      if (podName) {
-        const evidence =
-          await tools
-            .getPodEvidence({
-              tenantId,
+  async collectKubernetesEvidence(
+    context,
+    dependencies,
+    items,
+    missing
+  ) {
+    /*
+     * If canonical Kubernetes signals already exist, avoid querying the
+     * cluster again unless explicitly requested.
+     */
+    const canonicalKubernetesEvidence =
+      items.some(
+        (
+          item
+        ) =>
+          item.type ===
+            EVIDENCE_TYPE
+              .KUBERNETES_EVENT ||
+          item.sourceType ===
+            EVIDENCE_SOURCE_TYPE
+              .KUBERNETES_API
+      );
 
-              integrationId:
-                resolvedIntegrationId,
+    if (
+      canonicalKubernetesEvidence &&
+      this._config
+        .refreshKubernetesEvidence !==
+        true
+    ) {
+      missing.delete(
+        "kubernetes_inventory"
+      );
+
+      missing.delete(
+        "kubernetes_pod_status"
+      );
+
+      return;
+    }
+
+    const resource =
+      this.resolveKubernetesResource(
+        context
+      );
+
+    const namespace =
+      resource
+        .namespace ||
+      null;
+
+    const podName =
+      resource
+        .pod ||
+      null;
+
+    const deploymentName =
+      resource
+        .deployment ||
+      null;
+
+    const provider =
+      String(
+        context
+          .incident
+          ?.provider ||
+        context
+          .incident
+          ?.source ||
+        ""
+      )
+        .toLowerCase();
+
+    const hasKubernetesContext =
+      provider ===
+        "kubernetes" ||
+      Boolean(
+        namespace ||
+        podName ||
+        deploymentName ||
+        context
+          .kubernetes
+          ?.signals
+          ?.length
+      );
+
+    if (
+      !hasKubernetesContext
+    ) {
+      return;
+    }
+
+    // ------------------------------------------------------------------------
+    // PHASE 2 INVENTORY TOOLS
+    // ------------------------------------------------------------------------
+
+    const tools =
+      dependencies
+        .kubernetesInvestigationTools ||
+      null;
+
+    if (
+      tools
+    ) {
+      try {
+        if (
+          podName
+        ) {
+          const evidence =
+            await tools
+              .getPodEvidence({
+                tenantId:
+                  context
+                    .tenantId,
+
+                organizationId:
+                  context
+                    .organizationId,
+
+                environmentId:
+                  context
+                    .environmentId,
+
+                integrationId:
+                  context
+                    .integrationId ||
+                  null,
+
+                namespace,
+
+                podName,
+              });
+
+          if (
+            evidence
+              ?.found
+          ) {
+            appendPodInventoryEvidence({
+              context,
 
               namespace,
 
               podName,
+
+              evidence,
+
+              items,
             });
 
-        if (
-          evidence?.found
-        ) {
-          _appendPodInventoryEvidence({
-            incidentId,
-            correlationId,
-            namespace,
-            podName,
-            service,
-            evidence,
-            items,
-          });
+            missing.delete(
+              "kubernetes_inventory"
+            );
 
-          return;
+            missing.delete(
+              "kubernetes_pod_status"
+            );
+
+            return;
+          }
         }
 
-        missing.push(
-          "kubernetes_inventory_pod"
-        );
-      } else {
         const [
           unhealthyPods,
           unhealthyNodes,
@@ -570,10 +932,22 @@ async function _collectK8sEvidence(
           await Promise.all([
             tools
               .listUnhealthyPods({
-                tenantId,
+                tenantId:
+                  context
+                    .tenantId,
+
+                organizationId:
+                  context
+                    .organizationId,
+
+                environmentId:
+                  context
+                    .environmentId,
 
                 integrationId:
-                  resolvedIntegrationId,
+                  context
+                    .integrationId ||
+                  null,
 
                 namespace,
 
@@ -586,10 +960,22 @@ async function _collectK8sEvidence(
 
             tools
               .listUnhealthyNodes({
-                tenantId,
+                tenantId:
+                  context
+                    .tenantId,
+
+                organizationId:
+                  context
+                    .organizationId,
+
+                environmentId:
+                  context
+                    .environmentId,
 
                 integrationId:
-                  resolvedIntegrationId,
+                  context
+                    .integrationId ||
+                  null,
 
                 limit:
                   25,
@@ -600,15 +986,17 @@ async function _collectK8sEvidence(
           ]);
 
         if (
-          unhealthyPods.length >
+          unhealthyPods
+            .length >
             0 ||
-          unhealthyNodes.length >
+          unhealthyNodes
+            .length >
             0
         ) {
           items.push(
             createEvidenceItem({
               id:
-                `ev-k8s-cluster-${incidentId}`,
+                `k8s-cluster:${context.incidentId}`,
 
               type:
                 EVIDENCE_TYPE
@@ -625,12 +1013,14 @@ async function _collectK8sEvidence(
                 namespace,
               },
 
-              service:
-                service?.id,
+              serviceId:
+                context
+                  .service
+                  ?.id ||
+                null,
 
               summary:
-                `${unhealthyPods.length} unhealthy pods and ` +
-                `${unhealthyNodes.length} unhealthy nodes found in inventory`,
+                `${unhealthyPods.length} unhealthy pod(s) and ${unhealthyNodes.length} unhealthy node(s) found.`,
 
               structuredData: {
                 unhealthyPods,
@@ -641,141 +1031,887 @@ async function _collectK8sEvidence(
               confidence:
                 0.95,
 
-              correlationId,
+              correlationId:
+                context
+                  .correlationId,
             })
           );
-        } else {
-          missing.push(
-            "kubernetes_target_resource"
+
+          missing.delete(
+            "kubernetes_inventory"
           );
+
+          return;
         }
-
-        return;
+      } catch {
+        missing.add(
+          "kubernetes_inventory"
+        );
       }
-    } catch (
-      error
-    ) {
-      missing.push(
-        "kubernetes_inventory_evidence"
-      );
     }
-  }
 
-  // ───────────────────────────────────────────────────────────────────────────
-  // Compatibility fallback
-  //
-  // Existing read-only k8sService remains supported during migration.
-  // ───────────────────────────────────────────────────────────────────────────
+    // ------------------------------------------------------------------------
+    // LEGACY READ-ONLY FALLBACK
+    // ------------------------------------------------------------------------
 
-  const k8sService =
-    dependencies
-      .k8sService ||
-    null;
+    const k8sService =
+      dependencies
+        .k8sService ||
+      null;
 
-  if (!k8sService) {
-    missing.push(
-      "kubernetes_pod_status"
-    );
-
-    missing.push(
-      "kubernetes_inventory"
-    );
-
-    return;
-  }
-
-  try {
     if (
-      namespace &&
-      podName
+      !k8sService
     ) {
+      missing.add(
+        "kubernetes_inventory"
+      );
+
+      return;
+    }
+
+    if (
+      !namespace ||
+      !podName
+    ) {
+      missing.add(
+        "kubernetes_target_resource"
+      );
+
+      return;
+    }
+
+    try {
       const podData =
         await k8sService
           .getPodStatus(
             namespace,
             podName,
-            tenantId
-          )
-          .catch(
-            () => null
+            context
+              .tenantId
           );
 
-      if (podData) {
-        items.push(
-          createEvidenceItem({
-            id:
-              `ev-k8s-pod-${incidentId}`,
-
-            type:
-              EVIDENCE_TYPE
-                .KUBERNETES_EVENT,
-
-            source:
-              "kubernetes-api",
-
-            sourceType:
-              EVIDENCE_SOURCE_TYPE
-                .KUBERNETES_API,
-
-            resource: {
-              namespace,
-
-              pod:
-                podName,
-            },
-
-            service:
-              service?.id,
-
-            summary:
-              `Pod ${podName} status: ${podData.phase}`,
-
-            structuredData: {
-              phase:
-                podData.phase,
-
-              restartCount:
-                podData
-                  .restartCount,
-
-              conditions:
-                podData
-                  .conditions,
-            },
-
-            confidence:
-              0.9,
-
-            correlationId,
-          })
-        );
-      } else {
-        missing.push(
+      if (
+        !podData
+      ) {
+        missing.add(
           "kubernetes_pod_status"
         );
+
+        return;
       }
-    } else {
-      missing.push(
-        "kubernetes_namespace_or_pod_name"
+
+      items.push(
+        createEvidenceItem({
+          id:
+            `k8s-pod:${context.incidentId}:${podName}`,
+
+          type:
+            EVIDENCE_TYPE
+              .KUBERNETES_EVENT,
+
+          source:
+            "kubernetes-api",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .KUBERNETES_API,
+
+          resource: {
+            namespace,
+
+            pod:
+              podName,
+          },
+
+          serviceId:
+            context
+              .service
+              ?.id ||
+            null,
+
+          summary:
+            `Pod ${podName} status: ${podData.phase || "unknown"}`,
+
+          structuredData: {
+            phase:
+              podData.phase,
+
+            restartCount:
+              podData
+                .restartCount,
+
+            conditions:
+              podData
+                .conditions ||
+              [],
+          },
+
+          confidence:
+            0.9,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+
+      missing.delete(
+        "kubernetes_pod_status"
+      );
+    } catch {
+      missing.add(
+        "kubernetes_pod_status"
       );
     }
-  } catch {
-    missing.push(
-      "kubernetes_pod_status"
-    );
+  }
+
+  // ==========================================================================
+  // MONITORING
+  // ==========================================================================
+
+  async collectMonitoringEvidence(
+    context,
+    dependencies,
+    items,
+    missing
+  ) {
+    const alreadyHasMetrics =
+      items.some(
+        (
+          item
+        ) =>
+          item.type ===
+          EVIDENCE_TYPE
+            .METRIC
+      );
+
+    if (
+      alreadyHasMetrics &&
+      this._config
+        .refreshMetrics !==
+        true
+    ) {
+      missing.delete(
+        "metrics"
+      );
+
+      missing.delete(
+        "service_metrics"
+      );
+
+      return;
+    }
+
+    const monitoringService =
+      dependencies
+        .monitoringService ||
+      null;
+
+    if (
+      !monitoringService
+    ) {
+      missing.add(
+        "metrics"
+      );
+
+      return;
+    }
+
+    try {
+      const metrics =
+        await monitoringService
+          .getServiceMetrics(
+            context
+              .service
+              ?.id,
+
+            {
+              window:
+                this._config
+                  .metricsWindow ||
+                "5m",
+
+              organizationId:
+                context
+                  .organizationId,
+
+              environmentId:
+                context
+                  .environmentId,
+            }
+          );
+
+      if (
+        !metrics
+      ) {
+        missing.add(
+          "metrics"
+        );
+
+        return;
+      }
+
+      items.push(
+        createEvidenceItem({
+          id:
+            `metrics:${context.incidentId}`,
+
+          type:
+            EVIDENCE_TYPE
+              .METRIC,
+
+          source:
+            "monitoring-service",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .PROMETHEUS,
+
+          serviceId:
+            context
+              .service
+              ?.id ||
+            null,
+
+          resource:
+            this.resolvePrimaryResource(
+              context
+            ),
+
+          summary:
+            buildMetricSummary(
+              metrics
+            ),
+
+          structuredData:
+            metrics,
+
+          confidence:
+            0.9,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+
+      missing.delete(
+        "metrics"
+      );
+
+      missing.delete(
+        "service_metrics"
+      );
+    } catch {
+      missing.add(
+        "metrics"
+      );
+    }
+  }
+
+  // ==========================================================================
+  // HISTORICAL EVIDENCE
+  // ==========================================================================
+
+  async collectHistoricalEvidence(
+    context,
+    dependencies,
+    items
+  ) {
+    /*
+     * InvestigationContext already includes canonical historical incidents.
+     */
+    if (
+      Array.isArray(
+        context
+          .historicalIncidents
+      ) &&
+      context
+        .historicalIncidents
+        .length >
+        0
+    ) {
+      items.push(
+        createEvidenceItem({
+          id:
+            `history:${context.incidentId}`,
+
+          type:
+            EVIDENCE_TYPE
+              .HISTORICAL_INCIDENT,
+
+          source:
+            "aira-incident-history",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .AIRA_INCIDENT_STORE,
+
+          summary:
+            `${context.historicalIncidents.length} related historical incident(s) found.`,
+
+          structuredData: {
+            incidents:
+              context
+                .historicalIncidents
+                .slice(
+                  0,
+                  20
+                ),
+          },
+
+          confidence:
+            0.95,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+
+      return;
+    }
+
+    /*
+     * Backward-compatible IncidentMemory fallback.
+     */
+    const memoryService =
+      dependencies
+        .memoryService ||
+      null;
+
+    if (
+      !memoryService
+    ) {
+      return;
+    }
+
+    const patternType =
+      context
+        .incident
+        ?.type ||
+      context
+        .incident
+        ?.patternType;
+
+    if (
+      !patternType
+    ) {
+      return;
+    }
+
+    try {
+      const memory =
+        await memoryService
+          .find(
+            context
+              .tenantId,
+
+            `pattern-${patternType}`
+          );
+
+      if (
+        !memory ||
+        !(
+          memory.stats
+            ?.totalOccurrences >
+          0
+        )
+      ) {
+        return;
+      }
+
+      items.push(
+        createEvidenceItem({
+          id:
+            `memory:${context.incidentId}`,
+
+          type:
+            EVIDENCE_TYPE
+              .HISTORICAL_INCIDENT,
+
+          source:
+            "incident-memory",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .INCIDENT_MEMORY,
+
+          summary:
+            `${memory.stats.totalOccurrences} historical occurrence(s) of ${patternType}.`,
+
+          structuredData: {
+            totalOccurrences:
+              memory
+                .stats
+                .totalOccurrences,
+
+            recommendedAction:
+              memory
+                .recommendedAction
+                ?.action,
+
+            successRate:
+              memory
+                .recommendedAction
+                ?.successRate,
+          },
+
+          confidence:
+            0.85,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+    } catch {
+      // Historical memory is optional.
+    }
+  }
+
+  // ==========================================================================
+  // DEPLOYMENT / CHANGE EVIDENCE
+  // ==========================================================================
+
+  async collectDeploymentEvidence(
+    context,
+    dependencies,
+    items,
+    missing
+  ) {
+    /*
+     * Phase 6 context may already contain normalized changes.
+     */
+    if (
+      Array.isArray(
+        context.changes
+      ) &&
+      context
+        .changes
+        .length >
+        0
+    ) {
+      items.push(
+        createEvidenceItem({
+          id:
+            `changes:${context.incidentId}`,
+
+          type:
+            EVIDENCE_TYPE
+              .DEPLOYMENT_CHANGE,
+
+          source:
+            "aira-change-context",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .DEPLOYMENT_API,
+
+          serviceId:
+            context
+              .service
+              ?.id ||
+            null,
+
+          summary:
+            `${context.changes.length} recent operational change(s) identified.`,
+
+          structuredData: {
+            changes:
+              context
+                .changes
+                .slice(
+                  0,
+                  50
+                ),
+          },
+
+          confidence:
+            0.95,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+
+      missing.delete(
+        "deployment_history"
+      );
+
+      return;
+    }
+
+    const deploymentService =
+      dependencies
+        .deploymentService ||
+      null;
+
+    if (
+      !deploymentService
+    ) {
+      /*
+       * Change evidence is useful but not always available.
+       */
+      missing.add(
+        "deployment_history"
+      );
+
+      return;
+    }
+
+    try {
+      const recent =
+        await deploymentService
+          .getRecentDeployments(
+            context
+              .service
+              ?.id,
+
+            {
+              hours:
+                this._config
+                  .deploymentWindowHours ||
+                4,
+
+              organizationId:
+                context
+                  .organizationId,
+
+              environmentId:
+                context
+                  .environmentId,
+            }
+          );
+
+      if (
+        !Array.isArray(
+          recent
+        ) ||
+        recent.length ===
+          0
+      ) {
+        missing.add(
+          "deployment_history"
+        );
+
+        return;
+      }
+
+      items.push(
+        createEvidenceItem({
+          id:
+            `deployments:${context.incidentId}`,
+
+          type:
+            EVIDENCE_TYPE
+              .DEPLOYMENT_CHANGE,
+
+          source:
+            "deployment-api",
+
+          sourceType:
+            EVIDENCE_SOURCE_TYPE
+              .DEPLOYMENT_API,
+
+          serviceId:
+            context
+              .service
+              ?.id ||
+            null,
+
+          resource:
+            this.resolvePrimaryResource(
+              context
+            ),
+
+          summary:
+            `${recent.length} deployment(s) observed in the configured investigation window.`,
+
+          structuredData: {
+            deployments:
+              recent
+                .slice(
+                  0,
+                  50
+                )
+                .map(
+                  (
+                    deployment
+                  ) => ({
+                    id:
+                      deployment.id ||
+                      deployment._id,
+
+                    at:
+                      deployment
+                        .deployedAt ||
+                      deployment
+                        .createdAt,
+
+                    image:
+                      deployment.image,
+
+                    version:
+                      deployment.version,
+
+                    actor:
+                      deployment.actor,
+                  })
+                ),
+          },
+
+          confidence:
+            0.85,
+
+          correlationId:
+            context
+              .correlationId,
+        })
+      );
+
+      missing.delete(
+        "deployment_history"
+      );
+    } catch {
+      missing.add(
+        "deployment_history"
+      );
+    }
+  }
+
+  // ==========================================================================
+  // RESOURCE RESOLUTION
+  // ==========================================================================
+
+  resolvePrimaryResource(
+    context
+  ) {
+    if (
+      context
+        .resources
+        ?.length
+    ) {
+      return (
+        context
+          .resources[0] ||
+        {}
+      );
+    }
+
+    if (
+      context.resource
+    ) {
+      return context
+        .resource;
+    }
+
+    return {};
+  }
+
+  resolveKubernetesResource(
+    context
+  ) {
+    const resources = [
+      ...(
+        context
+          .resources ||
+        []
+      ),
+
+      ...(
+        context
+          .blastRadius
+          ?.affectedResources ||
+        []
+      ),
+    ];
+
+    const kubernetesResource =
+      resources.find(
+        (
+          resource
+        ) =>
+          resource
+            ?.provider ===
+            "kubernetes" ||
+          resource
+            ?.cluster ||
+          resource
+            ?.namespace
+      );
+
+    if (
+      kubernetesResource
+    ) {
+      return {
+        namespace:
+          kubernetesResource
+            .namespace ||
+          null,
+
+        pod:
+          kubernetesResource
+            .pod ||
+          kubernetesResource
+            .name ||
+          null,
+
+        deployment:
+          kubernetesResource
+            .deployment ||
+          null,
+
+        cluster:
+          kubernetesResource
+            .cluster ||
+          null,
+      };
+    }
+
+    /*
+     * Legacy V2 context fallback.
+     */
+    return {
+      namespace:
+        context
+          .resource
+          ?.namespace ||
+        context
+          .incident
+          ?.evidence
+          ?.namespace ||
+        null,
+
+      pod:
+        context
+          .resource
+          ?.pod ||
+        context
+          .incident
+          ?.evidence
+          ?.pod ||
+        null,
+
+      deployment:
+        context
+          .resource
+          ?.deployment ||
+        context
+          .incident
+          ?.evidence
+          ?.deployment ||
+        null,
+    };
+  }
+
+  // ==========================================================================
+  // OUTPUT VALIDATION
+  // ==========================================================================
+
+  validateOutput(
+    record
+  ) {
+    const base =
+      super
+        .validateOutput(
+          record
+        );
+
+    if (
+      !base.valid
+    ) {
+      return base;
+    }
+
+    if (
+      record
+        .result
+        ?.executionAuthorized ===
+        true
+    ) {
+      return {
+        valid:
+          false,
+
+        errors: [
+          "InvestigationAgent cannot authorize execution",
+        ],
+      };
+    }
+
+    if (
+      !record
+        .result
+        ?.evidencePackage
+    ) {
+      return {
+        valid:
+          false,
+
+        errors: [
+          "Evidence package is required",
+        ],
+      };
+    }
+
+    return {
+      valid:
+        true,
+
+      errors:
+        [],
+    };
+  }
+
+  // ==========================================================================
+  // CAPABILITIES
+  // ==========================================================================
+
+  getCapabilities() {
+    return {
+      ...super
+        .getCapabilities(),
+
+      reads: [
+        "canonical.incident",
+        "canonical.signals",
+        "canonical.incidentEvents",
+        "canonical.topology",
+        "canonical.blastRadius",
+        "canonical.history",
+        "kubernetes.inventory",
+        "kubernetes.topology",
+        "monitoring.metrics",
+        "deployment.history",
+        "incidentMemory",
+      ],
+
+      writes: [
+        "context.evidence",
+      ],
+
+      requiresLLM:
+        true,
+
+      infrastructureMutation:
+        false,
+
+      executionAuthorization:
+        false,
+    };
   }
 }
 
-/**
- * Convert Phase-2 Kubernetes topology data into bounded,
- * structured investigation evidence.
- */
-function _appendPodInventoryEvidence({
-  incidentId,
-  correlationId,
+// ============================================================================
+// KUBERNETES INVENTORY EVIDENCE
+// ============================================================================
+
+function appendPodInventoryEvidence({
+  context,
   namespace,
   podName,
-  service,
   evidence,
   items,
 }) {
@@ -783,11 +1919,10 @@ function _appendPodInventoryEvidence({
     evidence.pod ||
     {};
 
-  // Pod state
   items.push(
     createEvidenceItem({
       id:
-        `ev-k8s-pod-${incidentId}`,
+        `k8s-pod:${context.incidentId}:${podName}`,
 
       type:
         EVIDENCE_TYPE
@@ -807,11 +1942,14 @@ function _appendPodInventoryEvidence({
           podName,
       },
 
-      service:
-        service?.id,
+      serviceId:
+        context
+          .service
+          ?.id ||
+        null,
 
       summary:
-        _buildPodSummary(
+        buildPodSummary(
           pod,
           evidence
             .failureSignals
@@ -865,11 +2003,16 @@ function _appendPodInventoryEvidence({
       confidence:
         0.99,
 
-      correlationId,
+      correlationId:
+        context
+          .correlationId,
     })
   );
 
-  // Ownership topology
+  // --------------------------------------------------------------------------
+  // OWNERSHIP
+  // --------------------------------------------------------------------------
+
   if (
     evidence.replicaSet ||
     evidence.deployment
@@ -877,11 +2020,11 @@ function _appendPodInventoryEvidence({
     items.push(
       createEvidenceItem({
         id:
-          `ev-k8s-ownership-${incidentId}`,
+          `k8s-ownership:${context.incidentId}:${podName}`,
 
         type:
           EVIDENCE_TYPE
-            .KUBERNETES_EVENT,
+            .TOPOLOGY,
 
         source:
           "aira-kubernetes-topology",
@@ -907,11 +2050,14 @@ function _appendPodInventoryEvidence({
               ?.name,
         },
 
-        service:
-          service?.id,
+        serviceId:
+          context
+            .service
+            ?.id ||
+          null,
 
         summary:
-          _buildOwnershipSummary(
+          buildOwnershipSummary(
             podName,
             evidence
               .replicaSet,
@@ -935,23 +2081,28 @@ function _appendPodInventoryEvidence({
             ? 1
             : 0.8,
 
-        correlationId,
+        correlationId:
+          context
+            .correlationId,
       })
     );
   }
 
-  // Node evidence
+  // --------------------------------------------------------------------------
+  // NODE
+  // --------------------------------------------------------------------------
+
   if (
     evidence.node
   ) {
     items.push(
       createEvidenceItem({
         id:
-          `ev-k8s-node-${incidentId}`,
+          `k8s-node:${context.incidentId}:${evidence.node.name}`,
 
         type:
           EVIDENCE_TYPE
-            .KUBERNETES_EVENT,
+            .RESOURCE_STATE,
 
         source:
           "aira-kubernetes-topology",
@@ -962,15 +2113,19 @@ function _appendPodInventoryEvidence({
 
         resource: {
           node:
-            evidence.node
+            evidence
+              .node
               .name,
         },
 
-        service:
-          service?.id,
+        serviceId:
+          context
+            .service
+            ?.id ||
+          null,
 
         summary:
-          `Pod ${podName} is running on node ${evidence.node.name}`,
+          `Pod ${podName} is running on node ${evidence.node.name}.`,
 
         structuredData: {
           node:
@@ -980,70 +2135,29 @@ function _appendPodInventoryEvidence({
         confidence:
           1,
 
-        correlationId,
+        correlationId:
+          context
+            .correlationId,
       })
     );
   }
 
-  // Service traffic relationships
+  // --------------------------------------------------------------------------
+  // SIBLINGS
+  // --------------------------------------------------------------------------
+
   if (
-    evidence.services
-      ?.length
+    evidence
+      .siblingHealth
   ) {
     items.push(
       createEvidenceItem({
         id:
-          `ev-k8s-services-${incidentId}`,
+          `k8s-siblings:${context.incidentId}:${podName}`,
 
         type:
           EVIDENCE_TYPE
-            .KUBERNETES_EVENT,
-
-        source:
-          "aira-kubernetes-topology",
-
-        sourceType:
-          EVIDENCE_SOURCE_TYPE
-            .KUBERNETES_API,
-
-        resource: {
-          namespace,
-
-          pod:
-            podName,
-        },
-
-        service:
-          service?.id,
-
-        summary:
-          `${evidence.services.length} Kubernetes service(s) select pod ${podName}`,
-
-        structuredData: {
-          services:
-            evidence.services,
-        },
-
-        confidence:
-          1,
-
-        correlationId,
-      })
-    );
-  }
-
-  // Sibling health / blast-pattern evidence
-  if (
-    evidence.siblingHealth
-  ) {
-    items.push(
-      createEvidenceItem({
-        id:
-          `ev-k8s-siblings-${incidentId}`,
-
-        type:
-          EVIDENCE_TYPE
-            .KUBERNETES_EVENT,
+            .DEPENDENCY_STATE,
 
         source:
           "aira-kubernetes-topology",
@@ -1061,11 +2175,14 @@ function _appendPodInventoryEvidence({
               ?.name,
         },
 
-        service:
-          service?.id,
+        serviceId:
+          context
+            .service
+            ?.id ||
+          null,
 
         summary:
-          _buildSiblingSummary(
+          buildSiblingSummary(
             evidence
               .siblingHealth
           ),
@@ -1084,492 +2201,54 @@ function _appendPodInventoryEvidence({
         confidence:
           0.98,
 
-        correlationId,
+        correlationId:
+          context
+            .correlationId,
       })
     );
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Monitoring evidence
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function _collectMonitoringEvidence(
-  {
-    incidentId,
-    correlationId,
-    service,
-    resource,
-  },
-
-  dependencies,
-
-  items,
-
-  missing
-) {
-  const monitoringService =
-    dependencies
-      .monitoringService ||
-    null;
-
-  if (!monitoringService) {
-    missing.push(
-      "metrics_error_rate"
-    );
-
-    return;
-  }
-
-  try {
-    const metrics =
-      await monitoringService
-        .getServiceMetrics(
-          service?.id,
-
-          {
-            window:
-              "5m",
-          }
-        )
-        .catch(
-          () => null
-        );
-
-    if (metrics) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `ev-metrics-${incidentId}`,
-
-          type:
-            EVIDENCE_TYPE
-              .METRIC,
-
-          source:
-            "prometheus",
-
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .PROMETHEUS,
-
-          resource:
-            resource ||
-            {},
-
-          service:
-            service?.id,
-
-          summary:
-            `Error rate: ${metrics.errorRate}, ` +
-            `p99 latency: ${metrics.p99Latency}ms`,
-
-          structuredData:
-            metrics,
-
-          confidence:
-            0.9,
-
-          correlationId,
-        })
-      );
-    } else {
-      missing.push(
-        "service_metrics"
-      );
-    }
-  } catch {
-    missing.push(
-      "service_metrics"
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Historical evidence
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function _collectHistoricalEvidence(
-  {
-    tenantId,
-    incidentId,
-    correlationId,
-    incident,
-  },
-
-  dependencies,
-
-  items
-) {
-  const memoryService =
-    dependencies
-      .memoryService ||
-    null;
-
-  if (!memoryService) {
-    return;
-  }
-
-  try {
-    const patternType =
-      incident?.type ||
-      incident?.patternType;
-
-    if (!patternType) {
-      return;
-    }
-
-    const memory =
-      await memoryService
-        .find(
-          tenantId,
-          `pattern-${patternType}`
-        )
-        .catch(
-          () => null
-        );
-
-    if (
-      memory &&
-      memory.stats
-        ?.totalOccurrences >
-        0
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `ev-history-${incidentId}`,
-
-          type:
-            EVIDENCE_TYPE
-              .HISTORICAL_INCIDENT,
-
-          source:
-            "incident-memory",
-
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .INCIDENT_MEMORY,
-
-          resource:
-            {},
-
-          service:
-            null,
-
-          summary:
-            `${memory.stats.totalOccurrences} previous occurrences of ${patternType}`,
-
-          structuredData: {
-            totalOccurrences:
-              memory.stats
-                .totalOccurrences,
-
-            recommendedAction:
-              memory
-                .recommendedAction
-                ?.action,
-
-            successRate:
-              memory
-                .recommendedAction
-                ?.successRate,
-          },
-
-          confidence:
-            0.85,
-
-          correlationId,
-        })
-      );
-    }
-  } catch {
-    // Historical memory is optional.
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Deployment evidence
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function _collectDeploymentEvidence(
-  {
-    service,
-    resource,
-    incidentId,
-    correlationId,
-  },
-
-  dependencies,
-
-  items
-) {
-  const deploymentService =
-    dependencies
-      .deploymentService ||
-    null;
-
-  if (!deploymentService) {
-    return;
-  }
-
-  try {
-    const recent =
-      await deploymentService
-        .getRecentDeployments(
-          service?.id,
-
-          {
-            hours:
-              4,
-          }
-        )
-        .catch(
-          () => null
-        );
-
-    if (
-      recent &&
-      recent.length >
-        0
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `ev-deploy-${incidentId}`,
-
-          type:
-            EVIDENCE_TYPE
-              .DEPLOYMENT_CHANGE,
-
-          source:
-            "deployment-api",
-
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .DEPLOYMENT_API,
-
-          resource:
-            resource ||
-            {},
-
-          service:
-            service?.id,
-
-          summary:
-            `${recent.length} deployment(s) in last 4h`,
-
-          structuredData: {
-            deployments:
-              recent.map(
-                (deployment) => ({
-                  id:
-                    deployment.id,
-
-                  at:
-                    deployment
-                      .deployedAt,
-
-                  image:
-                    deployment.image,
-                })
-              ),
-          },
-
-          confidence:
-            0.8,
-
-          correlationId,
-        })
-      );
-    }
-  } catch {
-    // Deployment evidence is optional.
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Evidence summaries
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _buildPodSummary(
-  pod,
-  failureSignals = []
-) {
-  const phase =
-    pod.status?.phase ||
-    "unknown";
-
-  const restarts =
-    pod.status
-      ?.restartCount ??
-    0;
-
-  const reasons =
-    [
-      ...new Set(
-        (
-          failureSignals ||
-          []
-        )
-          .map(
-            (signal) =>
-              signal.reason
-          )
-          .filter(Boolean)
-      ),
-    ];
-
-  let summary =
-    `Pod ${pod.name || "unknown"} phase=${phase}, restartCount=${restarts}`;
-
-  if (
-    reasons.length >
-    0
-  ) {
-    summary +=
-      `, failureReasons=${reasons.join(", ")}`;
-  }
-
-  return summary;
-}
-
-function _buildOwnershipSummary(
-  podName,
-  replicaSet,
-  deployment
-) {
-  if (
-    replicaSet &&
-    deployment
-  ) {
-    return (
-      `Pod ${podName} is owned by ReplicaSet ` +
-      `${replicaSet.name}, which is owned by Deployment ${deployment.name}`
-    );
-  }
-
-  if (deployment) {
-    return (
-      `Pod ${podName} is associated with Deployment ` +
-      `${deployment.name} using inferred topology`
-    );
-  }
-
-  return (
-    `Ownership information available for pod ${podName}`
-  );
-}
-
-function _buildSiblingSummary(
-  health
-) {
-  return (
-    `Deployment sibling health: ` +
-    `${health.total || 0} total, ` +
-    `${health.running || 0} running, ` +
-    `${health.failed || 0} failed, ` +
-    `${health.pending || 0} pending, ` +
-    `${health.restarting || 0} restarting, ` +
-    `${health.unhealthy || 0} unhealthy`
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Evidence completeness
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _estimateCompleteness(
-  items,
-  missing
-) {
-  const total =
-    items.length +
-    missing.length;
-
-  if (
-    total ===
-    0
-  ) {
-    return 0;
-  }
-
-  return (
-    items.length /
-    total
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Investigation reasoning prompt
-// ─────────────────────────────────────────────────────────────────────────────
-
-const INVESTIGATION_SYSTEM_PROMPT =
-  `
-You are the AIRA Investigation Agent.
-
-Your responsibility is to assess whether the evidence collected for an
-infrastructure incident is sufficient for downstream diagnosis.
-
-Rules:
-
-1. Identify evidence that is missing.
-2. Flag stale evidence.
-3. Identify conflicts between evidence sources.
-4. Suggest additional READ-ONLY evidence that should be collected.
-5. Estimate evidence completeness from 0.0 to 1.0.
-6. Use Kubernetes ownership/topology evidence when available.
-7. Distinguish a single unhealthy pod from deployment-wide or node-wide failure.
-8. Treat ownerReferences as stronger evidence than inferred label relationships.
-9. Never execute infrastructure operations.
-10. Never request arbitrary shell commands.
-11. Never suggest restarting, scaling, deleting, patching, deploying, or mutating infrastructure.
-12. Return ONLY valid JSON.
-`.trim();
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Evidence reduction
-// ─────────────────────────────────────────────────────────────────────────────
-
-function _truncateLine(
+// ============================================================================
+// EVIDENCE REDUCTION
+// ============================================================================
+
+function truncateLine(
   line,
   maxChars
 ) {
-  if (
-    typeof line !==
+  const value =
+    typeof line ===
     "string"
-  ) {
-    return String(
-      line ??
-      ""
-    );
-  }
+      ? line
+      : String(
+          line ??
+          ""
+        );
 
-  return line.length >
+  return value.length >
     maxChars
     ? (
-        line.slice(
+        value.slice(
           0,
           maxChars
         ) +
         "…"
       )
-    : line;
+    : value;
 }
 
-/**
- * Resolve evidence budget without coupling this agent to
- * the budget configuration implementation.
- */
-function _resolveEvidenceBudgets(
+function resolveEvidenceBudgets(
   config
 ) {
   return (
-    config?.budgets ||
-    config?.evidenceBudgets ||
+    config
+      ?.budgets ||
+    config
+      ?.evidenceBudgets ||
     {
       maxEvidenceItems:
-        50,
+        75,
 
       maxEvidenceItemBytes:
         4096,
@@ -1583,12 +2262,6 @@ function _resolveEvidenceBudgets(
   );
 }
 
-/**
- * Reduce an evidence item's structured data to stay inside
- * the model budget.
- *
- * IDs/references remain available for auditability.
- */
 function reduceEvidenceItem(
   item,
   budgets
@@ -1609,16 +2282,21 @@ function reduceEvidenceItem(
     512;
 
   if (
-    !item.structuredData
+    !item
+      .structuredData ||
+    typeof item
+      .structuredData !==
+      "object"
   ) {
     return item;
   }
 
-  const data = {
-    ...item.structuredData,
-  };
+  const data =
+    cloneStructuredData(
+      item
+        .structuredData
+    );
 
-  // Limit common large arrays.
   if (
     Array.isArray(
       data.logs
@@ -1630,13 +2308,16 @@ function reduceEvidenceItem(
           -maxLines
         )
         .map(
-          (line) =>
-            _truncateLine(
+          (
+            line
+          ) =>
+            truncateLine(
               typeof line ===
                 "string"
                 ? line
                 : (
-                    line?.message ||
+                    line
+                      ?.message ||
                     JSON.stringify(
                       line
                     )
@@ -1659,6 +2340,9 @@ function reduceEvidenceItem(
       "messages",
       "pods",
       "services",
+      "incidents",
+      "changes",
+      "deployments",
       "unhealthyPods",
       "unhealthyNodes",
     ]
@@ -1669,10 +2353,11 @@ function reduceEvidenceItem(
       )
     ) {
       data[key] =
-        data[key].slice(
-          0,
-          maxLines
-        );
+        data[key]
+          .slice(
+            0,
+            maxLines
+          );
 
       data[
         `_${key}Reduced`
@@ -1681,31 +2366,14 @@ function reduceEvidenceItem(
     }
   }
 
-  const serialized =
-    JSON.stringify(
-      data
-    );
+  let serialized;
 
-  if (
-    serialized.length >
-    maxBytes
-  ) {
-    const scalars =
-      Object.fromEntries(
-        Object.entries(
-          data
-        ).filter(
-          ([
-            ,
-            value,
-          ]) =>
-            typeof value !==
-              "object" ||
-            value ===
-              null
-        )
+  try {
+    serialized =
+      JSON.stringify(
+        data
       );
-
+  } catch {
     return {
       ...item,
 
@@ -1713,28 +2381,60 @@ function reduceEvidenceItem(
         _truncated:
           true,
 
-        _originalBytes:
-          serialized.length,
-
         summary:
           item.summary,
-
-        ...scalars,
       },
     };
   }
 
+  if (
+    serialized.length <=
+    maxBytes
+  ) {
+    return {
+      ...item,
+
+      structuredData:
+        data,
+    };
+  }
+
+  const scalarData =
+    Object.fromEntries(
+      Object.entries(
+        data
+      )
+        .filter(
+          ([
+            ,
+            value,
+          ]) =>
+            value ===
+              null ||
+            typeof value !==
+              "object"
+        )
+    );
+
   return {
     ...item,
 
-    structuredData:
-      data,
+    structuredData: {
+      _truncated:
+        true,
+
+      _originalBytes:
+        serialized
+          .length,
+
+      summary:
+        item.summary,
+
+      ...scalarData,
+    },
   };
 }
 
-/**
- * Apply reduction to the entire evidence collection.
- */
 function reduceEvidencePackage(
   items,
   budgets
@@ -1742,15 +2442,38 @@ function reduceEvidencePackage(
   const maxItems =
     budgets
       ?.maxEvidenceItems ||
-    50;
+    75;
 
-  return items
+  /*
+   * Prefer higher-confidence evidence before trimming.
+   */
+  return [
+    ...items,
+  ]
+    .sort(
+      (
+        first,
+        second
+      ) =>
+        (
+          second
+            .confidence ??
+          0
+        ) -
+        (
+          first
+            .confidence ??
+          0
+        )
+    )
     .slice(
       0,
       maxItems
     )
     .map(
-      (item) =>
+      (
+        item
+      ) =>
         reduceEvidenceItem(
           item,
           budgets
@@ -1758,10 +2481,460 @@ function reduceEvidencePackage(
     );
 }
 
+// ============================================================================
+// DEDUPLICATION
+// ============================================================================
+
+function deduplicateEvidence(
+  items
+) {
+  const map =
+    new Map();
+
+  for (
+    const item
+    of items
+  ) {
+    if (
+      !item?.id
+    ) {
+      continue;
+    }
+
+    const existing =
+      map.get(
+        item.id
+      );
+
+    if (
+      !existing ||
+      (
+        item.confidence ??
+        0
+      ) >
+      (
+        existing
+          .confidence ??
+        0
+      )
+    ) {
+      map.set(
+        item.id,
+        item
+      );
+    }
+  }
+
+  return [
+    ...map.values(),
+  ];
+}
+
+// ============================================================================
+// COMPLETENESS
+// ============================================================================
+
+function estimateCompleteness(
+  items,
+  missing,
+  context
+) {
+  /*
+   * Use evidence categories rather than raw item count.
+   *
+   * Hundreds of duplicate logs should not produce "100% evidence".
+   */
+  const presentTypes =
+    new Set(
+      items
+        .map(
+          (
+            item
+          ) =>
+            item.type
+        )
+        .filter(
+          Boolean
+        )
+    );
+
+  let score =
+    0;
+
+  let weight =
+    0;
+
+  const component =
+    (
+      available,
+      value
+    ) => {
+      weight +=
+        value;
+
+      if (
+        available
+      ) {
+        score +=
+          value;
+      }
+    };
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .ALERT
+    ) ||
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .SIGNAL
+    ),
+    0.15
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .METRIC
+    ),
+    0.15
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .LOG
+    ),
+    0.15
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .TRACE
+    ),
+    0.15
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .TOPOLOGY
+    ) ||
+    context
+      .topology
+      ?.rootService,
+    0.15
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .INCIDENT_EVENT
+    ),
+    0.1
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .HISTORICAL_INCIDENT
+    ),
+    0.075
+  );
+
+  component(
+    presentTypes.has(
+      EVIDENCE_TYPE
+        .DEPLOYMENT_CHANGE
+    ),
+    0.075
+  );
+
+  const base =
+    weight >
+      0
+      ? score /
+        weight
+      : 0;
+
+  /*
+   * Missing evidence penalty is deliberately small because some incidents
+   * legitimately have no traces/history/deployments.
+   */
+  const penalty =
+    Math.min(
+      0.25,
+      (
+        missing
+          .length ||
+        0
+      ) *
+        0.025
+    );
+
+  return Number(
+    Math.max(
+      0,
+      Math.min(
+        1,
+        base -
+          penalty
+      )
+    )
+      .toFixed(
+        4
+      )
+  );
+}
+
+// ============================================================================
+// SUMMARIES
+// ============================================================================
+
+function buildMetricSummary(
+  metrics
+) {
+  const parts =
+    [];
+
+  if (
+    metrics
+      .errorRate !==
+    undefined
+  ) {
+    parts.push(
+      `errorRate=${metrics.errorRate}`
+    );
+  }
+
+  if (
+    metrics
+      .p99Latency !==
+    undefined
+  ) {
+    parts.push(
+      `p99Latency=${metrics.p99Latency}ms`
+    );
+  }
+
+  if (
+    metrics.cpu !==
+    undefined
+  ) {
+    parts.push(
+      `cpu=${metrics.cpu}`
+    );
+  }
+
+  if (
+    metrics.memory !==
+    undefined
+  ) {
+    parts.push(
+      `memory=${metrics.memory}`
+    );
+  }
+
+  return (
+    parts.join(
+      ", "
+    ) ||
+    "Service metrics collected."
+  );
+}
+
+function buildPodSummary(
+  pod,
+  failureSignals = []
+) {
+  const phase =
+    pod.status
+      ?.phase ||
+    "unknown";
+
+  const restarts =
+    pod.status
+      ?.restartCount ??
+    0;
+
+  const reasons =
+    [
+      ...new Set(
+        (
+          failureSignals ||
+          []
+        )
+          .map(
+            (
+              signal
+            ) =>
+              signal.reason
+          )
+          .filter(
+            Boolean
+          )
+      ),
+    ];
+
+  let summary =
+    `Pod ${pod.name || "unknown"} phase=${phase}, restartCount=${restarts}`;
+
+  if (
+    reasons.length >
+    0
+  ) {
+    summary +=
+      `, failureReasons=${reasons.join(", ")}`;
+  }
+
+  return summary;
+}
+
+function buildOwnershipSummary(
+  podName,
+  replicaSet,
+  deployment
+) {
+  if (
+    replicaSet &&
+    deployment
+  ) {
+    return (
+      `Pod ${podName} is owned by ReplicaSet ${replicaSet.name}, ` +
+      `which is owned by Deployment ${deployment.name}.`
+    );
+  }
+
+  if (
+    deployment
+  ) {
+    return (
+      `Pod ${podName} is associated with Deployment ${deployment.name}.`
+    );
+  }
+
+  return (
+    `Ownership information available for pod ${podName}.`
+  );
+}
+
+function buildSiblingSummary(
+  health
+) {
+  return (
+    "Deployment sibling health: " +
+    `${health.total || 0} total, ` +
+    `${health.running || 0} running, ` +
+    `${health.failed || 0} failed, ` +
+    `${health.pending || 0} pending, ` +
+    `${health.restarting || 0} restarting, ` +
+    `${health.unhealthy || 0} unhealthy.`
+  );
+}
+
+// ============================================================================
+// CLONE
+// ============================================================================
+
+function cloneStructuredData(
+  value
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
+    return value;
+  }
+
+  try {
+    return JSON.parse(
+      JSON.stringify(
+        value
+      )
+    );
+  } catch {
+    return {};
+  }
+}
+
+// ============================================================================
+// CONFIDENCE
+// ============================================================================
+
+function clamp01(
+  value
+) {
+  const number =
+    Number(
+      value
+    );
+
+  if (
+    !Number.isFinite(
+      number
+    )
+  ) {
+    return 0;
+  }
+
+  return Math.min(
+    1,
+    Math.max(
+      0,
+      number
+    )
+  );
+}
+
+// ============================================================================
+// PROMPT
+// ============================================================================
+
+const INVESTIGATION_SYSTEM_PROMPT =
+  `
+You are the AIRA Investigation Agent.
+
+Your job is evidence assessment, not infrastructure recovery.
+
+You receive server-generated operational evidence collected by AIRA.
+
+Determine whether the evidence is sufficient for root-cause diagnosis.
+
+Rules:
+
+1. Evaluate evidence completeness from 0.0 to 1.0.
+2. Identify important missing evidence.
+3. Identify stale evidence.
+4. Identify contradictions between evidence sources.
+5. Recommend only additional READ-ONLY evidence collection.
+6. Prefer direct telemetry evidence over assumptions.
+7. Prefer canonical AIRA Signal and IncidentEvent evidence over user claims.
+8. Prefer Kubernetes ownerReferences over inferred label relationships.
+9. Distinguish isolated resource failure from service-wide failure.
+10. Consider temporal ordering when evaluating evidence.
+11. Do not infer causality merely from correlation.
+12. Never execute infrastructure operations.
+13. Never authorize infrastructure execution.
+14. Never recommend arbitrary shell commands.
+15. Never restart, scale, delete, patch, deploy, fail over, or mutate infrastructure.
+16. Return ONLY valid JSON.
+`.trim();
+
+// ============================================================================
+// EXPORT
+// ============================================================================
+
 module.exports = {
   InvestigationAgent,
 
   reduceEvidenceItem,
 
   reduceEvidencePackage,
+
+  deduplicateEvidence,
+
+  estimateCompleteness,
 };
