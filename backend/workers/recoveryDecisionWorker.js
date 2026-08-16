@@ -45,9 +45,14 @@ const idempotentWorkerService =
     "../services/idempotency/idempotentWorkerService"
   );
 
-const runtimeCheckpointPersistenceService =
+  const runtimeCheckpointPersistenceService =
   require(
     "../services/recoveryRuntime/runtimeCheckpointPersistenceService"
+  );
+
+const recoveryDecisionOutboxIntegrationService =
+  require(
+    "../services/workflowOutbox/recoveryDecisionOutboxIntegrationService"
   );
 
 const {
@@ -91,6 +96,7 @@ class RecoveryDecisionWorker {
       ].join(
         ":"
       );
+      
 
     // =========================================================================
     // PHASE 11.2 RUNTIME CHECKPOINT
@@ -117,6 +123,38 @@ class RecoveryDecisionWorker {
           true
         : process.env.NODE_ENV !==
           "test";
+
+          // ==========================================================================
+  // PHASE 11.3 — DURABLE WORKFLOW HANDOFF
+  // ==========================================================================
+
+  this.outboxIntegration =
+    options.outboxIntegration ||
+    recoveryDecisionOutboxIntegrationService;
+
+  /*
+   * Compatibility:
+   *
+   * Existing unit tests written before Phase 11.3 should not suddenly need
+   * MongoDB outbox persistence.
+   *
+   * Production:
+   *      enabled by default
+   *
+   * Tests:
+   *      disabled unless explicitly enabled/injected
+   */
+  this.outboxEnabled =
+    options.outboxEnabled !==
+      undefined
+      ? options.outboxEnabled ===
+        true
+      : (
+          options.outboxIntegration
+            ? true
+            : process.env.NODE_ENV !==
+              "test"
+        );
   }
 
   // ==========================================================================
@@ -142,7 +180,8 @@ class RecoveryDecisionWorker {
       this.runtimeCheckpointEnabled ===
       false
     ) {
-      return this.processWithIdempotency(
+        return this.processWithDurableHandoff(
+
         job,
         dependencies
       );
@@ -288,7 +327,7 @@ class RecoveryDecisionWorker {
       // =======================================================================
 
       const result =
-        await this.processWithIdempotency(
+          await this.processWithDurableHandoff(
           job,
           dependencies
         );
@@ -771,6 +810,172 @@ class RecoveryDecisionWorker {
     }
   }
 
+  // ============================================================================
+// PHASE 11.3.9C
+// IDEMPOTENT RECOVERY + DURABLE NEXT-STAGE HANDOFF
+// ============================================================================
+
+async processWithDurableHandoff(
+  job,
+  dependencies = {}
+) {
+  /*
+   * Phase 11.1 remains the owner of duplicate logical processing.
+   *
+   * We intentionally do not move outbox creation inside the recovery
+   * lifecycle itself.
+   *
+   * The recovery business operation finishes first, then Phase 11.3 records
+   * durable intent for any next-stage execution request that was produced.
+   */
+  const result =
+    await this.processWithIdempotency(
+      job,
+      dependencies
+    );
+
+  // ==========================================================================
+  // PHASE 11.3 DISABLED — LEGACY TEST COMPATIBILITY
+  // ==========================================================================
+
+  if (
+    this.outboxEnabled !==
+    true
+  ) {
+    return {
+      ...result,
+
+      outboxHandoff:
+        null,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  /*
+   * processWithIdempotency() may return several shapes:
+   *
+   * Original execution:
+   *
+   * {
+   *   result: <business result>
+   * }
+   *
+   * Duplicate completed:
+   *
+   * {
+   *   previousResult: <previous business result>
+   * }
+   *
+   * Older recovery tests / legacy paths may return the business result
+   * directly.
+   *
+   * We must derive the same business result regardless of which safe
+   * idempotency path was taken.
+   */
+  const businessResult =
+    this.resolveBusinessResultForOutbox(
+      result
+    );
+
+  /*
+   * A duplicate completed recovery is intentionally allowed to reach
+   * createFromResult().
+   *
+   * Why?
+   *
+   * Consider:
+   *
+   * recovery business operation completed
+   *        ↓
+   * idempotency marked completed
+   *        ↓
+   * process crashed BEFORE outbox event persisted
+   *
+   * After restart:
+   *
+   * idempotency returns DUPLICATE_COMPLETED
+   *        ↓
+   * previousResult
+   *        ↓
+   * createOrGet deterministic outbox event
+   *
+   * This closes an important crash window.
+   */
+  const outboxHandoff =
+    await this
+      .outboxIntegration
+      .createFromResult({
+        job: {
+          ...job,
+
+          executionAuthorized:
+            false,
+        },
+
+        result:
+          businessResult,
+
+        dependencies,
+      });
+
+  return {
+    ...result,
+
+    outboxHandoff,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// RESOLVE BUSINESS RESULT FOR OUTBOX
+// ============================================================================
+
+resolveBusinessResultForOutbox(
+  result
+) {
+  if (
+    !result ||
+    typeof result !==
+      "object"
+  ) {
+    return result;
+  }
+
+  /*
+   * Completed duplicate:
+   *
+   * Prefer the stored previous result because that represents the exact
+   * original logical operation.
+   */
+  if (
+    result.previousResult &&
+    typeof result.previousResult ===
+      "object"
+  ) {
+    return result.previousResult;
+  }
+
+  /*
+   * Normal Phase 11.1 wrapper:
+   */
+  if (
+    result.result &&
+    typeof result.result ===
+      "object"
+  ) {
+    return result.result;
+  }
+
+  /*
+   * Legacy/direct result.
+   */
+  return result;
+}
   // ==========================================================================
   // RETRY CLASSIFICATION
   // ==========================================================================

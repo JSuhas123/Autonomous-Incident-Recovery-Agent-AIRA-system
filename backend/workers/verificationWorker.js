@@ -62,6 +62,8 @@ const verificationPlanBuilderService =
     "../services/verification/verificationPlanBuilderService"
   );
 
+  
+
 const healthVerificationService =
   require(
     "../services/verification/healthVerificationService"
@@ -125,6 +127,11 @@ const verificationQueueService =
     "../services/verification/verificationQueueService"
   );
 
+const verificationLifecycleOutboxIntegrationService =
+  require(
+    "../services/workflowOutbox/verificationLifecycleOutboxIntegrationService"
+  );
+
 class VerificationWorker {
   constructor(
     options = {}
@@ -176,6 +183,48 @@ class VerificationWorker {
     this.queue =
       options.queue ||
       verificationQueueService;
+
+    // ==========================================================================
+// PHASE 11.3 — DURABLE VERIFICATION -> LIFECYCLE HANDOFF
+// ==========================================================================
+
+const hasInjectedOutboxIntegration =
+  Object.prototype
+    .hasOwnProperty
+    .call(
+      options,
+      "outboxIntegration"
+    );
+
+this.outboxIntegration =
+  hasInjectedOutboxIntegration
+    ? options.outboxIntegration
+    : verificationLifecycleOutboxIntegrationService;
+
+if (
+  options.outboxEnabled !==
+  undefined
+) {
+  this.outboxEnabled =
+    options.outboxEnabled ===
+    true;
+} else if (
+  hasInjectedOutboxIntegration
+) {
+  this.outboxEnabled =
+    true;
+} else {
+  /*
+   * Production:
+   *   durable handoff ON by default.
+   *
+   * Existing Phase 9/11 tests:
+   *   remain isolated unless an outbox integration is injected.
+   */
+  this.outboxEnabled =
+    process.env.NODE_ENV !==
+    "test";
+}
 
     // ==========================================================================
     // PHASE 11.1 IDEMPOTENCY
@@ -630,14 +679,29 @@ class VerificationWorker {
     // ==========================================================================
 
     if (
-      this.idempotencyEnabled ===
-      false
-    ) {
-      return this.processVerification(
-        job,
-        dependencies
-      );
-    }
+  this.idempotencyEnabled ===
+  false
+) {
+  const legacyResult =
+    await this.processVerification(
+      job,
+      dependencies
+    );
+
+  return this.attachLifecycleOutboxHandoff({
+    job: {
+      ...job,
+
+      executionAuthorized:
+        false,
+    },
+
+    result:
+      legacyResult,
+
+    dependencies,
+  });
+}
 
     // ==========================================================================
     // PHASE 11 IDEMPOTENT PATH
@@ -826,81 +890,226 @@ class VerificationWorker {
     // ==========================================================================
 
     if (
-      wrapped.executed ===
-      false
-    ) {
-      return {
-        processed:
-          true,
+  wrapped.executed ===
+  false
+) {
+  const duplicateResult = {
+    processed:
+      true,
 
-        success:
-          wrapped.decision ===
-            "DUPLICATE_COMPLETED",
+    success:
+      wrapped.decision ===
+        "DUPLICATE_COMPLETED",
 
-        duplicate:
-          wrapped.duplicate ===
-          true,
+    duplicate:
+      wrapped.duplicate ===
+      true,
 
-        verificationPerformed:
-          false,
+    verificationPerformed:
+      false,
 
-        idempotencyDecision:
-          wrapped.decision,
+    idempotencyDecision:
+      wrapped.decision,
 
-        idempotencyKey:
-          wrapped.idempotencyKey,
+    idempotencyKey:
+      wrapped.idempotencyKey,
 
-        previousResult:
-          wrapped.previousResult ||
-          null,
+    previousResult:
+      wrapped.previousResult ||
+      null,
 
-        resultReference:
-          wrapped.resultReference ||
-          null,
+    resultReference:
+      wrapped.resultReference ||
+      null,
 
-        reason:
-          wrapped.reason ||
-          null,
+    reason:
+      wrapped.reason ||
+      null,
 
-        executionAuthorized:
-          false,
-      };
-    }
+    executionAuthorized:
+      false,
+  };
+
+  /*
+   * Only a completed duplicate has a trustworthy persisted business result
+   * from which a potentially missing lifecycle handoff can be reconstructed.
+   *
+   * PROCESSING / LEASE_ACTIVE / other non-acquired states must NOT create
+   * another workflow transition.
+   */
+  if (
+    wrapped.decision !==
+      "DUPLICATE_COMPLETED" ||
+    !wrapped.previousResult
+  ) {
+    return duplicateResult;
+  }
+
+  const handoff =
+    await this.createLifecycleOutboxHandoff({
+      job:
+        effectiveJob,
+
+      result:
+        wrapped.previousResult,
+
+      dependencies,
+    });
+
+  return {
+    ...duplicateResult,
+
+    outboxHandoff:
+      handoff,
+
+    executionAuthorized:
+      false,
+  };
+}
 
     // ==========================================================================
     // ORIGINAL / RETRY / RECLAIMED PROCESSING
     // ==========================================================================
 
+    const outboxHandoff =
+  await this.createLifecycleOutboxHandoff({
+    job:
+      effectiveJob,
+
+    result:
+      wrapped.result,
+
+    dependencies,
+  });
+
+return {
+  processed:
+    true,
+
+  success:
+    true,
+
+  duplicate:
+    false,
+
+  verificationPerformed:
+    true,
+
+  idempotencyDecision:
+    wrapped.decision,
+
+  idempotencyKey:
+    wrapped.idempotencyKey,
+
+  result:
+    wrapped.result,
+
+  outboxHandoff,
+
+  executionAuthorized:
+    false,
+};
+  }
+
+  // ==========================================================================
+  // ORIGINAL PHASE 9 VERIFICATION PIPELINE
+  // ==========================================================================
+
+  // ============================================================================
+// PHASE 11.3.11C
+// VERIFICATION -> DURABLE LIFECYCLE HANDOFF
+// ============================================================================
+
+async attachLifecycleOutboxHandoff({
+  job,
+  result,
+  dependencies = {},
+} = {}) {
+  const outboxHandoff =
+    await this.createLifecycleOutboxHandoff({
+      job,
+      result,
+      dependencies,
+    });
+
+  /*
+   * Preserve legacy result shape.
+   */
+  if (
+    !result ||
+    typeof result !==
+      "object"
+  ) {
+    return result;
+  }
+
+  return {
+    ...result,
+
+    outboxHandoff,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// CREATE DURABLE LIFECYCLE HANDOFF
+// ============================================================================
+
+async createLifecycleOutboxHandoff({
+  job,
+  result,
+  dependencies = {},
+} = {}) {
+  if (
+    this.outboxEnabled !==
+    true
+  ) {
+    return null;
+  }
+
+  /*
+   * A blocked verification has not produced a persisted verification outcome
+   * suitable for lifecycle processing.
+   */
+  if (
+    result?.blocked ===
+    true ||
+    result?.verificationStarted ===
+    false
+  ) {
     return {
-      processed:
-        true,
-
-      success:
-        true,
-
-      duplicate:
+      handoffCreated:
         false,
 
-      verificationPerformed:
-        true,
+      required:
+        false,
 
-      idempotencyDecision:
-        wrapped.decision,
-
-      idempotencyKey:
-        wrapped.idempotencyKey,
-
-      result:
-        wrapped.result,
+      reason:
+        "VERIFICATION_NOT_COMPLETED",
 
       executionAuthorized:
         false,
     };
   }
 
-  // ==========================================================================
-  // ORIGINAL PHASE 9 VERIFICATION PIPELINE
-  // ==========================================================================
+  return this
+    .outboxIntegration
+    .createFromResult({
+      job: {
+        ...job,
+
+        executionAuthorized:
+          false,
+      },
+
+      result,
+
+      dependencies,
+    });
+}
 
   async processVerification(
     job,

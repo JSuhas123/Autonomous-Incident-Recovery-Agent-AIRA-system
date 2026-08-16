@@ -98,6 +98,11 @@ const {
     "../services/execution/executionAuthorizationContracts"
   );
 
+  const executionVerificationOutboxIntegrationService =
+  require(
+    "../services/workflowOutbox/executionVerificationOutboxIntegrationService"
+  );
+
 class ExecutionWorker {
   constructor(
     options = {}
@@ -131,7 +136,42 @@ class ExecutionWorker {
       ].join(
         ":"
       );
+    
+      const hasInjectedOutboxIntegration =
+  Object.prototype
+    .hasOwnProperty
+    .call(
+      options,
+      "outboxIntegration"
+    );
 
+this.outboxIntegration =
+  hasInjectedOutboxIntegration
+    ? options.outboxIntegration
+    : executionVerificationOutboxIntegrationService;
+
+if (
+  options.outboxEnabled !==
+  undefined
+) {
+  this.outboxEnabled =
+    options.outboxEnabled ===
+    true;
+} else if (
+  hasInjectedOutboxIntegration
+) {
+  this.outboxEnabled =
+    true;
+} else {
+  /*
+   * Preserve old ExecutionWorker tests.
+   *
+   * Production enables the durable handoff automatically.
+   */
+  this.outboxEnabled =
+    process.env.NODE_ENV !==
+    "test";
+}
     // ========================================================================
     // PHASE 11.2 RUNTIME CHECKPOINT
     // ========================================================================
@@ -156,6 +196,8 @@ class ExecutionWorker {
         : process.env.NODE_ENV !==
           "test";
   }
+
+  
 
   // ==========================================================================
   // PUBLIC ENTRY POINT
@@ -673,21 +715,11 @@ class ExecutionWorker {
           // ==================================================================
 
           handler:
-            async () =>
-              this.processAuthorizedExecution(
-                {
-                  ...job,
-
-                  executionRequestId,
-
-                  executionPlanId,
-
-                  executionPlanHash,
-
-                  executionPlan,
-                },
-                dependencies
-              ),
+  async () =>
+    this.processAuthorizedExecutionWithDurableHandoff(
+      job,
+      dependencies
+    ),
 
           executionAuthorized:
             false,
@@ -776,6 +808,105 @@ class ExecutionWorker {
         false,
     };
   }
+
+
+  // ============================================================================
+// PHASE 11.3.10C
+// EXECUTION + DURABLE VERIFICATION HANDOFF
+// ============================================================================
+
+async processAuthorizedExecutionWithDurableHandoff(
+  job,
+  dependencies = {}
+) {
+  /*
+   * CRITICAL:
+   *
+   * Phase 11.3 does NOT replace the existing execution engine.
+   *
+   * The original protected Phase 8 path remains responsible for:
+   *
+   * - loading ExecutionRequest
+   * - loading ExecutionAuthorization
+   * - immutable plan validation
+   * - policy / approval enforcement
+   * - infrastructure execution
+   * - execution result persistence
+   *
+   * Only after that path returns do we consider creating a durable
+   * verification handoff.
+   */
+  const result =
+    await this
+      .processAuthorizedExecution(
+        job,
+        dependencies
+      );
+
+  // ==========================================================================
+  // LEGACY / TEST COMPATIBILITY
+  // ==========================================================================
+
+  if (
+    this.outboxEnabled !==
+    true
+  ) {
+    return {
+      ...result,
+
+      outboxHandoff:
+        null,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  /*
+   * The integration service decides whether this result actually requires
+   * verification.
+   *
+   * Failed / blocked / non-executed requests must not generate verification
+   * work.
+   */
+  const outboxHandoff =
+    await this
+      .outboxIntegration
+      .createFromResult({
+        job: {
+          ...job,
+
+          /*
+           * Never propagate authorization as transport authority.
+           *
+           * authorizationId may remain in the job as a reference.
+           */
+          executionAuthorized:
+            false,
+        },
+
+        result,
+
+        dependencies,
+      });
+
+  return {
+    ...result,
+
+    outboxHandoff,
+
+    /*
+     * The execution may already have been legitimately authorized and
+     * performed inside processAuthorizedExecution().
+     *
+     * But the RESULT leaving this workflow boundary cannot itself become
+     * reusable authorization.
+     */
+    executionAuthorized:
+      false,
+  };
+}
+
 
   // ==========================================================================
   // REAL PHASE 8 EXECUTION ORCHESTRATION
