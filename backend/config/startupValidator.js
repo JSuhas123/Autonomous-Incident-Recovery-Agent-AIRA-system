@@ -1,116 +1,2022 @@
-/**
- * Startup Environment Validator
- *
- * Asserts that all required environment variables are present and non-empty
- * before any service initialises. Throws a descriptive error and exits the
- * process with code 1 if any required variable is missing.
- *
- * Call validateProductionEnv() at the very top of startServer(), BEFORE any
- * service connection is attempted.
- */
-
 "use strict";
 
 /**
- * Variables that MUST be set in every environment (dev, staging, production).
- * The process will not start without them.
- */
-const REQUIRED_ALWAYS = [
-  { name: "AUDIT_SECRET", description: "HMAC secret for audit-trail signatures (min 32 chars)" },
-];
-
-/**
- * Variables that MUST be set when NODE_ENV === 'production'.
- * In development/test these can fall back to defaults, but production
- * must be explicit.
- */
-const REQUIRED_IN_PRODUCTION = [
-  { name: "MONGODB_URI",    description: "MongoDB connection string" },
-  { name: "REDIS_URL",      description: "Redis connection URL" },
-  { name: "RABBITMQ_URL",   description: "RabbitMQ connection URL" },
-  { name: "CORS_ORIGIN",    description: "Allowed CORS origin (must not be *)" },
-];
-
-/**
- * Additional checks beyond presence (value-level validation).
- * Returns an error string on failure, null on success.
- */
-const VALUE_CHECKS = [
-  {
-    name: "AUDIT_SECRET",
-    check: (v) => v.length >= 32,
-    message: "AUDIT_SECRET must be at least 32 characters long",
-  },
-  {
-    name: "CORS_ORIGIN",
-    check: (v) => v !== "*",
-    message: 'CORS_ORIGIN must not be "*" in production — set a specific origin',
-    productionOnly: true,
-  },
-];
-
-/**
- * Validate environment variables.
- * Throws an error listing all failures so the operator can fix everything
- * in a single restart cycle.
+ * ============================================================================
+ * PHASE 11.14 — PRODUCTION CONFIGURATION VALIDATION
+ * ============================================================================
  *
- * @param {{ isProduction?: boolean }} [options]
+ * PURPOSE
+ *
+ * Fail startup before infrastructure initialization when configuration is:
+ *
+ * - missing
+ * - malformed
+ * - insecure
+ * - contradictory
+ * - using unsafe production defaults
+ *
+ * IMPORTANT
+ *
+ * This module validates configuration only.
+ *
+ * It does NOT:
+ *
+ * - connect to dependencies
+ * - mutate infrastructure
+ * - grant execution authority
+ * - call process.exit()
+ *
+ * Callers decide how a validation failure terminates startup.
  */
-function validateEnvironment(options = {}) {
-  const isProduction =
-    options.isProduction !== undefined
-      ? options.isProduction
-      : process.env.NODE_ENV === "production";
 
-  const errors = [];
 
-  // --- required always ---
-  for (const { name, description } of REQUIRED_ALWAYS) {
-    const val = process.env[name];
-    if (!val || val.trim() === "") {
-      errors.push(`  [MISSING] ${name} — ${description}`);
-    }
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+const ENVIRONMENT = Object.freeze({
+  DEVELOPMENT:
+    "development",
+
+  TEST:
+    "test",
+
+  PRODUCTION:
+    "production",
+});
+
+
+const MIN_SECRET_LENGTH =
+  32;
+
+
+const MIN_STRONG_SECRET_LENGTH =
+  48;
+
+
+const DEFAULT_PRODUCTION_FRONTENDS = [
+  "https://autonomous-incident-recovery-agent-ten.vercel.app",
+  "https://autonomous-incident-recovery-agent-aira-system-id1961ym5.vercel.app",
+];
+
+
+const NUMERIC_RULES = Object.freeze({
+  SESSION_IDLE_TIMEOUT_MS: {
+    min:
+      60000,
+
+    max:
+      24 *
+      60 *
+      60 *
+      1000,
+  },
+
+
+  SESSION_ABSOLUTE_TIMEOUT_MS: {
+    min:
+      5 *
+      60 *
+      1000,
+
+    max:
+      30 *
+      24 *
+      60 *
+      60 *
+      1000,
+  },
+
+
+  SESSION_REMEMBER_ME_TIMEOUT_MS: {
+    min:
+      60 *
+      60 *
+      1000,
+
+    max:
+      180 *
+      24 *
+      60 *
+      60 *
+      1000,
+  },
+
+
+  SESSION_ACTIVITY_THROTTLE_MS: {
+    min:
+      1000,
+
+    max:
+      10 *
+      60 *
+      1000,
+  },
+
+
+  APPLICATION_SHUTDOWN_TIMEOUT_MS: {
+    min:
+      5000,
+
+    max:
+      120000,
+  },
+
+
+  SERVER_SHUTDOWN_TIMEOUT_MS: {
+    min:
+      5000,
+
+    max:
+      120000,
+  },
+
+
+  WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS: {
+    min:
+      1000,
+
+    max:
+      60000,
+  },
+
+
+  QUEUE_MAX_IN_FLIGHT_PUBLISHES: {
+    min:
+      1,
+
+    max:
+      10000,
+  },
+
+
+  QUEUE_PUBLISH_DRAIN_TIMEOUT_MS: {
+    min:
+      100,
+
+    max:
+      60000,
+  },
+
+
+  QUEUE_PUBLISH_RETRY_AFTER_MS: {
+    min:
+      100,
+
+    max:
+      60000,
+  },
+
+
+  RETENTION_JOB_INTERVAL_MINUTES: {
+    min:
+      1,
+
+    max:
+      1440,
+  },
+
+
+  RETENTION_MAX_PATTERN_OCCURRENCES: {
+    min:
+      10,
+
+    max:
+      10000,
+  },
+
+
+  PORT: {
+    min:
+      1,
+
+    max:
+      65535,
+  },
+});
+
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function hasValue(
+  value
+) {
+  return (
+    value !==
+      undefined &&
+    value !==
+      null &&
+    String(
+      value
+    )
+      .trim() !==
+      ""
+  );
+}
+
+
+function redactValue(
+  name,
+  value
+) {
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    return null;
   }
 
-  // --- required in production ---
-  if (isProduction) {
-    for (const { name, description } of REQUIRED_IN_PRODUCTION) {
-      const val = process.env[name];
-      if (!val || val.trim() === "") {
-        errors.push(`  [MISSING] ${name} — ${description}`);
+
+  const sensitiveNames = [
+    "SECRET",
+    "TOKEN",
+    "PASSWORD",
+    "KEY",
+    "URI",
+    "URL",
+  ];
+
+
+  const upper =
+    String(
+      name
+    )
+      .toUpperCase();
+
+
+  if (
+    sensitiveNames
+      .some(
+        (
+          fragment
+        ) =>
+          upper.includes(
+            fragment
+          )
+      )
+  ) {
+    return "[REDACTED]";
+  }
+
+
+  return String(
+    value
+  );
+}
+
+
+function parseBoolean(
+  value,
+  fallback =
+    false
+) {
+  if (
+    value ===
+      undefined ||
+    value ===
+      null ||
+    value ===
+      ""
+  ) {
+    return fallback;
+  }
+
+
+  const normalized =
+    String(
+      value
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    [
+      "true",
+      "1",
+      "yes",
+      "on",
+    ]
+      .includes(
+        normalized
+      )
+  ) {
+    return true;
+  }
+
+
+  if (
+    [
+      "false",
+      "0",
+      "no",
+      "off",
+    ]
+      .includes(
+        normalized
+      )
+  ) {
+    return false;
+  }
+
+
+  return fallback;
+}
+
+
+function parseInteger(
+  value
+) {
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    return null;
+  }
+
+
+  if (
+    !/^-?\d+$/
+      .test(
+        String(
+          value
+        )
+          .trim()
+      )
+  ) {
+    return null;
+  }
+
+
+  const parsed =
+    Number.parseInt(
+      String(
+        value
+      ),
+      10
+    );
+
+
+  return Number.isSafeInteger(
+    parsed
+  )
+    ? parsed
+    : null;
+}
+
+
+function parseOrigins(
+  raw
+) {
+  if (
+    !hasValue(
+      raw
+    )
+  ) {
+    return [];
+  }
+
+
+  return String(
+    raw
+  )
+    .split(
+      ","
+    )
+    .map(
+      (
+        value
+      ) =>
+        value
+          .trim()
+          .replace(
+            /\/+$/,
+            ""
+          )
+    )
+    .filter(
+      Boolean
+    );
+}
+
+
+function isValidUrl(
+  value,
+  allowedProtocols
+) {
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    return false;
+  }
+
+
+  try {
+    const parsed =
+      new URL(
+        String(
+          value
+        )
+      );
+
+
+    return allowedProtocols
+      .includes(
+        parsed.protocol
+      );
+  } catch {
+    return false;
+  }
+}
+
+
+function isLoopbackHost(
+  hostname
+) {
+  const normalized =
+    String(
+      hostname ||
+      ""
+    )
+      .toLowerCase();
+
+
+  return (
+    normalized ===
+      "localhost" ||
+    normalized ===
+      "127.0.0.1" ||
+    normalized ===
+      "::1"
+  );
+}
+
+
+function urlUsesLoopback(
+  value
+) {
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    return false;
+  }
+
+
+  try {
+    const parsed =
+      new URL(
+        String(
+          value
+        )
+      );
+
+
+    return isLoopbackHost(
+      parsed.hostname
+    );
+  } catch {
+    return false;
+  }
+}
+
+
+function looksLikePlaceholderSecret(
+  value
+) {
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    return false;
+  }
+
+
+  const normalized =
+    String(
+      value
+    )
+      .trim()
+      .toLowerCase();
+
+
+  const forbiddenFragments = [
+    "changeme",
+    "change-me",
+    "replace-me",
+    "replace_me",
+    "example",
+    "default",
+    "development",
+    "dev-secret",
+    "test-secret",
+    "your-secret",
+    "your_secret",
+    "password",
+    "secret123",
+    "aira-integration-test-key",
+    "aira-ip-salt",
+  ];
+
+
+  return forbiddenFragments
+    .some(
+      (
+        fragment
+      ) =>
+        normalized.includes(
+          fragment
+        )
+    );
+}
+
+
+function hasEnoughCharacterVariety(
+  value
+) {
+  const text =
+    String(
+      value ||
+      ""
+    );
+
+
+  const classes = [
+    /[a-z]/,
+    /[A-Z]/,
+    /\d/,
+    /[^a-zA-Z0-9]/,
+  ];
+
+
+  const matched =
+    classes
+      .reduce(
+        (
+          count,
+          pattern
+        ) =>
+          count +
+          (
+            pattern.test(
+              text
+            )
+              ? 1
+              : 0
+          ),
+        0
+      );
+
+
+  return matched >=
+    3;
+}
+
+
+function addError(
+  errors,
+  code,
+  variable,
+  message
+) {
+  errors.push({
+    severity:
+      "ERROR",
+
+    code,
+
+    variable,
+
+    message,
+  });
+}
+
+
+function addWarning(
+  warnings,
+  code,
+  variable,
+  message
+) {
+  warnings.push({
+    severity:
+      "WARNING",
+
+    code,
+
+    variable,
+
+    message,
+  });
+}
+
+
+// ============================================================================
+// SECRET VALIDATION
+// ============================================================================
+
+function validateSecret({
+  env,
+  errors,
+  warnings,
+  name,
+  minimumLength =
+    MIN_SECRET_LENGTH,
+  production,
+  required =
+    false,
+}) {
+  const value =
+    env[
+      name
+    ];
+
+
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    if (
+      required
+    ) {
+      addError(
+        errors,
+        "CONFIG_SECRET_MISSING",
+        name,
+        `${name} is required`
+      );
+    }
+
+
+    return;
+  }
+
+
+  if (
+    String(
+      value
+    ).length <
+    minimumLength
+  ) {
+    addError(
+      errors,
+      "CONFIG_SECRET_TOO_SHORT",
+      name,
+      `${name} must be at least ${minimumLength} characters`
+    );
+  }
+
+
+  if (
+    production &&
+    looksLikePlaceholderSecret(
+      value
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_PLACEHOLDER_SECRET",
+      name,
+      `${name} appears to contain a placeholder/default value`
+    );
+  }
+
+
+  if (
+    production &&
+    String(
+      value
+    ).length >=
+      minimumLength &&
+    !hasEnoughCharacterVariety(
+      value
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_SECRET_LOW_VARIETY",
+      name,
+      `${name} has low character variety; use a cryptographically generated secret`
+    );
+  }
+}
+
+
+// ============================================================================
+// URL VALIDATION
+// ============================================================================
+
+function validateDependencyUrl({
+  env,
+  errors,
+  warnings,
+  name,
+  protocols,
+  production,
+  required =
+    false,
+}) {
+  const value =
+    env[
+      name
+    ];
+
+
+  if (
+    !hasValue(
+      value
+    )
+  ) {
+    if (
+      required
+    ) {
+      addError(
+        errors,
+        "CONFIG_DEPENDENCY_URL_MISSING",
+        name,
+        `${name} is required`
+      );
+    }
+
+
+    return;
+  }
+
+
+  if (
+    !isValidUrl(
+      value,
+      protocols
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_DEPENDENCY_URL_INVALID",
+      name,
+      `${name} must use one of: ${protocols.join(", ")}`
+    );
+
+
+    return;
+  }
+
+
+  if (
+    production &&
+    urlUsesLoopback(
+      value
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_PRODUCTION_LOOPBACK_DEPENDENCY",
+      name,
+      `${name} points to localhost/loopback in production`
+    );
+  }
+}
+
+
+// ============================================================================
+// NUMERIC VALIDATION
+// ============================================================================
+
+function validateNumericRules(
+  env,
+  errors
+) {
+  for (
+    const [
+      name,
+      rule,
+    ]
+    of Object.entries(
+      NUMERIC_RULES
+    )
+  ) {
+    if (
+      !hasValue(
+        env[
+          name
+        ]
+      )
+    ) {
+      continue;
+    }
+
+
+    const parsed =
+      parseInteger(
+        env[
+          name
+        ]
+      );
+
+
+    if (
+      parsed ===
+      null
+    ) {
+      addError(
+        errors,
+        "CONFIG_INTEGER_INVALID",
+        name,
+        `${name} must be an integer`
+      );
+
+
+      continue;
+    }
+
+
+    if (
+      parsed <
+        rule.min ||
+      parsed >
+        rule.max
+    ) {
+      addError(
+        errors,
+        "CONFIG_INTEGER_OUT_OF_RANGE",
+        name,
+        `${name} must be between ${rule.min} and ${rule.max}`
+      );
+    }
+  }
+}
+
+
+// ============================================================================
+// CORS
+// ============================================================================
+
+function validateCors(
+  env,
+  errors,
+  warnings,
+  production
+) {
+  /*
+   * server.js uses CORS_ORIGINS.
+   *
+   * Keep CORS_ORIGIN compatibility only as a migration warning.
+   */
+  const canonical =
+    env
+      .CORS_ORIGINS;
+
+
+  const legacy =
+    env
+      .CORS_ORIGIN;
+
+
+  if (
+    !hasValue(
+      canonical
+    )
+  ) {
+    if (
+      production
+    ) {
+      addError(
+        errors,
+        "CONFIG_CORS_ORIGINS_MISSING",
+        "CORS_ORIGINS",
+        "CORS_ORIGINS is required in production"
+      );
+    }
+
+
+    if (
+      hasValue(
+        legacy
+      )
+    ) {
+      addWarning(
+        warnings,
+        "CONFIG_LEGACY_CORS_VARIABLE",
+        "CORS_ORIGIN",
+        "CORS_ORIGIN is legacy; server.js uses CORS_ORIGINS"
+      );
+    }
+
+
+    return;
+  }
+
+
+  const origins =
+    parseOrigins(
+      canonical
+    );
+
+
+  if (
+    origins.length ===
+    0
+  ) {
+    addError(
+      errors,
+      "CONFIG_CORS_ORIGINS_EMPTY",
+      "CORS_ORIGINS",
+      "CORS_ORIGINS must contain at least one origin"
+    );
+
+
+    return;
+  }
+
+
+  const seen =
+    new Set();
+
+
+  for (
+    const origin
+    of origins
+  ) {
+    if (
+      origin ===
+      "*"
+    ) {
+      addError(
+        errors,
+        "CONFIG_CORS_WILDCARD_FORBIDDEN",
+        "CORS_ORIGINS",
+        'CORS_ORIGINS must not contain "*"'
+      );
+
+
+      continue;
+    }
+
+
+    if (
+      seen.has(
+        origin
+      )
+    ) {
+      addWarning(
+        warnings,
+        "CONFIG_CORS_DUPLICATE_ORIGIN",
+        "CORS_ORIGINS",
+        `Duplicate CORS origin: ${origin}`
+      );
+    }
+
+
+    seen.add(
+      origin
+    );
+
+
+    if (
+      !isValidUrl(
+        origin,
+        [
+          "http:",
+          "https:",
+        ]
+      )
+    ) {
+      addError(
+        errors,
+        "CONFIG_CORS_ORIGIN_INVALID",
+        "CORS_ORIGINS",
+        `Invalid CORS origin: ${origin}`
+      );
+
+
+      continue;
+    }
+
+
+    if (
+      production
+    ) {
+      try {
+        const parsed =
+          new URL(
+            origin
+          );
+
+
+        if (
+          parsed.protocol !==
+          "https:" &&
+          !isLoopbackHost(
+            parsed.hostname
+          )
+        ) {
+          addError(
+            errors,
+            "CONFIG_CORS_HTTPS_REQUIRED",
+            "CORS_ORIGINS",
+            `Production CORS origin must use HTTPS: ${origin}`
+          );
+        }
+      } catch {
+        // Already reported above.
       }
     }
   }
 
-  // --- value-level checks ---
-  for (const { name, check, message, productionOnly } of VALUE_CHECKS) {
-    if (productionOnly && !isProduction) continue;
-    const val = process.env[name];
-    if (val && !check(val)) {
-      errors.push(`  [INVALID] ${name} — ${message}`);
+
+  if (
+    production
+  ) {
+    const missingKnownFrontends =
+      DEFAULT_PRODUCTION_FRONTENDS
+        .filter(
+          (
+            origin
+          ) =>
+            !seen.has(
+              origin
+            )
+        );
+
+
+    if (
+      missingKnownFrontends.length >
+      0
+    ) {
+      addWarning(
+        warnings,
+        "CONFIG_KNOWN_FRONTEND_NOT_ALLOWED",
+        "CORS_ORIGINS",
+        `Known production frontend origin(s) absent: ${missingKnownFrontends.join(", ")}`
+      );
     }
-  }
-
-  if (errors.length > 0) {
-    const lines = [
-      "",
-      "╔══════════════════════════════════════════════════════════╗",
-      "║         AIRA STARTUP VALIDATION FAILED                  ║",
-      "╚══════════════════════════════════════════════════════════╝",
-      "",
-      "The following required environment variables are missing or invalid:",
-      "",
-      ...errors,
-      "",
-      "Set the above variables in your .env file (local) or secret store",
-      "(Kubernetes Secret / Docker Compose environment) and restart.",
-      "",
-    ].join("\n");
-
-    // Always write to stderr so it is visible regardless of logging config.
-    process.stderr.write(lines + "\n");
-    process.exit(1);
   }
 }
 
-module.exports = { validateEnvironment };
+
+// ============================================================================
+// SESSION CONFIGURATION
+// ============================================================================
+
+function validateSessionConfiguration(
+  env,
+  errors,
+  warnings,
+  production
+) {
+  const idle =
+    parseInteger(
+      env
+        .SESSION_IDLE_TIMEOUT_MS
+    );
+
+
+  const absolute =
+    parseInteger(
+      env
+        .SESSION_ABSOLUTE_TIMEOUT_MS
+    );
+
+
+  const remember =
+    parseInteger(
+      env
+        .SESSION_REMEMBER_ME_TIMEOUT_MS
+    );
+
+
+  if (
+    idle !==
+      null &&
+    absolute !==
+      null &&
+    idle >
+      absolute
+  ) {
+    addError(
+      errors,
+      "CONFIG_SESSION_IDLE_EXCEEDS_ABSOLUTE",
+      "SESSION_IDLE_TIMEOUT_MS",
+      "SESSION_IDLE_TIMEOUT_MS must not exceed SESSION_ABSOLUTE_TIMEOUT_MS"
+    );
+  }
+
+
+  if (
+    absolute !==
+      null &&
+    remember !==
+      null &&
+    remember <
+      absolute
+  ) {
+    addError(
+      errors,
+      "CONFIG_REMEMBER_TIMEOUT_TOO_SHORT",
+      "SESSION_REMEMBER_ME_TIMEOUT_MS",
+      "SESSION_REMEMBER_ME_TIMEOUT_MS must be >= SESSION_ABSOLUTE_TIMEOUT_MS"
+    );
+  }
+
+
+  if (
+    production &&
+    !hasValue(
+      env
+        .IP_HASH_SALT
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_IP_HASH_SALT_MISSING",
+      "IP_HASH_SALT",
+      "IP_HASH_SALT is required in production; the session service default must not be used"
+    );
+  }
+
+
+  if (
+    production &&
+    looksLikePlaceholderSecret(
+      env
+        .IP_HASH_SALT
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_IP_HASH_SALT_INSECURE",
+      "IP_HASH_SALT",
+      "IP_HASH_SALT must not use the built-in/default development value"
+    );
+  }
+
+
+  if (
+    production &&
+    hasValue(
+      env
+        .IP_HASH_SALT
+    ) &&
+    String(
+      env
+        .IP_HASH_SALT
+    ).length <
+      MIN_SECRET_LENGTH
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_IP_HASH_SALT_SHORT",
+      "IP_HASH_SALT",
+      `IP_HASH_SALT should be at least ${MIN_SECRET_LENGTH} characters`
+    );
+  }
+}
+
+
+// ============================================================================
+// DEPLOYMENT MODE
+// ============================================================================
+
+function validateDeploymentMode(
+  env,
+  errors,
+  warnings,
+  production
+) {
+  const nodeInstanceId =
+    env
+      .NODE_INSTANCE_ID;
+
+
+  if (
+    hasValue(
+      nodeInstanceId
+    )
+  ) {
+    if (
+      !/^[a-zA-Z0-9._-]{1,128}$/
+        .test(
+          String(
+            nodeInstanceId
+          )
+        )
+    ) {
+      addError(
+        errors,
+        "CONFIG_NODE_INSTANCE_ID_INVALID",
+        "NODE_INSTANCE_ID",
+        "NODE_INSTANCE_ID may contain only letters, numbers, dot, underscore and hyphen"
+      );
+    }
+
+
+    if (
+      !hasValue(
+        env
+          .REDIS_URL
+      )
+    ) {
+      addError(
+        errors,
+        "CONFIG_MULTI_INSTANCE_REDIS_REQUIRED",
+        "REDIS_URL",
+        "REDIS_URL is mandatory when NODE_INSTANCE_ID enables multi-instance mode"
+      );
+    }
+  } else if (
+    production
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_SINGLE_INSTANCE_PRODUCTION",
+      "NODE_INSTANCE_ID",
+      "NODE_INSTANCE_ID is not set; AIRA will treat this deployment as single-instance"
+    );
+  }
+
+
+  const shutdown =
+    parseInteger(
+      env
+        .SERVER_SHUTDOWN_TIMEOUT_MS ||
+      env
+        .APPLICATION_SHUTDOWN_TIMEOUT_MS
+    );
+
+
+  const outboxShutdown =
+    parseInteger(
+      env
+        .WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS
+    );
+
+
+  if (
+    shutdown !==
+      null &&
+    outboxShutdown !==
+      null &&
+    outboxShutdown >=
+      shutdown
+  ) {
+    addError(
+      errors,
+      "CONFIG_OUTBOX_SHUTDOWN_EXCEEDS_GLOBAL",
+      "WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS",
+      "WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS must be lower than the global shutdown timeout"
+    );
+  }
+}
+
+
+// ============================================================================
+// RUNTIME SAFETY FLAGS
+// ============================================================================
+
+function validateRuntimeSafety(
+  env,
+  errors,
+  warnings,
+  production
+) {
+  if (
+    !production
+  ) {
+    return;
+  }
+
+
+  if (
+    parseBoolean(
+      env
+        .ALLOW_UNSAFE_EXECUTION,
+      false
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_UNSAFE_EXECUTION_ENABLED",
+      "ALLOW_UNSAFE_EXECUTION",
+      "Unsafe execution bypasses are forbidden in production"
+    );
+  }
+
+
+  if (
+    parseBoolean(
+      env
+        .DISABLE_POLICY_ENGINE,
+      false
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_POLICY_ENGINE_DISABLED",
+      "DISABLE_POLICY_ENGINE",
+      "Policy engine cannot be disabled in production"
+    );
+  }
+
+
+  if (
+    parseBoolean(
+      env
+        .DISABLE_AUDIT,
+      false
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_AUDIT_DISABLED",
+      "DISABLE_AUDIT",
+      "Audit recording cannot be disabled in production"
+    );
+  }
+
+
+  if (
+    parseBoolean(
+      env
+        .SKIP_STARTUP_RECOVERY,
+      false
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_STARTUP_RECOVERY_DISABLED",
+      "SKIP_STARTUP_RECOVERY",
+      "Durable startup recovery cannot be disabled in production"
+    );
+  }
+
+
+  if (
+    env
+      .LOG_LEVEL &&
+    ![
+      "error",
+      "warn",
+      "info",
+      "debug",
+    ]
+      .includes(
+        String(
+          env
+            .LOG_LEVEL
+        )
+          .toLowerCase()
+      )
+  ) {
+    addError(
+      errors,
+      "CONFIG_LOG_LEVEL_INVALID",
+      "LOG_LEVEL",
+      "LOG_LEVEL must be one of error, warn, info or debug"
+    );
+  }
+
+
+  if (
+    String(
+      env
+        .LOG_LEVEL ||
+      ""
+    )
+      .toLowerCase() ===
+      "debug"
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_DEBUG_LOGGING_PRODUCTION",
+      "LOG_LEVEL",
+      "Debug logging is enabled in production"
+    );
+  }
+}
+
+
+// ============================================================================
+// MAIN VALIDATION
+// ============================================================================
+
+function inspectEnvironment(
+  options =
+    {}
+) {
+  const env =
+    options.env ||
+    process.env;
+
+
+  const nodeEnvironment =
+    String(
+      options.nodeEnv ||
+      env.NODE_ENV ||
+      ENVIRONMENT.DEVELOPMENT
+    )
+      .trim()
+      .toLowerCase();
+
+
+  const isProduction =
+    options.isProduction !==
+      undefined
+      ? Boolean(
+          options.isProduction
+        )
+      : nodeEnvironment ===
+        ENVIRONMENT.PRODUCTION;
+
+
+  const errors =
+    [];
+
+
+  const warnings =
+    [];
+
+
+  // ==========================================================================
+  // NODE_ENV
+  // ==========================================================================
+
+  if (
+    !Object.values(
+      ENVIRONMENT
+    )
+      .includes(
+        nodeEnvironment
+      )
+  ) {
+    addError(
+      errors,
+      "CONFIG_NODE_ENV_INVALID",
+      "NODE_ENV",
+      `NODE_ENV must be one of ${Object.values(ENVIRONMENT).join(", ")}`
+    );
+  }
+
+
+  // ==========================================================================
+  // AUDIT SECRETS
+  // ==========================================================================
+
+  validateSecret({
+    env,
+
+    errors,
+
+    warnings,
+
+    name:
+      "AUDIT_SECRET",
+
+    minimumLength:
+      MIN_STRONG_SECRET_LENGTH,
+
+    production:
+      isProduction,
+
+    required:
+      true,
+  });
+
+
+  /*
+   * Identity audit service may use a separate HMAC boundary.
+   *
+   * Require it in production if configured as a separate secret.
+   * If absent, the application may intentionally use AUDIT_SECRET,
+   * depending on the service implementation.
+   */
+  if (
+    hasValue(
+      env
+        .AUTH_AUDIT_SECRET
+    )
+  ) {
+    validateSecret({
+      env,
+
+      errors,
+
+      warnings,
+
+      name:
+        "AUTH_AUDIT_SECRET",
+
+      minimumLength:
+        MIN_STRONG_SECRET_LENGTH,
+
+      production:
+        isProduction,
+
+      required:
+        false,
+    });
+
+
+    if (
+      env
+        .AUTH_AUDIT_SECRET ===
+      env
+        .AUDIT_SECRET
+    ) {
+      addWarning(
+        warnings,
+        "CONFIG_AUDIT_SECRET_REUSE",
+        "AUTH_AUDIT_SECRET",
+        "AUTH_AUDIT_SECRET and AUDIT_SECRET are identical; separate keys are preferable"
+      );
+    }
+  }
+
+
+  // ==========================================================================
+  // INTEGRATION SECRET ENCRYPTION
+  // ==========================================================================
+
+  validateSecret({
+    env,
+
+    errors,
+
+    warnings,
+
+    name:
+      "INTEGRATION_SECRET_KEY",
+
+    minimumLength:
+      MIN_STRONG_SECRET_LENGTH,
+
+    production:
+      isProduction,
+
+    required:
+      isProduction,
+  });
+
+
+  // ==========================================================================
+  // SESSION / PRIVACY SECRET
+  // ==========================================================================
+
+  if (
+    hasValue(
+      env
+        .IP_HASH_SALT
+    )
+  ) {
+    validateSecret({
+      env,
+
+      errors,
+
+      warnings,
+
+      name:
+        "IP_HASH_SALT",
+
+      minimumLength:
+        MIN_SECRET_LENGTH,
+
+      production:
+        isProduction,
+
+      required:
+        false,
+    });
+  }
+
+
+  // ==========================================================================
+  // DEPENDENCY URLS
+  // ==========================================================================
+
+  validateDependencyUrl({
+    env,
+
+    errors,
+
+    warnings,
+
+    name:
+      "MONGODB_URI",
+
+    protocols: [
+      "mongodb:",
+      "mongodb+srv:",
+    ],
+
+    production:
+      isProduction,
+
+    required:
+      isProduction,
+  });
+
+
+  validateDependencyUrl({
+    env,
+
+    errors,
+
+    warnings,
+
+    name:
+      "REDIS_URL",
+
+    protocols: [
+      "redis:",
+      "rediss:",
+    ],
+
+    production:
+      isProduction,
+
+    required:
+      isProduction,
+  });
+
+
+  validateDependencyUrl({
+    env,
+
+    errors,
+
+    warnings,
+
+    name:
+      "RABBITMQ_URL",
+
+    protocols: [
+      "amqp:",
+      "amqps:",
+    ],
+
+    production:
+      isProduction,
+
+    required:
+      isProduction,
+  });
+
+
+  // ==========================================================================
+  // PRODUCTION TRANSPORT ENCRYPTION WARNINGS
+  // ==========================================================================
+
+  if (
+    isProduction &&
+    hasValue(
+      env
+        .REDIS_URL
+    ) &&
+    String(
+      env
+        .REDIS_URL
+    )
+      .startsWith(
+        "redis://"
+      ) &&
+    !urlUsesLoopback(
+      env
+        .REDIS_URL
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_REDIS_TRANSPORT_UNENCRYPTED",
+      "REDIS_URL",
+      "Production Redis uses redis:// rather than rediss://"
+    );
+  }
+
+
+  if (
+    isProduction &&
+    hasValue(
+      env
+        .RABBITMQ_URL
+    ) &&
+    String(
+      env
+        .RABBITMQ_URL
+    )
+      .startsWith(
+        "amqp://"
+      ) &&
+    !urlUsesLoopback(
+      env
+        .RABBITMQ_URL
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_RABBITMQ_TRANSPORT_UNENCRYPTED",
+      "RABBITMQ_URL",
+      "Production RabbitMQ uses amqp:// rather than amqps://"
+    );
+  }
+
+
+  // ==========================================================================
+  // CORS
+  // ==========================================================================
+
+  validateCors(
+    env,
+    errors,
+    warnings,
+    isProduction
+  );
+
+
+  // ==========================================================================
+  // NUMERIC LIMITS
+  // ==========================================================================
+
+  validateNumericRules(
+    env,
+    errors
+  );
+
+
+  // ==========================================================================
+  // CROSS-FIELD VALIDATION
+  // ==========================================================================
+
+  validateSessionConfiguration(
+    env,
+    errors,
+    warnings,
+    isProduction
+  );
+
+
+  validateDeploymentMode(
+    env,
+    errors,
+    warnings,
+    isProduction
+  );
+
+
+  validateRuntimeSafety(
+    env,
+    errors,
+    warnings,
+    isProduction
+  );
+
+
+  // ==========================================================================
+  // RESULT
+  // ==========================================================================
+
+  return {
+    valid:
+      errors.length ===
+      0,
+
+    environment:
+      nodeEnvironment,
+
+    production:
+      isProduction,
+
+    errors,
+
+    warnings,
+
+    checkedAt:
+      new Date()
+        .toISOString(),
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// ERROR TYPE
+// ============================================================================
+
+class StartupConfigurationError
+  extends Error {
+  constructor(
+    report
+  ) {
+    const details =
+      report
+        .errors
+        .map(
+          (
+            error
+          ) =>
+            `[${error.code}] ${error.variable}: ${error.message}`
+        )
+        .join(
+          "\n"
+        );
+
+
+    super(
+      `AIRA startup configuration validation failed\n${details}`
+    );
+
+
+    this.name =
+      "StartupConfigurationError";
+
+
+    this.code =
+      "AIRA_STARTUP_CONFIGURATION_INVALID";
+
+
+    this.report =
+      report;
+
+
+    this.executionAuthorized =
+      false;
+  }
+}
+
+
+// ============================================================================
+// FAIL-CLOSED VALIDATOR
+// ============================================================================
+
+function validateEnvironment(
+  options =
+    {}
+) {
+  const report =
+    inspectEnvironment(
+      options
+    );
+
+
+  if (
+    report.warnings.length >
+    0 &&
+    options
+      .silent !==
+    true
+  ) {
+    for (
+      const warning
+      of report
+        .warnings
+    ) {
+      process.stderr
+        .write(
+          `[startup-validator] WARNING ${warning.code} ${warning.variable}: ${warning.message}\n`
+        );
+    }
+  }
+
+
+  if (
+    !report.valid
+  ) {
+    if (
+      options
+        .silent !==
+      true
+    ) {
+      const lines = [
+        "",
+        "============================================================",
+        "AIRA STARTUP CONFIGURATION VALIDATION FAILED",
+        "============================================================",
+        "",
+        ...report
+          .errors
+          .map(
+            (
+              error
+            ) =>
+              `[${error.code}] ${error.variable}: ${error.message}`
+          ),
+        "",
+        "Correct the configuration before starting AIRA.",
+        "",
+      ];
+
+
+      process.stderr
+        .write(
+          lines.join(
+            "\n"
+          )
+        );
+    }
+
+
+    throw new StartupConfigurationError(
+      report
+    );
+  }
+
+
+  return report;
+}
+
+
+// ============================================================================
+// SAFE DIAGNOSTIC SNAPSHOT
+// ============================================================================
+
+function getSafeConfigurationSnapshot(
+  env =
+    process.env
+) {
+  const names = [
+    "NODE_ENV",
+    "NODE_INSTANCE_ID",
+    "PORT",
+
+    "MONGODB_URI",
+    "REDIS_URL",
+    "RABBITMQ_URL",
+
+    "CORS_ORIGINS",
+
+    "AUDIT_SECRET",
+    "AUTH_AUDIT_SECRET",
+    "INTEGRATION_SECRET_KEY",
+    "IP_HASH_SALT",
+
+    "SESSION_IDLE_TIMEOUT_MS",
+    "SESSION_ABSOLUTE_TIMEOUT_MS",
+    "SESSION_REMEMBER_ME_TIMEOUT_MS",
+
+    "SERVER_SHUTDOWN_TIMEOUT_MS",
+    "APPLICATION_SHUTDOWN_TIMEOUT_MS",
+    "WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS",
+
+    "QUEUE_MAX_IN_FLIGHT_PUBLISHES",
+    "QUEUE_PUBLISH_DRAIN_TIMEOUT_MS",
+    "QUEUE_PUBLISH_RETRY_AFTER_MS",
+
+    "RETENTION_JOB_INTERVAL_MINUTES",
+    "RETENTION_MAX_PATTERN_OCCURRENCES",
+
+    "LOG_LEVEL",
+    "LOG_TO_FILE",
+  ];
+
+
+  return Object.fromEntries(
+    names.map(
+      (
+        name
+      ) => [
+        name,
+
+        hasValue(
+          env[
+            name
+          ]
+        )
+          ? redactValue(
+              name,
+              env[
+                name
+              ]
+            )
+          : null,
+      ]
+    )
+  );
+}
+
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  validateEnvironment,
+
+  inspectEnvironment,
+
+  getSafeConfigurationSnapshot,
+
+  StartupConfigurationError,
+
+  NUMERIC_RULES,
+
+  ENVIRONMENT,
+};

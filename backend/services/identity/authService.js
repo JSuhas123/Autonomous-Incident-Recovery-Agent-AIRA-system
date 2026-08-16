@@ -252,110 +252,620 @@ async function register(data, { ip = null, userAgent = null } = {}) {
   };
 }
 
-async function login(data, { ip = null, userAgent = null } = {}) {
-  const { email, password, rememberMe = false } = data;
-  const normalizedEmail = email.toLowerCase().trim();
+async function login(
+  data,
+  {
+    ip =
+      null,
 
-  const credentialsError = (() => {
-    const err = new Error("Invalid email or password");
-    err.status = 401;
-    err.code = "INVALID_CREDENTIALS";
-    return err;
-  })();
+    userAgent =
+      null,
+  } = {}
+) {
+  const {
+    email,
+    password,
+    rememberMe =
+      false,
+  } =
+    data;
 
-  const user = await User.findOne({ normalizedEmail });
 
-  if (!user) {
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
-      reasonCode: "USER_NOT_FOUND",
-      ipHash: ip,
-    });
-    // Constant-time defence: always hash even when no user found
-    await hashPassword("aira-timing-defense-constant-input").catch(() => {});
-    throw credentialsError;
-  }
+  const normalizedEmail =
+    String(
+      email ||
+      ""
+    )
+      .toLowerCase()
+      .trim();
 
-  if (user.status === "suspended") {
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.DENIED, { userId: user._id, reasonCode: "ACCOUNT_SUSPENDED", ipHash: ip });
-    const err = new Error("Account suspended. Contact support.");
-    err.status = 403;
-    err.code = "ACCOUNT_SUSPENDED";
-    throw err;
-  }
-  if (user.status === "disabled") {
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.DENIED, { userId: user._id, reasonCode: "ACCOUNT_DISABLED", ipHash: ip });
-    const err = new Error("Account disabled. Contact support.");
-    err.status = 403;
-    err.code = "ACCOUNT_DISABLED";
-    throw err;
-  }
 
-  const credential = await PasswordCredential.findOne({ userId: user._id }).select("+passwordHash");
-  if (!credential) {
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, { userId: user._id, reasonCode: "NO_CREDENTIAL", ipHash: ip });
-    await hashPassword("aira-timing-defense-constant-input").catch(() => {});
-    throw credentialsError;
-  }
+  /*
+   * Same outward credential error for:
+   *
+   * - unknown user
+   * - missing credential
+   * - wrong password
+   *
+   * This prevents credential/account enumeration.
+   */
+  const credentialsError =
+    (() => {
+      const error =
+        new Error(
+          "Invalid email or password"
+        );
 
-  if (credential.lockedUntil && credential.lockedUntil > new Date()) {
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.DENIED, { userId: user._id, reasonCode: "ACCOUNT_LOCKED", ipHash: ip });
-    const err = new Error("Account locked. Try again later.");
-    err.status = 403;
-    err.code = "ACCOUNT_LOCKED";
-    throw err;
-  }
+      error.status =
+        401;
 
-  const valid = await verifyPassword(credential.passwordHash, password);
+      error.code =
+        "INVALID_CREDENTIALS";
 
-  if (!valid) {
-    const newCount = (credential.failedAttempts || 0) + 1;
-    const lockUntil = newCount >= 10 ? new Date(Date.now() + 15 * 60 * 1000) : null;
-    await PasswordCredential.updateOne(
-      { _id: credential._id },
-      { failedAttempts: newCount, lastFailedAt: new Date(), ...(lockUntil ? { lockedUntil: lockUntil } : {}) }
+      error.executionAuthorized =
+        false;
+
+      return error;
+    })();
+
+
+  const user =
+    await User
+      .findOne({
+        normalizedEmail,
+      });
+
+
+  if (
+    !user
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        reasonCode:
+          "USER_NOT_FOUND",
+
+        ipHash:
+          ip,
+      }
     );
-    if (lockUntil) {
-      await auditRecord(AUTH_EVENT_TYPES.ACCOUNT_LOCKED, AUTH_EVENT_OUTCOMES.DENIED, { userId: user._id, ipHash: ip });
-    }
-    await auditRecord(AUTH_EVENT_TYPES.LOGIN_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, { userId: user._id, reasonCode: "INVALID_PASSWORD", ipHash: ip });
+
+
+    /*
+     * Timing defence:
+     * perform expensive password hashing even for unknown users.
+     */
+    await hashPassword(
+      "aira-timing-defense-constant-input"
+    )
+      .catch(
+        () => {}
+      );
+
+
     throw credentialsError;
   }
 
-  // Reset failure counters and optionally rehash
-  await PasswordCredential.updateOne({ _id: credential._id }, { failedAttempts: 0, lockedUntil: null, lastFailedAt: null });
-  if (needsRehash(credential.passwordHash)) {
-    const newHash = await hashPassword(password);
-    await PasswordCredential.updateOne({ _id: credential._id }, { passwordHash: newHash, passwordChangedAt: new Date() });
+
+  const credential =
+    await PasswordCredential
+      .findOne({
+        userId:
+          user._id,
+      })
+      .select(
+        "+passwordHash"
+      );
+
+
+  if (
+    !credential
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "NO_CREDENTIAL",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    await hashPassword(
+      "aira-timing-defense-constant-input"
+    )
+      .catch(
+        () => {}
+      );
+
+
+    throw credentialsError;
   }
 
-  await User.updateOne({ _id: user._id }, { lastLoginAt: new Date() });
 
-  const membership = await OrganizationMembership.findOne({ userId: user._id, status: "active" });
-  const organization = membership ? await Organization.findById(membership.organizationId) : null;
+  /*
+   * Prove knowledge of the password BEFORE revealing:
+   *
+   * - account suspended
+   * - account disabled
+   * - account locked
+   *
+   * This prevents email-only account state enumeration.
+   */
+  const valid =
+    await verifyPassword(
+      credential
+        .passwordHash,
+      password
+    );
 
-  const { session, rawToken, csrfToken } = await createSession({
-    userId: user._id,
-    organizationId: organization?._id || null,
-    rememberMe,
-    ip,
-    userAgent,
-  });
 
-  await auditRecord(AUTH_EVENT_TYPES.LOGIN_SUCCEEDED, AUTH_EVENT_OUTCOMES.SUCCESS, {
-    userId: user._id,
-    organizationId: organization?._id,
-    sessionId: session._id,
-    ipHash: ip,
-  });
-  await auditRecord(AUTH_EVENT_TYPES.SESSION_CREATED, AUTH_EVENT_OUTCOMES.SUCCESS, { userId: user._id, sessionId: session._id });
+  const now =
+    new Date();
+
+
+  const locked =
+    Boolean(
+      credential
+        .lockedUntil &&
+      credential
+        .lockedUntil >
+      now
+    );
+
+
+  if (
+    !valid
+  ) {
+    /*
+     * Do not expose whether the account is currently locked.
+     *
+     * If already locked, retain the existing lock rather than
+     * extending it for arbitrary bad attempts.
+     */
+    if (
+      !locked
+    ) {
+      const newCount =
+        (
+          credential
+            .failedAttempts ||
+          0
+        ) +
+        1;
+
+
+      const lockUntil =
+        newCount >=
+        10
+          ? new Date(
+              Date.now() +
+              15 *
+                60 *
+                1000
+            )
+          : null;
+
+
+      await PasswordCredential
+        .updateOne(
+          {
+            _id:
+              credential._id,
+          },
+          {
+            $set: {
+              failedAttempts:
+                newCount,
+
+              lastFailedAt:
+                new Date(),
+
+              ...(
+                lockUntil
+                  ? {
+                      lockedUntil:
+                        lockUntil,
+                    }
+                  : {}
+              ),
+            },
+          }
+        );
+
+
+      if (
+        lockUntil
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .ACCOUNT_LOCKED,
+
+          AUTH_EVENT_OUTCOMES
+            .DENIED,
+
+          {
+            userId:
+              user._id,
+
+            ipHash:
+              ip,
+          }
+        );
+      }
+    }
+
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "INVALID_PASSWORD",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    throw credentialsError;
+  }
+
+
+  /*
+   * At this point the caller has proven possession of the
+   * correct password, so account-state responses no longer
+   * reveal information to unauthenticated guessers.
+   */
+
+  if (
+    locked
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_LOCKED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account locked. Try again later."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_LOCKED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  if (
+    user.status ===
+    "suspended"
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_SUSPENDED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account suspended. Contact support."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_SUSPENDED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  if (
+    user.status ===
+    "disabled"
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_DISABLED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account disabled. Contact support."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_DISABLED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  /*
+   * Successful authentication clears lock/failure state.
+   */
+  await PasswordCredential
+    .updateOne(
+      {
+        _id:
+          credential._id,
+      },
+      {
+        $set: {
+          failedAttempts:
+            0,
+
+          lockedUntil:
+            null,
+
+          lastFailedAt:
+            null,
+        },
+      }
+    );
+
+
+  /*
+   * Transparently migrate old Argon2 parameters.
+   *
+   * The plaintext password exists only within this request and
+   * the newly generated hash replaces the older hash.
+   */
+  if (
+    needsRehash(
+      credential
+        .passwordHash
+    )
+  ) {
+    const newHash =
+      await hashPassword(
+        password
+      );
+
+
+    await PasswordCredential
+      .updateOne(
+        {
+          _id:
+            credential._id,
+        },
+        {
+          $set: {
+            passwordHash:
+              newHash,
+
+            passwordChangedAt:
+              new Date(),
+          },
+
+          $inc: {
+            hashVersion:
+              1,
+          },
+        }
+      );
+  }
+
+
+  await User
+    .updateOne(
+      {
+        _id:
+          user._id,
+      },
+      {
+        $set: {
+          lastLoginAt:
+            new Date(),
+        },
+      }
+    );
+
+
+  const membership =
+    await OrganizationMembership
+      .findOne({
+        userId:
+          user._id,
+
+        status:
+          "active",
+      });
+
+
+  /*
+   * Do not attach an inactive organization to a fresh session.
+   */
+  const organization =
+    membership
+      ? await Organization
+          .findOne({
+            _id:
+              membership
+                .organizationId,
+
+            status:
+              "active",
+          })
+      : null;
+
+
+  const {
+    session,
+    rawToken,
+    csrfToken,
+  } =
+    await createSession({
+      userId:
+        user._id,
+
+      organizationId:
+        organization
+          ?._id ||
+        null,
+
+      rememberMe,
+
+      ip,
+
+      userAgent,
+    });
+
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .LOGIN_SUCCEEDED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization
+          ?._id,
+
+      sessionId:
+        session._id,
+
+      ipHash:
+        ip,
+    }
+  );
+
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .SESSION_CREATED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      sessionId:
+        session._id,
+    }
+  );
+
 
   return {
     rawToken,
+
     session,
+
     csrfToken,
-    user: safeUser(user),
-    organization: organization ? safeOrg(organization) : null,
-    membership: membership ? safeMembership(membership) : null,
+
+    user:
+      safeUser(
+        user
+      ),
+
+    organization:
+      organization
+        ? safeOrg(
+            organization
+          )
+        : null,
+
+    membership:
+      membership
+        ? safeMembership(
+            membership
+          )
+        : null,
+
+    executionAuthorized:
+      false,
   };
 }
 

@@ -5,9 +5,11 @@ require("dotenv").config();
 // secret or connection string is missing — preventing silent misconfiguration.
 const {
   validateEnvironment,
-} = require(
-  "./config/startupValidator"
-);
+  inspectEnvironment,
+} =
+  require(
+    "./config/startupValidator"
+  );
 
 validateEnvironment();
 
@@ -60,6 +62,10 @@ const effectivenessRoutes =
 const confidenceRoutes =
   require(
     "./routes/confidenceRoutes"
+  );
+const selfObservabilityCollector =
+  require(
+    "./services/observability/selfObservabilityCollector"
   );
 
 const integrationRoutes =
@@ -264,6 +270,7 @@ const {
 
 const {
   rateLimitingMiddleware,
+  getRateLimitService,
 } =
   require(
     "./middleware/rateLimitingMiddleware"
@@ -360,7 +367,7 @@ const {
     "./services/workflowOutbox/workflowOutboxConsumerRegistry"
   );
 
- // ============================================================================
+// ============================================================================
 // PHASE 11.4 — WORKFLOW REPLAY / RECOVERY
 // ============================================================================
 
@@ -390,6 +397,34 @@ const {
   require(
     "./services/recoveryRuntime/recoveryRuntimeContracts"
   );
+
+const dependencyIsolationService =
+  require(
+    "./services/infrastructure/dependencyIsolationService"
+  );
+
+  const productionReadinessService =
+  require(
+    "./services/infrastructure/productionReadinessService"
+  );
+
+const sloService =
+  require(
+    "./services/reliability/sloService"
+  );
+
+const retentionService =
+  require(
+    "./services/infrastructure/retentionService"
+  );
+
+const {
+  getKillSwitchManager,
+} =
+  require(
+    "./config/killSwitches"
+  );
+
 
 const app =
   express();
@@ -617,6 +652,115 @@ app.use(
   correlationIdMiddleware
 );
 
+// ============================================================================
+// PHASE 11.10 — STARTUP / SHUTDOWN ADMISSION GATE
+// ============================================================================
+
+app.use(
+  (
+    req,
+    res,
+    next
+  ) => {
+    /*
+     * Health, authentication and preflight traffic must remain reachable
+     * while AIRA is starting, recovering or draining.
+     */
+    const alwaysAllowed =
+      req.path ===
+        "/" ||
+      req.path.startsWith(
+        "/health"
+      ) ||
+      req.path.startsWith(
+        "/api/v1/auth"
+      );
+
+    if (
+      alwaysAllowed
+    ) {
+      return next();
+    }
+
+    /*
+     * Read-only traffic can remain available while startup recovery
+     * is incomplete. Any state-changing request is blocked.
+     *
+     * This also provides a clean admission seam for the later
+     * production-hardening phases:
+     *
+     * 11.11 retention/archival
+     * 11.12 self-observability
+     * 11.13 SLO state
+     * 11.14 configuration validation
+     * 11.15 chaos/failure injection
+     * 11.16 production E2E
+     * 11.17 security/regression freeze
+     */
+    const readOnly =
+      req.method ===
+        "GET" ||
+      req.method ===
+        "HEAD" ||
+      req.method ===
+        "OPTIONS";
+
+    if (
+      readOnly
+    ) {
+      return next();
+    }
+
+    if (
+      !isApplicationReady()
+    ) {
+      const draining =
+        applicationLifecycle
+          .state ===
+          APPLICATION_STATE
+            .DRAINING ||
+        applicationLifecycle
+          .state ===
+          APPLICATION_STATE
+            .SHUTTING_DOWN;
+
+      return res
+        .status(
+          503
+        )
+        .set(
+          "Retry-After",
+          "5"
+        )
+        .json({
+          error:
+            "AIRA is not ready to accept operational work",
+
+          code:
+            draining
+              ? "APPLICATION_DRAINING"
+              : "APPLICATION_NOT_READY",
+
+          lifecycleState:
+            applicationLifecycle
+              .state,
+
+          startupRecoveryCompleted:
+            applicationLifecycle
+              .startupRecoveryCompleted,
+
+          retryable:
+            true,
+
+          executionAuthorized:
+            false,
+        });
+    }
+
+    return next();
+  }
+);
+
 app.use(
   "/api",
   recoveryDecisionRoutes
@@ -722,6 +866,69 @@ app.get(
       .json({
         status:
           "ok",
+
+        executionAuthorized:
+          false,
+      });
+  }
+);
+
+// ============================================================================
+// PHASE 11.10 — READINESS PROBE
+// ============================================================================
+
+app.get(
+  "/health/ready",
+  (
+    req,
+    res
+  ) => {
+    const ready =
+      isApplicationReady();
+
+    return res
+      .status(
+        ready
+          ? 200
+          : 503
+      )
+      .json({
+        status:
+          ready
+            ? "ready"
+            : "not-ready",
+
+        lifecycle:
+          getApplicationLifecycleStatus(),
+
+        replayRecovery: {
+          initialized:
+            replayRecoveryStatus
+              .initialized,
+
+          startupRecoveryCompleted:
+            replayRecoveryStatus
+              .startupRecoveryCompleted,
+
+          discovered:
+            replayRecoveryStatus
+              .discovered,
+
+          recovered:
+            replayRecoveryStatus
+              .recovered,
+
+          failed:
+            replayRecoveryStatus
+              .failed,
+
+          lastError:
+            replayRecoveryStatus
+              .lastError,
+        },
+
+        executionAuthorized:
+          false,
       });
   }
 );
@@ -737,7 +944,11 @@ app.get(
       systemHealthService
         .getHealthStatus();
 
+    const applicationReady =
+      isApplicationReady();
+
     const statusCode =
+      !applicationReady ||
       systemHealth
         .safeMode
         ? 503
@@ -749,14 +960,23 @@ app.get(
       )
       .json({
         status:
-          systemHealth
-            .safeMode
-            ? "degraded"
-            : "ok",
+          !applicationReady
+            ? "not-ready"
+            : systemHealth
+                .safeMode
+              ? "degraded"
+              : "ok",
 
         timestamp:
           new Date()
             .toISOString(),
+
+        ready:
+          applicationReady,
+
+        lifecycleState:
+          applicationLifecycle
+            .state,
 
         safeMode:
           systemHealth
@@ -777,6 +997,9 @@ app.get(
             ? systemHealth
                 .warnings
             : undefined,
+
+        executionAuthorized:
+          false,
       });
   }
 );
@@ -832,6 +1055,9 @@ function internalTokenGuard(
 
         code:
           "MISSING_AUTH_HEADER",
+
+        executionAuthorized:
+          false,
       });
   }
 
@@ -844,23 +1070,27 @@ function internalTokenGuard(
         "crypto"
       );
 
-    match =
-      crypto
-        .timingSafeEqual(
-          Buffer.from(
-            provided.padEnd(
-              token.length
-            )
-          ),
+    const providedBuffer =
+      Buffer.from(
+        provided
+      );
 
-          Buffer.from(
-            token.padEnd(
-              provided.length
-            )
-          )
-        ) &&
-      provided.length ===
-        token.length;
+    const expectedBuffer =
+      Buffer.from(
+        token
+      );
+
+    if (
+      providedBuffer.length ===
+      expectedBuffer.length
+    ) {
+      match =
+        crypto
+          .timingSafeEqual(
+            providedBuffer,
+            expectedBuffer
+          );
+    }
   } catch (
     error
   ) {
@@ -881,6 +1111,9 @@ function internalTokenGuard(
 
         code:
           "INVALID_INTERNAL_TOKEN",
+
+        executionAuthorized:
+          false,
       });
   }
 
@@ -895,18 +1128,132 @@ app.get(
     req,
     res
   ) => {
-    res.set(
-      "Content-Type",
-      "text/plain; charset=utf-8"
-    );
+    try {
+      const queueStatus =
+        queueService ||
+        null;
 
-    const metrics =
-      await metricsService
-        .getMetrics();
 
-    res.send(
-      metrics
-    );
+      const outboxStatus =
+        workflowOutboxRuntime &&
+        typeof workflowOutboxRuntime
+          .getStatus ===
+        "function"
+          ? workflowOutboxRuntime
+              .getStatus()
+          : null;
+
+
+      const consumerStatus =
+        workflowOutboxConsumers &&
+        typeof workflowOutboxConsumers
+          .getStatus ===
+        "function"
+          ? workflowOutboxConsumers
+              .getStatus()
+          : null;
+
+
+      await selfObservabilityCollector
+        .collect({
+          lifecycle:
+            getApplicationLifecycleStatus(),
+
+          replayRecovery:
+            replayRecoveryStatus,
+
+          queue:
+            queueStatus,
+
+          workers: {
+            workflowOutbox:
+              outboxStatus,
+
+            workflowConsumers:
+              consumerStatus,
+
+            monitorScheduler:
+              global
+                .monitorScheduler
+                ? {
+                    running:
+                      true,
+                  }
+                : {
+                    running:
+                      false,
+                  },
+
+            memoryCleanup:
+              {
+                running:
+                  memoryCleanupJob
+                    .isRunning,
+
+                active:
+                  memoryCleanupJob
+                    .cleanupInProgress,
+              },
+
+            multiInstance:
+              global
+                .multiInstanceCoordinator
+                ? {
+                    running:
+                      true,
+                  }
+                : {
+                    running:
+                      false,
+                  },
+          },
+        });
+
+
+      res.set(
+        "Content-Type",
+        metricsService
+          .getContentType()
+      );
+
+
+      const metrics =
+        await metricsService
+          .getMetrics();
+
+
+      return res
+        .status(
+          200
+        )
+        .send(
+          metrics
+        );
+    } catch (
+      error
+    ) {
+      selfObservabilityCollector
+        .recordError(
+          "metrics-endpoint",
+          error
+        );
+
+
+      return res
+        .status(
+          503
+        )
+        .json({
+          error:
+            "Metrics collection unavailable",
+
+          code:
+            "METRICS_COLLECTION_FAILED",
+
+          executionAuthorized:
+            false,
+        });
+    }
   }
 );
 
@@ -925,9 +1272,222 @@ app.get(
       const currentIdempotencyService =
         await getIdempotencyService();
 
+
+      // ======================================================================
+      // SYSTEM HEALTH
+      // ======================================================================
+
       const systemHealth =
         systemHealthService
           .getHealthStatus();
+
+
+      // ======================================================================
+      // PHASE 11.5 — DEPENDENCY ISOLATION HEALTH
+      // ======================================================================
+
+      const dependencyIsolationSummary =
+        dependencyIsolationService
+          .getSummary();
+
+
+      const dependencyIsolationStatuses =
+        dependencyIsolationService
+          .getAllStatuses();
+
+
+      // ======================================================================
+      // PHASE 11.6 — ADMISSION / LOAD PROTECTION
+      // ======================================================================
+
+      /*
+       * Rate limiter status describes API admission capacity.
+       *
+       * Queue load status describes asynchronous publisher pressure.
+       *
+       * Neither layer grants execution authority.
+       */
+
+      const rateLimitService =
+        getRateLimitService();
+
+
+      const rateLimitStatus =
+        rateLimitService &&
+        typeof rateLimitService
+          .getStatus ===
+        "function"
+          ? rateLimitService
+              .getStatus()
+          : null;
+
+
+      const queueLoadStatus =
+        currentQueueService &&
+        typeof currentQueueService
+          .getLoadStatus ===
+        "function"
+          ? currentQueueService
+              .getLoadStatus()
+          : null;
+
+
+      const admissionDegraded =
+        Boolean(
+          rateLimitStatus
+            ?.fallbackActive
+        );
+
+
+      const queueSaturated =
+        Boolean(
+          queueLoadStatus
+            ?.saturated ||
+          queueLoadStatus
+            ?.publisherBlocked
+        );
+
+
+      const loadProtection = {
+        admission: {
+          available:
+            Boolean(
+              rateLimitStatus
+            ),
+
+          degraded:
+            admissionDegraded,
+
+          redisConnected:
+            rateLimitStatus
+              ?.redisConnected ??
+            null,
+
+          fallbackActive:
+            rateLimitStatus
+              ?.fallbackActive ??
+            null,
+
+          localCounterCount:
+            rateLimitStatus
+              ?.localCounterCount ??
+            null,
+
+          windowMs:
+            rateLimitStatus
+              ?.windowMs ??
+            null,
+
+          limits:
+            rateLimitStatus
+              ?.limits ||
+            null,
+
+          lastRedisError:
+            rateLimitStatus
+              ?.lastRedisError ||
+            null,
+
+          executionAuthorized:
+            false,
+        },
+
+
+        queue: {
+          available:
+            Boolean(
+              queueLoadStatus
+            ),
+
+          connected:
+            queueLoadStatus
+              ?.connected ??
+            Boolean(
+              currentQueueService
+                ?.connected
+            ),
+
+          saturated:
+            queueSaturated,
+
+          inFlightPublishes:
+            queueLoadStatus
+              ?.inFlightPublishes ??
+            null,
+
+          maxInFlightPublishes:
+            queueLoadStatus
+              ?.maxInFlightPublishes ??
+            null,
+
+          publisherBlocked:
+            queueLoadStatus
+              ?.publisherBlocked ??
+            false,
+
+          publisherBlockedUntil:
+            queueLoadStatus
+              ?.publisherBlockedUntil ||
+            null,
+
+          backpressureEvents:
+            queueLoadStatus
+              ?.backpressureEvents ??
+            0,
+
+          saturationRejects:
+            queueLoadStatus
+              ?.saturationRejects ??
+            0,
+
+          lastBackpressureAt:
+            queueLoadStatus
+              ?.lastBackpressureAt ||
+            null,
+
+          publishDrainTimeoutMs:
+            queueLoadStatus
+              ?.publishDrainTimeoutMs ??
+            null,
+
+          publishRetryAfterMs:
+            queueLoadStatus
+              ?.publishRetryAfterMs ??
+            null,
+
+          defaultConsumerPrefetch:
+            queueLoadStatus
+              ?.defaultConsumerPrefetch ??
+            null,
+
+          maxConsumerPrefetch:
+            queueLoadStatus
+              ?.maxConsumerPrefetch ??
+            null,
+
+          executionAuthorized:
+            false,
+        },
+
+
+        /*
+         * Redis-backed admission may degrade safely to the bounded
+         * local limiter.
+         *
+         * Queue saturation is reported independently.
+         */
+        degraded:
+          admissionDegraded ||
+          queueSaturated,
+
+        executionAuthorized:
+          false,
+      };
+
+
+      // ======================================================================
+      // WORKFLOW OUTBOX
+      // ======================================================================
 
       const outboxRuntimeStatus =
         workflowOutboxRuntime
@@ -935,44 +1495,443 @@ app.get(
               .getStatus()
           : null;
 
+
       const outboxConsumerStatus =
         workflowOutboxConsumers
           ? workflowOutboxConsumers
               .getStatus()
           : null;
 
+
+      // ======================================================================
+      // FEATURE FLAGS
+      // ======================================================================
+
+      const allFeatureFlags =
+        featureFlags
+          .getAllFlags();
+
+
+      const enabledFeatureFlags =
+        allFeatureFlags
+          .filter(
+            (
+              flag
+            ) =>
+              flag.enabled
+          );
+
+
+      const disabledFeatureFlags =
+        allFeatureFlags
+          .filter(
+            (
+              flag
+            ) =>
+              !flag.enabled
+          );
+
+               // ======================================================================
+      // PHASE 11.16 — PRODUCTION READINESS
+      // ======================================================================
+
+      /*
+       * Production readiness answers:
+       *
+       *   "Can this AIRA instance safely serve production traffic?"
+       *
+       * It DOES NOT authorize infrastructure execution.
+       *
+       * Actual action execution continues through:
+       *
+       * policy
+       * approval
+       * execution authorization
+       * kill switches
+       * idempotency
+       * locking
+       * execution gates
+       */
+
+
+      // ----------------------------------------------------------------------
+      // STARTUP CONFIGURATION
+      // ----------------------------------------------------------------------
+
+      const configurationStatus =
+        inspectEnvironment({
+          env:
+            process.env,
+
+          isProduction:
+            process.env.NODE_ENV ===
+            "production",
+        });
+
+
+      // ----------------------------------------------------------------------
+      // APPLICATION LIFECYCLE
+      // ----------------------------------------------------------------------
+
+      const applicationLifecycleStatus =
+        typeof getApplicationLifecycleStatus ===
+        "function"
+          ? getApplicationLifecycleStatus()
+          : null;
+
+
+      // ----------------------------------------------------------------------
+      // RETENTION
+      // ----------------------------------------------------------------------
+
+      const retentionStatus =
+        retentionService &&
+        typeof retentionService
+          .getStatus ===
+        "function"
+          ? retentionService
+              .getStatus()
+          : null;
+
+
+      // ----------------------------------------------------------------------
+      // KILL SWITCHES
+      // ----------------------------------------------------------------------
+
+      let killSwitchStatus =
+        null;
+
+
+      try {
+        const killSwitchManager =
+          getKillSwitchManager();
+
+
+        killSwitchStatus =
+          killSwitchManager &&
+          typeof killSwitchManager
+            .getAllStatuses ===
+          "function"
+            ? killSwitchManager
+                .getAllStatuses()
+            : null;
+      } catch (
+        error
+      ) {
+        killSwitchStatus = {
+          actionsEnabled:
+            false,
+
+          emergencyMode:
+            true,
+
+          error:
+            error.message,
+
+          executionAuthorized:
+            false,
+        };
+      }
+
+
+      // ----------------------------------------------------------------------
+      // FEATURE FLAG SAFETY
+      // ----------------------------------------------------------------------
+
+      let featureFlagSafety =
+        null;
+
+
+      try {
+        featureFlagSafety =
+          featureFlags &&
+          typeof featureFlags
+            .validateProductionSetup ===
+          "function"
+            ? featureFlags
+                .validateProductionSetup()
+            : {
+                safe:
+                  false,
+
+                warnings: [
+                  "Feature flag validation unavailable",
+                ],
+
+                errors: [],
+              };
+      } catch (
+        error
+      ) {
+        featureFlagSafety = {
+          safe:
+            false,
+
+          warnings:
+            [],
+
+          errors: [
+            error.message,
+          ],
+        };
+      }
+
+
+      // ----------------------------------------------------------------------
+      // RELIABILITY / SLO
+      // ----------------------------------------------------------------------
+
+      let reliabilityStatus =
+        null;
+
+
+      try {
+        reliabilityStatus =
+          sloService &&
+          typeof sloService
+            .getStatus ===
+          "function"
+            ? sloService
+                .getStatus()
+            : null;
+      } catch (
+        error
+      ) {
+        reliabilityStatus = {
+          state:
+            "INSUFFICIENT_DATA",
+
+          error:
+            error.message,
+
+          executionAuthorized:
+            false,
+        };
+      }
+
+
+      // ----------------------------------------------------------------------
+      // CHAOS SAFETY POSTURE
+      // ----------------------------------------------------------------------
+
+      /*
+       * server.js currently does not own a runtime ChaosTestFramework
+       * singleton.
+       *
+       * Therefore readiness evaluates the configured production
+       * chaos posture directly from environment settings.
+       *
+       * If a runtime chaos coordinator is introduced later,
+       * replace activeFailures below with its getStatus().
+       */
+      const chaosStatus = {
+        environment:
+          process.env.NODE_ENV ||
+          "development",
+
+        enabled:
+          String(
+            process.env
+              .AIRA_CHAOS_ENABLED ||
+            ""
+          )
+            .toLowerCase() ===
+          "true",
+
+        productionAllowed:
+          String(
+            process.env
+              .AIRA_CHAOS_PRODUCTION_ALLOWED ||
+            ""
+          )
+            .toLowerCase() ===
+          "true",
+
+        activeFailures:
+          [],
+
+        executionAuthorized:
+          false,
+      };
+
+
+      // ----------------------------------------------------------------------
+      // FINAL READINESS EVALUATION
+      // ----------------------------------------------------------------------
+
+      const productionReadiness =
+        productionReadinessService
+          .evaluate({
+            configuration:
+              configurationStatus,
+
+            lifecycle:
+              applicationLifecycleStatus,
+
+            replayRecovery:
+              replayRecoveryStatus,
+
+            systemHealth,
+
+            dependencyIsolation: {
+              summary:
+                dependencyIsolationSummary,
+
+              dependencies:
+                dependencyIsolationStatuses,
+
+              executionAuthorized:
+                false,
+            },
+
+            outbox: {
+              runtime:
+                outboxRuntimeStatus,
+
+              consumers:
+                outboxConsumerStatus,
+
+              executionAuthorized:
+                false,
+            },
+
+            retention:
+              retentionStatus,
+
+            chaos:
+              chaosStatus,
+
+            killSwitches:
+              killSwitchStatus,
+
+            featureFlags:
+              featureFlagSafety,
+
+            reliability:
+              reliabilityStatus,
+          });
+      // ======================================================================
+      // FINAL HEALTH RESPONSE
+      // ======================================================================
+
       const health = {
-        status:
-          systemHealth
-            .safeMode
-            ? "degraded"
-            : "healthy",
+        /*
+         * systemHealthService remains the authoritative
+         * instance-safety signal.
+         *
+         * Lifecycle readiness is separate from process liveness.
+         */
+                status:
+          productionReadiness
+            .state ===
+          "NOT_READY"
+            ? "unhealthy"
+            : productionReadiness
+                .state ===
+              "DEGRADED"
+              ? "degraded"
+              : "healthy",
+
+
+        applicationLifecycle:
+          getApplicationLifecycleStatus(),
+
 
         timestamp:
           new Date()
             .toISOString(),
 
+
         deploymentMode:
           systemHealth
             .deploymentMode,
 
+
         safeMode:
           systemHealth
             .safeMode,
+   
+                    // ====================================================================
+        // PHASE 11.16 — PRODUCTION READINESS
+        // ====================================================================
+
+        productionReadiness: {
+          state:
+            productionReadiness
+              .state,
+
+          productionReady:
+            productionReadiness
+              .productionReady,
+
+          degraded:
+            productionReadiness
+              .degraded,
+
+          readyToServeTraffic:
+            productionReadiness
+              .readyToServeTraffic,
+
+          summary:
+            productionReadiness
+              .summary,
+
+          blockers:
+            productionReadiness
+              .blockers,
+
+          warnings:
+            productionReadiness
+              .warnings,
+
+          checks:
+            productionReadiness
+              .checks,
+
+          evaluatedAt:
+            productionReadiness
+              .evaluatedAt,
+
+          /*
+           * Readiness NEVER authorizes an infrastructure action.
+           */
+          executionAuthorized:
+            false,
+        },
+
+        // ====================================================================
+        // PHASE 11.5 — DEPENDENCY ISOLATION
+        // ====================================================================
+
+        dependencyIsolation: {
+          summary:
+            dependencyIsolationSummary,
+
+          dependencies:
+            dependencyIsolationStatuses,
+
+          executionAuthorized:
+            false,
+        },
+
+
+        // ====================================================================
+        // PHASE 11.6 — LOAD PROTECTION
+        // ====================================================================
+
+        loadProtection,
+
+
+        // ====================================================================
+        // FEATURE FLAGS
+        // ====================================================================
 
         featureFlags: {
           summary:
-            `${featureFlags.getAllFlags().filter(flag => flag.enabled).length}/${featureFlags.getAllFlags().length} enabled`,
+            `${enabledFeatureFlags.length}/${allFeatureFlags.length} enabled`,
 
           enabled:
-            featureFlags
-              .getAllFlags()
-              .filter(
-                (
-                  flag
-                ) =>
-                  flag.enabled
-              )
+            enabledFeatureFlags
               .map(
                 (
                   flag
@@ -981,14 +1940,7 @@ app.get(
               ),
 
           disabled:
-            featureFlags
-              .getAllFlags()
-              .filter(
-                (
-                  flag
-                ) =>
-                  !flag.enabled
-              )
+            disabledFeatureFlags
               .map(
                 (
                   flag
@@ -997,9 +1949,15 @@ app.get(
               ),
         },
 
+
+        // ====================================================================
+        // COMPONENT HEALTH
+        // ====================================================================
+
         components: {
           database:
             "connected",
+
 
           queue:
             currentQueueService
@@ -1009,6 +1967,7 @@ app.get(
                 : "disconnected"
               : "not-initialized",
 
+
           idempotency:
             currentIdempotencyService
               ? currentIdempotencyService
@@ -1016,6 +1975,7 @@ app.get(
                 ? "connected"
                 : "disconnected"
               : "not-initialized",
+
 
           redis: {
             connected:
@@ -1029,11 +1989,62 @@ app.get(
                 .failureStartTime,
           },
 
+
+          rateLimiter: {
+            redisConnected:
+              rateLimitStatus
+                ?.redisConnected ??
+              null,
+
+            fallbackActive:
+              rateLimitStatus
+                ?.fallbackActive ??
+              null,
+
+            localCounterCount:
+              rateLimitStatus
+                ?.localCounterCount ??
+              null,
+          },
+
+
+          queueLoad: {
+            saturated:
+              queueSaturated,
+
+            inFlightPublishes:
+              queueLoadStatus
+                ?.inFlightPublishes ??
+              null,
+
+            maxInFlightPublishes:
+              queueLoadStatus
+                ?.maxInFlightPublishes ??
+              null,
+
+            publisherBlocked:
+              queueLoadStatus
+                ?.publisherBlocked ??
+              false,
+
+            backpressureEvents:
+              queueLoadStatus
+                ?.backpressureEvents ??
+              0,
+
+            saturationRejects:
+              queueLoadStatus
+                ?.saturationRejects ??
+              0,
+          },
+
+
           memoryCleanup:
             memoryCleanupJob
               .isRunning
               ? "running"
               : "stopped",
+
 
           workflowOutbox: {
             composition:
@@ -1048,44 +2059,85 @@ app.get(
               outboxConsumerStatus,
           },
 
+
           replayRecovery: {
-  initialized:
-    replayRecoveryStatus
-      .initialized,
+            initialized:
+              replayRecoveryStatus
+                .initialized,
 
-  startupRecoveryCompleted:
-    replayRecoveryStatus
-      .startupRecoveryCompleted,
+            startupRecoveryCompleted:
+              replayRecoveryStatus
+                .startupRecoveryCompleted,
 
-  discovered:
-    replayRecoveryStatus
-      .discovered,
+            discovered:
+              replayRecoveryStatus
+                .discovered,
 
-  recovered:
-    replayRecoveryStatus
-      .recovered,
+            recovered:
+              replayRecoveryStatus
+                .recovered,
 
-  failed:
-    replayRecoveryStatus
-      .failed,
+            failed:
+              replayRecoveryStatus
+                .failed,
 
-  lastRunAt:
-    replayRecoveryStatus
-      .lastRunAt,
+            lastRunAt:
+              replayRecoveryStatus
+                .lastRunAt,
 
-  lastError:
-    replayRecoveryStatus
-      .lastError,
-},
+            lastError:
+              replayRecoveryStatus
+                .lastError,
+          },
         },
 
-        warnings:
-          systemHealth
-            .warnings,
+
+        // ====================================================================
+        // WARNINGS
+        // ====================================================================
+
+        warnings: [
+          ...(
+            systemHealth
+              .warnings ||
+            []
+          ),
+
+          ...(
+            admissionDegraded
+              ? [
+                  "Rate limiting is using bounded local fallback because Redis admission storage is unavailable.",
+                ]
+              : []
+          ),
+
+          ...(
+            queueSaturated
+              ? [
+                  "RabbitMQ publisher load protection is active.",
+                ]
+              : []
+          ),
+
+          ...(
+            !isApplicationReady()
+              ? [
+                  `Application lifecycle is ${applicationLifecycle.state}; operational writes are not admitted.`,
+                ]
+              : []
+          ),
+        ],
+
+
+        // ====================================================================
+        // EXECUTION SAFETY
+        // ====================================================================
 
         canExecuteActions:
+          isApplicationReady() &&
           systemHealthService
             .canExecuteActions(),
+
 
         diagnostics:
           systemHealth
@@ -1093,14 +2145,27 @@ app.get(
             ? systemHealthService
                 .getDiagnostics()
             : undefined,
+
+
+        /*
+         * Health and lifecycle endpoints can never authorize
+         * execution.
+         */
+        executionAuthorized:
+          false,
       };
 
-      res
+
+      // ======================================================================
+      // RESPONSE
+      // ======================================================================
+
+            res
         .status(
-          systemHealth
-            .safeMode
-            ? 503
-            : 200
+          productionReadiness
+            .readyToServeTraffic
+            ? 200
+            : 503
         )
         .json(
           health
@@ -1118,6 +2183,9 @@ app.get(
 
           error:
             error.message,
+
+          executionAuthorized:
+            false,
         });
     }
   }
@@ -1143,6 +2211,9 @@ app.get(
           .json({
             error:
               "Multi-instance coordinator not initialized",
+
+            executionAuthorized:
+              false,
           });
       }
 
@@ -1151,9 +2222,12 @@ app.get(
           .multiInstanceCoordinator
           .getStatus();
 
-      res.json(
-        status
-      );
+      res.json({
+        ...status,
+
+        executionAuthorized:
+          false,
+      });
     } catch (
       error
     ) {
@@ -1164,6 +2238,9 @@ app.get(
         .json({
           error:
             error.message,
+
+          executionAuthorized:
+            false,
         });
     }
   }
@@ -1390,25 +2467,26 @@ app.get(
 );
 
 app.post(
-  "/api/v1/safety/kill-switches",
-  authMiddleware,
+    "/api/v1/safety/kill-switches/:switchName",
+  sessionAuthMiddleware,
   killSwitchControlEndpoint
 );
 
 app.get(
-  "/api/v1/safety/thresholds",
+  "/api/v1/safety/confidence-thresholds",
   sessionAuthMiddleware,
   confidenceThresholdsEndpoint
 );
 
-app.post(
-  "/api/v1/safety/thresholds",
-  authMiddleware,
+app.put(
+  "/api/v1/safety/confidence-thresholds",
+  sessionAuthMiddleware,
   confidenceThresholdsUpdateEndpoint
 );
 
-app.get(
-  "/api/v1/safety/xss-test",
+app.post(
+  "/api/v1/safety/test-xss",
+  sessionAuthMiddleware,
   (
     req,
     res
@@ -1423,60 +2501,42 @@ app.get(
         )
         .json({
           error:
-            "XSS testing not available in production",
+            "XSS test endpoint disabled in production",
+
+          executionAuthorized:
+            false,
         });
     }
 
     const results =
-      testXSSPayloads(
-        false
-      );
+      testXSSPayloads();
 
     res.json({
-      timestamp:
-        new Date()
-          .toISOString(),
+      results,
 
-      environment:
-        process.env.NODE_ENV,
-
-      summary: {
-        totalTests:
-          results.total,
-
-        passed:
-          results.passed,
-
-        failed:
-          results.total -
-          results.passed,
-      },
-
-      details:
-        results.results,
+      executionAuthorized:
+        false,
     });
   }
 );
 
-// Centralized error handler — must be registered AFTER all routes.
+// ============================================================================
+// ERROR HANDLER
+// ============================================================================
+
 app.use(
   errorHandler
 );
 
-// ---------------------------------------------------------------------------
-// RUNTIME REFERENCES
-// ---------------------------------------------------------------------------
-
-let serverInstance;
-let queueService;
-let idempotencyService;
-let apolloServer;
-let lockService;
-let rateLimitService;
-
 // ============================================================================
-// PHASE 11.3 DURABLE WORKFLOW RUNTIME
+// RUNTIME STATE
 // ============================================================================
+
+let queueService =
+  null;
+
+let idempotencyService =
+  null;
 
 let workflowOutboxComposition =
   null;
@@ -1487,11 +2547,14 @@ let workflowOutboxRuntime =
 let workflowOutboxConsumers =
   null;
 
-  // ============================================================================
-// PHASE 11.4 REPLAY RECOVERY STATE
+let serverInstance =
+  null;
+
+// ============================================================================
+// PHASE 11.4 — REPLAY RECOVERY STATE
 // ============================================================================
 
-let replayRecoveryStatus = {
+const replayRecoveryStatus = {
   initialized:
     false,
 
@@ -1515,1354 +2578,1764 @@ let replayRecoveryStatus = {
 };
 
 // ============================================================================
-// PHASE 11.4 DURABLE REPLAY DISPATCH
+// PHASE 11.10 — APPLICATION LIFECYCLE
 // ============================================================================
 
-async function dispatchDurableReplay({
-  stage,
-  job,
-} = {}) {
-  if (
-    !stage ||
-    !job
-  ) {
-    throw Object.assign(
-      new Error(
-        "Replay durable dispatch requires stage and job"
-      ),
-      {
-        code:
-          "REPLAY_DURABLE_DISPATCH_INPUT_REQUIRED",
+const APPLICATION_STATE =
+  Object.freeze({
+    STARTING:
+      "STARTING",
 
-        retryable:
-          false,
-      }
-    );
-  }
+    RECOVERING:
+      "RECOVERING",
 
-  if (
-    job.executionAuthorized ===
-    true
-  ) {
-    throw Object.assign(
-      new Error(
-        "Replay durable dispatch cannot carry execution authority"
-      ),
-      {
-        code:
-          "REPLAY_EXECUTION_AUTHORITY_FORBIDDEN",
+    READY:
+      "READY",
 
-        retryable:
-          false,
-      }
-    );
-  }
+    DRAINING:
+      "DRAINING",
 
-  let result;
+    SHUTTING_DOWN:
+      "SHUTTING_DOWN",
 
+    STOPPED:
+      "STOPPED",
 
-  // --------------------------------------------------------------------------
-  // RECOVERY DECISION → EXECUTION
-  // --------------------------------------------------------------------------
+    FAILED:
+      "FAILED",
+  });
 
-  if (
-    stage ===
-    RUNTIME_STAGE
-      .EXECUTION
-  ) {
-    result =
-      await recoveryDecisionOutboxHandoffService
-        .createExecutionRequestReady({
-          ...job,
+const applicationLifecycle = {
+  state:
+    APPLICATION_STATE
+      .STARTING,
 
-          executionAuthorized:
-            false,
-        });
-  }
+  startedAt:
+    new Date(),
 
+  readyAt:
+    null,
 
-  // --------------------------------------------------------------------------
-  // EXECUTION → VERIFICATION
-  // --------------------------------------------------------------------------
+  drainingAt:
+    null,
 
-  else if (
-    stage ===
-    RUNTIME_STAGE
-      .VERIFICATION
-  ) {
-    result =
-      await executionVerificationOutboxHandoffService
-        .createVerificationRequested({
-          ...job,
+  shutdownStartedAt:
+    null,
 
-          executionAuthorized:
-            false,
-        });
-  }
+  stoppedAt:
+    null,
 
+  startupRecoveryCompleted:
+    false,
 
-  // --------------------------------------------------------------------------
-  // VERIFICATION → LIFECYCLE
-  // --------------------------------------------------------------------------
+  startupRecoveryFailed:
+    false,
 
-  else if (
-    stage ===
-    RUNTIME_STAGE
-      .LIFECYCLE
-  ) {
-    result =
-      await verificationLifecycleOutboxHandoffService
-        .createLifecycleRequested({
-          ...job,
+  lastTransitionAt:
+    new Date(),
 
-          executionAuthorized:
-            false,
-        });
-  }
+  lastReason:
+    "process_start",
 
+  lastError:
+    null,
+};
 
-  else {
-    throw Object.assign(
-      new Error(
-        `Unsupported replay durable stage: ${stage}`
-      ),
-      {
-        code:
-          "REPLAY_DURABLE_STAGE_UNSUPPORTED",
+function transitionApplicationState(
+  state,
+  reason =
+    null,
+  error =
+    null
+) {
+  applicationLifecycle
+    .state =
+    state;
 
-        stage,
+  applicationLifecycle
+    .lastTransitionAt =
+    new Date();
 
-        retryable:
-          false,
-      }
-    );
-  }
+  applicationLifecycle
+    .lastReason =
+    reason;
 
+  applicationLifecycle
+    .lastError =
+    error
+      ? (
+          error.message ||
+          String(
+            error
+          )
+        )
+      : null;
 
   if (
-    result
-      ?.executionAuthorized ===
-    true
+    state ===
+    APPLICATION_STATE
+      .READY
   ) {
-    throw Object.assign(
-      new Error(
-        "Workflow outbox handoff returned forbidden execution authority"
-      ),
-      {
-        code:
-          "REPLAY_EXECUTION_AUTHORITY_FORBIDDEN",
-
-        retryable:
-          false,
-      }
-    );
+    applicationLifecycle
+      .readyAt =
+      new Date();
   }
 
+  if (
+    state ===
+    APPLICATION_STATE
+      .DRAINING
+  ) {
+    applicationLifecycle
+      .drainingAt =
+      new Date();
+  }
 
-  /*
-   * Normalize the durable event identity for DurableReplayService.
-   *
-   * Different handoff implementations may expose the persisted event
-   * either directly or under an event/outboxEvent property.
-   */
+  if (
+    state ===
+    APPLICATION_STATE
+      .SHUTTING_DOWN
+  ) {
+    applicationLifecycle
+      .shutdownStartedAt =
+      new Date();
+  }
+
+  if (
+    state ===
+    APPLICATION_STATE
+      .STOPPED
+  ) {
+    applicationLifecycle
+      .stoppedAt =
+      new Date();
+  }
+
+  console.log(
+    `[lifecycle] state=${state}` +
+    (
+      reason
+        ? ` reason=${reason}`
+        : ""
+    )
+  );
+}
+
+function isApplicationReady() {
+  return (
+    applicationLifecycle
+      .state ===
+      APPLICATION_STATE
+        .READY &&
+    applicationLifecycle
+      .startupRecoveryCompleted ===
+      true &&
+    applicationLifecycle
+      .startupRecoveryFailed !==
+      true
+  );
+}
+
+function getApplicationLifecycleStatus() {
   return {
-    ...(
-      result ||
-      {}
-    ),
+    state:
+      applicationLifecycle
+        .state,
 
-    eventId:
-      result
-        ?.eventId ||
-      result
-        ?.outboxEventId ||
-      result
-        ?.event
-        ?.eventId ||
-      result
-        ?.outboxEvent
-        ?.eventId ||
-      null,
+    startedAt:
+      applicationLifecycle
+        .startedAt,
 
+    readyAt:
+      applicationLifecycle
+        .readyAt,
+
+    drainingAt:
+      applicationLifecycle
+        .drainingAt,
+
+    shutdownStartedAt:
+      applicationLifecycle
+        .shutdownStartedAt,
+
+    stoppedAt:
+      applicationLifecycle
+        .stoppedAt,
+
+    startupRecoveryCompleted:
+      applicationLifecycle
+        .startupRecoveryCompleted,
+
+    startupRecoveryFailed:
+      applicationLifecycle
+        .startupRecoveryFailed,
+
+    lastTransitionAt:
+      applicationLifecycle
+        .lastTransitionAt,
+
+    lastReason:
+      applicationLifecycle
+        .lastReason,
+
+    lastError:
+      applicationLifecycle
+        .lastError,
+
+    ready:
+      isApplicationReady(),
+
+    /*
+     * Lifecycle state can constrain admission but can never
+     * grant infrastructure execution authority.
+     */
     executionAuthorized:
       false,
   };
 }
 
-
 // ============================================================================
-// START SERVER
+// PHASE 11.10 — SHUTDOWN HELPERS
 // ============================================================================
 
-async function startServer() {
+function sleep(
+  milliseconds
+) {
+  return new Promise(
+    (
+      resolve
+    ) =>
+      setTimeout(
+        resolve,
+        milliseconds
+      )
+  );
+}
+
+async function withTimeout(
+  operation,
+  timeoutMs,
+  timeoutCode
+) {
+  let timer =
+    null;
+
   try {
-    console.log(
-      "[server] Starting backend services..."
-    );
+    return await Promise.race([
+      Promise.resolve()
+        .then(
+          operation
+        ),
 
-    const startTime =
-      Date.now();
+      new Promise(
+        (
+          _resolve,
+          reject
+        ) => {
+          timer =
+            setTimeout(
+              () => {
+                reject(
+                  Object.assign(
+                    new Error(
+                      `Operation timed out after ${timeoutMs}ms`
+                    ),
+                    {
+                      code:
+                        timeoutCode ||
+                        "OPERATION_TIMEOUT",
+                    }
+                  )
+                );
+              },
+              timeoutMs
+            );
 
-    // =========================================================================
-    // 1. DISTRIBUTED LOCK SERVICE
-    // =========================================================================
-
-    try {
-      lockService =
-        await distributedLockService
-          .connect(
-            process.env
-              .REDIS_URL
-          );
-
-      console.log(
-        "[server] ✓ Distributed lock service initialized"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Lock service failed (non-fatal):",
-        error.message
-      );
-    }
-
-    // =========================================================================
-    // 2. DATABASE
-    // =========================================================================
-
-    await connectDatabase();
-
-    console.log(
-      "[server] ✓ Database connected"
-    );
-
-    // =========================================================================
-    // 2.5 DATABASE OPTIMIZATION
-    // =========================================================================
-
-    try {
-      const databaseOptimization =
-        require(
-          "./services/infrastructure/databaseOptimization"
-        );
-
-      await databaseOptimization
-        .createIndexes(
-          mongoose
-            .connection
-            .db
-        );
-
-      databaseOptimization
-        .startPeriodicOptimization();
-
-      console.log(
-        "[server] ✓ Database indexes created and optimization scheduled"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Database optimization failed (non-fatal):",
-        error.message
-      );
-    }
-
-    // =========================================================================
-    // 4. QUEUE SERVICE
-    // =========================================================================
-
-    let realQueueTransportAvailable =
-      false;
-
-    try {
-      queueService =
-        await getQueueService(
-          process.env
-            .RABBITMQ_URL
-        );
-
-      if (
-        !queueService ||
-        queueService
-          .connected !==
-          true
-      ) {
-        throw new Error(
-          "RabbitMQ not connected"
-        );
-      }
-
-      realQueueTransportAvailable =
-        true;
-
-      console.log(
-        "[server] ✓ Queue service initialized"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Queue service failed, using mock service:",
-        error.message
-      );
-
-      const {
-        setMockFallback,
-      } =
-        require(
-          "./services/infrastructure/queueService"
-        );
-
-      setMockFallback();
-
-      queueService =
-        await getQueueService();
-
-      realQueueTransportAvailable =
-        false;
-
-      console.log(
-        "[server] ✓ Mock queue service initialized"
-      );
-    }
-
-    // =========================================================================
-    // 5. IDEMPOTENCY SERVICE
-    // =========================================================================
-
-    try {
-      idempotencyService =
-        await getIdempotencyService(
-          process.env
-            .REDIS_URL
-        );
-
-      if (
-        !idempotencyService
-          .connected
-      ) {
-        throw new Error(
-          "Redis not connected"
-        );
-      }
-
-      console.log(
-        "[server] ✓ Idempotency service initialized"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Idempotency service failed, using mock service:",
-        error.message
-      );
-
-      const {
-        setMockFallback,
-      } =
-        require(
-          "./services/infrastructure/idempotencyService"
-        );
-
-      setMockFallback();
-
-      idempotencyService =
-        await getIdempotencyService();
-
-      console.log(
-        "[server] ✓ Mock idempotency service initialized"
-      );
-    }
-
-    // =========================================================================
-    // 5.1 EXISTING RABBITMQ CONSUMERS
-    // =========================================================================
-
-    if (
-      realQueueTransportAvailable
-    ) {
-      try {
-        await recoveryDecisionQueueConsumer
-          .start();
-
-        console.log(
-          "[recovery] ✓ Recovery decision consumer ready"
-        );
-      } catch (
-        error
-      ) {
-        console.error(
-          "[recovery] Could not start recovery decision consumer:",
-          error.message
-        );
-      }
-
-      try {
-        await diagnosisQueueConsumer
-          .start();
-
-        console.log(
-          "[diagnosis] ✓ Async diagnosis consumer ready"
-        );
-      } catch (
-        error
-      ) {
-        console.error(
-          "[diagnosis] Failed to start diagnosis consumer:",
-          error.message
-        );
-      }
-    } else {
-      console.warn(
-        "[server] RabbitMQ unavailable — durable consumers disabled"
-      );
-
-      console.warn(
-        "[server] Durable workflow records will remain persisted until transport recovers"
-      );
-    }
-
-    // =========================================================================
-    // 5.2 PHASE 11.3 DURABLE WORKFLOW CONSUMERS
-    // =========================================================================
-
-    if (
-      realQueueTransportAvailable
-    ) {
-      try {
-        workflowOutboxConsumers =
-          new WorkflowOutboxConsumerRegistry({
-            queueService,
-
-            prefetch:
-              Number(
-                process.env
-                  .WORKFLOW_OUTBOX_CONSUMER_PREFETCH
-              ) ||
-              1,
-
-            logger:
-              console,
-          });
-
-        const consumerResult =
-          await workflowOutboxConsumers
-            .start();
-
-        console.log(
-          `[workflow-outbox] ✓ Durable consumers ready count=${consumerResult.registrations.length}`
-        );
-      } catch (
-        error
-      ) {
-        workflowOutboxConsumers =
-          null;
-
-        console.error(
-          "[workflow-outbox] Durable consumer registration failed:",
-          error.message
-        );
-      }
-    }
-
-    // =========================================================================
-    // 5.3 PHASE 11.3 OUTBOX COMPOSITION
-    // =========================================================================
-
-    if (
-      realQueueTransportAvailable &&
-      workflowOutboxConsumers
-    ) {
-      try {
-        workflowOutboxComposition =
-          createWorkflowOutboxComposition({
-            queueService,
-          });
-
-        console.log(
-          "[workflow-outbox] ✓ Durable composition created"
-        );
-      } catch (
-        error
-      ) {
-        workflowOutboxComposition =
-          null;
-
-        console.error(
-          "[workflow-outbox] Composition failed:",
-          error.message
-        );
-      }
-    }
-
-    // =========================================================================
-    // 5.4 PHASE 11.3 OUTBOX RUNTIME
-    // =========================================================================
-
-    if (
-      realQueueTransportAvailable &&
-      workflowOutboxConsumers &&
-      workflowOutboxComposition
-    ) {
-      try {
-        const outboxWorker =
-          workflowOutboxComposition
-            .worker ||
-          workflowOutboxComposition
-            .workflowOutboxWorker;
-
-        if (
-          !outboxWorker
-        ) {
-          throw Object.assign(
-            new Error(
-              "Workflow outbox composition does not expose worker"
-            ),
-            {
-              code:
-                "WORKFLOW_OUTBOX_WORKER_MISSING",
-            }
-          );
+          /*
+           * Do not keep Node alive solely because of
+           * a shutdown timeout timer.
+           */
+          if (
+            typeof timer
+              .unref ===
+            "function"
+          ) {
+            timer
+              .unref();
+          }
         }
-
-        workflowOutboxRuntime =
-          new WorkflowOutboxRuntimeController({
-            worker:
-              outboxWorker,
-
-            queueService,
-
-            intervalMs:
-              Number(
-                process.env
-                  .WORKFLOW_OUTBOX_POLL_INTERVAL_MS
-              ) ||
-              1000,
-
-            logger:
-              console,
-          });
-
-        const runtimeResult =
-          workflowOutboxRuntime
-            .start();
-
-        if (
-          runtimeResult
-            .started !==
-          true
-        ) {
-          throw Object.assign(
-            new Error(
-              `Workflow outbox runtime did not start: ${
-                runtimeResult
-                  .reason ||
-                "UNKNOWN"
-              }`
-            ),
-            {
-              code:
-                "WORKFLOW_OUTBOX_RUNTIME_NOT_STARTED",
-            }
-          );
-        }
-
-        console.log(
-          `[workflow-outbox] ✓ Durable runtime started intervalMs=${runtimeResult.intervalMs}`
-        );
-      } catch (
-        error
-      ) {
-        workflowOutboxRuntime =
-          null;
-
-        console.error(
-          "[workflow-outbox] Runtime failed to start:",
-          error.message
-        );
-      }
+      ),
+    ]);
+  } finally {
+    if (
+      timer
+    ) {
+      clearTimeout(
+        timer
+      );
     }
+  }
+}
 
-    // =========================================================================
-// 5.5 PHASE 11.4 — DURABLE REPLAY STARTUP RECOVERY
-// =========================================================================
-
-if (
-  realQueueTransportAvailable &&
-  workflowOutboxConsumers &&
-  workflowOutboxComposition &&
-  workflowOutboxRuntime
+async function safeShutdownStep(
+  name,
+  operation,
+  timeoutMs =
+    10000
 ) {
   try {
-    replayRecoveryStatus
-      .initialized =
-      true;
-
-    const replayRecoveryResult =
-      await replayRuntimeIntegration
-        .recoverInterrupted({
-          dispatchReplay:
-            dispatchDurableReplay,
-        });
-
-    replayRecoveryStatus = {
-      initialized:
-        true,
-
-      startupRecoveryCompleted:
-        true,
-
-      discovered:
-        replayRecoveryResult
-          .discovered ||
-        0,
-
-      recovered:
-        replayRecoveryResult
-          .recovered ||
-        0,
-
-      failed:
-        replayRecoveryResult
-          .failed ||
-        0,
-
-      lastRunAt:
-        new Date(),
-
-      lastError:
-        null,
-    };
+    await withTimeout(
+      operation,
+      timeoutMs,
+      `${name
+        .toUpperCase()
+        .replace(
+          /[^A-Z0-9]+/g,
+          "_"
+        )}_SHUTDOWN_TIMEOUT`
+    );
 
     console.log(
-      `[replay-recovery] ✓ Startup scan complete discovered=${replayRecoveryStatus.discovered} recovered=${replayRecoveryStatus.recovered} failed=${replayRecoveryStatus.failed}`
+      `[server] ✓ ${name}`
+    );
+
+    return {
+      ok:
+        true,
+    };
+  } catch (
+    error
+  ) {
+    console.warn(
+      `[server] ${name} shutdown warning:`,
+      error.message
+    );
+
+    return {
+      ok:
+        false,
+
+      error:
+        error.message,
+
+      code:
+        error.code ||
+        null,
+    };
+  }
+}
+
+// ============================================================================
+// INITIALIZE SERVICES
+// ============================================================================
+
+async function initializeServices() {
+  console.log(
+    "[server] Starting backend services..."
+  );
+
+  // ==========================================================================
+  // DATABASE
+  // ==========================================================================
+
+  await connectDatabase();
+
+  console.log(
+    "[server] ✓ Database connected"
+  );
+
+  // ==========================================================================
+  // SYSTEM HEALTH / INFRASTRUCTURE
+  // ==========================================================================
+
+  try {
+    if (
+      typeof systemHealthService
+        .initialize ===
+      "function"
+    ) {
+      await systemHealthService
+        .initialize();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] System health initialization warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // QUEUE
+  // ==========================================================================
+
+  try {
+    queueService =
+      await getQueueService();
+
+    console.log(
+      queueService
+        ?.connected
+        ? "[server] ✓ Queue service connected"
+        : "[server] ⚠ Queue service unavailable"
     );
   } catch (
     error
   ) {
-    replayRecoveryStatus = {
-      ...replayRecoveryStatus,
+    console.warn(
+      "[server] Queue service initialization warning:",
+      error.message
+    );
 
-      initialized:
-        true,
+    queueService =
+      null;
+  }
 
-      startupRecoveryCompleted:
-        false,
+  // ==========================================================================
+  // IDEMPOTENCY
+  // ==========================================================================
 
-      lastRunAt:
-        new Date(),
+  try {
+    idempotencyService =
+      await getIdempotencyService();
 
-      lastError: {
-        code:
-          error.code ||
-          "REPLAY_STARTUP_RECOVERY_FAILED",
+    console.log(
+      idempotencyService
+        ?.connected
+        ? "[server] ✓ Idempotency service connected"
+        : "[server] ⚠ Idempotency service unavailable"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Idempotency initialization warning:",
+      error.message
+    );
 
-        message:
-          String(
-            error.message ||
-            "Replay startup recovery failed"
-          )
-            .slice(
-              0,
-              1024
-            ),
-      },
-    };
+    idempotencyService =
+      null;
+  }
 
-    /*
-     * Fail open for API availability, but fail CLOSED for replay.
-     *
-     * No replay action occurs here after an error.
-     * Durable records remain persisted for future recovery.
-     */
-    console.error(
-      "[replay-recovery] Startup recovery failed:",
+  // ==========================================================================
+  // PHASE 11.3 — DURABLE WORKFLOW OUTBOX
+  // ==========================================================================
+
+  try {
+    workflowOutboxComposition =
+      createWorkflowOutboxComposition({
+        queueService,
+        idempotencyService,
+        dependencyIsolationService,
+      });
+
+    workflowOutboxConsumers =
+      new WorkflowOutboxConsumerRegistry({
+        queueService,
+        composition:
+          workflowOutboxComposition,
+      });
+
+    workflowOutboxRuntime =
+      new WorkflowOutboxRuntimeController({
+        composition:
+          workflowOutboxComposition,
+
+        consumers:
+          workflowOutboxConsumers,
+      });
+
+    if (
+      typeof workflowOutboxConsumers
+        .start ===
+      "function"
+    ) {
+      await workflowOutboxConsumers
+        .start();
+    }
+
+    if (
+      typeof workflowOutboxRuntime
+        .start ===
+      "function"
+    ) {
+      await workflowOutboxRuntime
+        .start();
+    }
+
+    console.log(
+      "[workflow-outbox] ✓ Durable workflow outbox initialized"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[workflow-outbox] Initialization warning:",
       error.message
     );
   }
-} else {
-  replayRecoveryStatus = {
-    ...replayRecoveryStatus,
 
-    initialized:
-      false,
+  // ==========================================================================
+  // REGISTER OUTBOX HANDOFFS
+  // ==========================================================================
 
-    startupRecoveryCompleted:
-      false,
+  try {
+    if (
+      workflowOutboxComposition
+    ) {
+      if (
+        typeof recoveryDecisionOutboxHandoffService
+          .initialize ===
+        "function"
+      ) {
+        await recoveryDecisionOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
 
-    lastRunAt:
-      new Date(),
+      if (
+        typeof executionVerificationOutboxHandoffService
+          .initialize ===
+        "function"
+      ) {
+        await executionVerificationOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
 
-    lastError: {
-      code:
-        "REPLAY_DURABLE_TRANSPORT_UNAVAILABLE",
+      if (
+        typeof verificationLifecycleOutboxHandoffService
+          .initialize ===
+        "function"
+      ) {
+        await verificationLifecycleOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[workflow-outbox] Handoff initialization warning:",
+      error.message
+    );
+  }
 
-      message:
-        "Startup replay recovery skipped because durable workflow transport is unavailable.",
-    },
-  };
+  // ==========================================================================
+  // QUEUE CONSUMERS
+  // ==========================================================================
 
-  console.warn(
-    "[replay-recovery] Startup recovery skipped — durable workflow transport unavailable"
-  );
-}
-    // =========================================================================
-    // 6. MEMORY CLEANUP
-    // =========================================================================
+  try {
+    if (
+      typeof diagnosisQueueConsumer
+        .start ===
+      "function"
+    ) {
+      await diagnosisQueueConsumer
+        .start();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[diagnosis] Consumer startup warning:",
+      error.message
+    );
+  }
 
-    memoryCleanupJob
-      .start();
+  try {
+    if (
+      typeof recoveryDecisionQueueConsumer
+        .start ===
+      "function"
+    ) {
+      await recoveryDecisionQueueConsumer
+        .start();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[recovery] Consumer startup warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // KUBERNETES EXECUTION
+  // ==========================================================================
+
+  try {
+    const k8sClient =
+      getK8sClient();
+
+    if (
+      k8sClient &&
+      runbookExecutionService &&
+      typeof runbookExecutionService
+        .registerHandler ===
+      "function"
+    ) {
+      runbookExecutionService
+        .registerHandler(
+          "kubernetes",
+          k8sClient
+        );
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Kubernetes initialization warning:",
+      error.message
+    );
+
+    console.warn(
+      "[server]    K8s operations will fail if attempted"
+    );
+  }
+
+  // ==========================================================================
+  // MULTI-INSTANCE COORDINATION
+  // ==========================================================================
+
+  try {
+    global
+      .multiInstanceCoordinator =
+      new MultiInstanceCoordinator();
+
+    if (
+      typeof global
+        .multiInstanceCoordinator
+        .start ===
+      "function"
+    ) {
+      await global
+        .multiInstanceCoordinator
+        .start();
+    }
+
+    console.log(
+      "[server] ✓ Multi-instance coordinator started"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Multi-instance coordinator warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // MONITOR SCHEDULER
+  // ==========================================================================
+
+  try {
+    global
+      .monitorScheduler =
+      new MonitorScheduler();
+
+    if (
+      typeof global
+        .monitorScheduler
+        .start ===
+      "function"
+    ) {
+      await global
+        .monitorScheduler
+        .start();
+    }
+
+    console.log(
+      "[server] ✓ Monitor scheduler started"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Monitor scheduler warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // BACKGROUND JOBS
+  // ==========================================================================
+
+  try {
+    if (
+      typeof memoryCleanupJob
+        .start ===
+      "function"
+    ) {
+      memoryCleanupJob
+        .start();
+    }
 
     console.log(
       "[server] ✓ Memory cleanup job started"
     );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Memory cleanup startup warning:",
+      error.message
+    );
+  }
 
-    // =========================================================================
-    // 7. RETRY PROCESSOR
-    // =========================================================================
-
-    retryProcessorJob
-      .start();
+  try {
+    if (
+      typeof retryProcessorJob
+        .start ===
+      "function"
+    ) {
+      retryProcessorJob
+        .start();
+    }
 
     console.log(
       "[server] ✓ Retry processor job started"
     );
-
-    // =========================================================================
-    // 8. AGENT INTELLIGENCE PLATFORM
-    // =========================================================================
-
-    const {
-      initializeAgentOrchestrator,
-    } =
-      require(
-        "./agents/v2"
-      );
-
-    const {
-      incidentPlaybookService,
-    } =
-      require(
-        "./services/incidents"
-      );
-
-    const {
-      memoryService,
-    } =
-      require(
-        "./services/learning"
-      );
-
-    const {
-      kubernetesInvestigationTools,
-    } =
-      require(
-        "./agents/v2/tools"
-      );
-
-    initializeAgentOrchestrator({
-      incidentPlaybookService,
-
-      memoryService,
-
-      kubernetesInvestigationTools,
-    });
-
-    console.log(
-      "[server] ✓ V2 AgentOrchestrator initialized as authoritative runtime"
-    );
-
-    // =========================================================================
-    // 8.5 FEATURE FLAGS
-    // =========================================================================
-
-    console.log(
-      "\n[server] ═══════════════════════════════════════"
-    );
-
-    featureFlags
-      .logStartupStatus(
-        console
-      );
-
-    console.log(
-      "[server] ═══════════════════════════════════════\n"
-    );
-
-    // =========================================================================
-    // 8.75 MULTI-INSTANCE COORDINATION
-    // =========================================================================
-
-    try {
-      const redisClient =
-        distributedLockService
-          .getRedisClient();
-
-      const coordinator =
-        new MultiInstanceCoordinator(
-          redisClient
-        );
-
-      await coordinator
-        .start();
-
-      global
-        .multiInstanceCoordinator =
-        coordinator;
-
-      console.log(
-        "[server] ✓ Multi-instance coordinator started (heartbeat + leader election)"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] ⚠️  Multi-instance coordination failed:",
-        error.message
-      );
-
-      console.log(
-        "[server]    Continuing in single-instance mode"
-      );
-    }
-
-    // =========================================================================
-    // 8.9 KUBERNETES INTEGRATION
-    // =========================================================================
-
-    try {
-      const k8sClient =
-        getK8sClient();
-
-      try {
-        const connectivity =
-          await k8sClient
-            .verifyConnectivity();
-
-        console.log(
-          "[server] ✓ Kubernetes cluster connected:",
-          {
-            version:
-              connectivity
-                .version,
-          }
-        );
-      } catch (
-        k8sError
-      ) {
-        console.warn(
-          "[server] ⚠️  Kubernetes connectivity check failed:",
-          k8sError.message
-        );
-
-        console.log(
-          "[server]    K8s operations will fail if attempted"
-        );
-      }
-
-      runbookExecutionService
-        .registerHandler(
-          "kubernetes",
-          async (
-            step,
-            context
-          ) => {
-            console.log(
-              "[server] Executing Kubernetes step:",
-              {
-                stepName:
-                  step.name,
-
-                action:
-                  step.action,
-
-                resource:
-                  step.params
-                    ?.resource,
-              }
-            );
-
-            const actionType =
-              step.action;
-
-            const params =
-              step.params ||
-              {};
-
-            const correlationId =
-              context
-                .correlationId ||
-              step
-                .correlationId ||
-              "unknown";
-
-            try {
-              const result =
-                await k8sClient
-                  .executeAction(
-                    actionType,
-                    params,
-                    {
-                      correlationId,
-                    }
-                  );
-
-              return {
-                status:
-                  "SUCCESS",
-
-                stepName:
-                  step.name,
-
-                action:
-                  step.action,
-
-                result,
-
-                timestamp:
-                  new Date(),
-              };
-            } catch (
-              error
-            ) {
-              console.error(
-                "[server] K8s action failed:",
-                {
-                  stepName:
-                    step.name,
-
-                  action:
-                    step.action,
-
-                  error:
-                    error.message,
-
-                  correlationId,
-                }
-              );
-
-              return {
-                status:
-                  "FAILED",
-
-                error:
-                  error.message,
-
-                stepName:
-                  step.name,
-
-                action:
-                  step.action,
-
-                timestamp:
-                  new Date(),
-              };
-            }
-          }
-        );
-
-      console.log(
-        "[server] ✓ Kubernetes handler registered with runbook execution"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] ⚠️  Kubernetes integration failed:",
-        error.message
-      );
-
-      console.log(
-        "[server]    Kubernetes operations will not be available"
-      );
-    }
-
-    // =========================================================================
-    // 9. AUTONOMOUS MONITOR SCHEDULER
-    // =========================================================================
-
-    try {
-      global.monitorScheduler =
-        new MonitorScheduler({
-          pollIntervalMs:
-            Number(
-              process.env
-                .MONITOR_POLL_INTERVAL_MS
-            ) ||
-            5000,
-
-          lockTimeoutMs:
-            Number(
-              process.env
-                .MONITOR_LOCK_TIMEOUT_MS
-            ) ||
-            120000,
-
-          maxConcurrency:
-            Number(
-              process.env
-                .MONITOR_MAX_CONCURRENCY
-            ) ||
-            5,
-        });
-
-      await global
-        .monitorScheduler
-        .start();
-
-      console.log(
-        "[server] ✓ Monitor scheduler started"
-      );
-    } catch (
-      error
-    ) {
-      console.error(
-        "[server] Monitor scheduler failed to start:",
-        error.message
-      );
-
-      global.monitorScheduler =
-        null;
-    }
-
-    // =========================================================================
-    // 10. HTTP SERVER
-    // =========================================================================
-
-    serverInstance =
-      http
-        .createServer(
-          app
-        );
-
-    serverInstance
-      .listen(
-        PORT,
-        "0.0.0.0",
-        () => {
-          const duration =
-            Date.now() -
-            startTime;
-
-          console.log(
-            `[server] ✓ Backend running on port ${PORT} (startup: ${duration}ms)`
-          );
-
-          console.log(
-            "[server] Core API available at /api/v1/tenants/:tenantId/*"
-          );
-
-          console.log(
-            "[server] Metrics available at /metrics (Prometheus format)"
-          );
-
-          console.log(
-            "[server] Health endpoint at /health/detailed"
-          );
-
-          console.log(
-            "[server] ✓ Decision Engine initialized"
-          );
-
-          console.log(
-            "[server] Ready to accept requests"
-          );
-        }
-      );
   } catch (
     error
   ) {
-    console.error(
-      "[server] Failed to start backend:",
-      error
-    );
-
-    process.exit(
-      1
+    console.warn(
+      "[server] Retry processor startup warning:",
+      error.message
     );
   }
 }
 
 // ============================================================================
-// GRACEFUL SHUTDOWN
+// PHASE 11.4 / 11.10 — STARTUP REPLAY RECOVERY
+// ============================================================================
+
+async function runStartupRecovery() {
+  transitionApplicationState(
+    APPLICATION_STATE
+      .RECOVERING,
+    "startup_replay_recovery"
+  );
+
+  replayRecoveryStatus
+    .initialized =
+    true;
+
+  replayRecoveryStatus
+    .startupRecoveryCompleted =
+    false;
+
+  replayRecoveryStatus
+    .lastRunAt =
+    new Date();
+
+  replayRecoveryStatus
+    .lastError =
+    null;
+
+  applicationLifecycle
+    .startupRecoveryCompleted =
+    false;
+
+  applicationLifecycle
+    .startupRecoveryFailed =
+    false;
+
+  try {
+    let result =
+      null;
+
+    /*
+     * Support the canonical integration service without assuming
+     * one particular method name. This keeps server.js compatible
+     * with the existing Phase 11.4 implementation while allowing
+     * the replay runtime to evolve independently.
+     */
+    if (
+      typeof replayRuntimeIntegration
+        .recoverStartup ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .recoverStartup();
+    } else if (
+      typeof replayRuntimeIntegration
+        .recover ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .recover();
+    } else if (
+      typeof replayRuntimeIntegration
+        .runStartupRecovery ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .runStartupRecovery();
+    } else if (
+      typeof replayRuntimeIntegration
+        .start ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .start();
+    } else {
+      /*
+       * If the Phase 11.4 integration exposes no startup recovery
+       * method, do NOT claim readiness in production.
+       */
+      if (
+        process.env.NODE_ENV ===
+        "production"
+      ) {
+        throw Object.assign(
+          new Error(
+            "Replay runtime integration does not expose a startup recovery method"
+          ),
+          {
+            code:
+              "STARTUP_RECOVERY_METHOD_MISSING",
+          }
+        );
+      }
+
+      console.warn(
+        "[replay-recovery] No startup recovery method exposed; development startup will continue"
+      );
+
+      result = {
+        discovered:
+          0,
+
+        recovered:
+          0,
+
+        failed:
+          0,
+      };
+    }
+
+    replayRecoveryStatus
+      .discovered =
+      Number(
+        result
+          ?.discovered ??
+        result
+          ?.discoveredCount ??
+        result
+          ?.total ??
+        0
+      );
+
+    replayRecoveryStatus
+      .recovered =
+      Number(
+        result
+          ?.recovered ??
+        result
+          ?.recoveredCount ??
+        result
+          ?.successful ??
+        0
+      );
+
+    replayRecoveryStatus
+      .failed =
+      Number(
+        result
+          ?.failed ??
+        result
+          ?.failedCount ??
+        0
+      );
+
+    /*
+     * A startup recovery run that explicitly reports failed
+     * workflows is not considered fully healthy.
+     *
+     * Production fails readiness closed.
+     * Development/test can continue so engineers can inspect state.
+     */
+    if (
+      replayRecoveryStatus
+        .failed >
+      0 &&
+      process.env.NODE_ENV ===
+        "production"
+    ) {
+      throw Object.assign(
+        new Error(
+          `Startup replay recovery completed with ${replayRecoveryStatus.failed} failed workflow(s)`
+        ),
+        {
+          code:
+            "STARTUP_RECOVERY_INCOMPLETE",
+        }
+      );
+    }
+
+    replayRecoveryStatus
+      .startupRecoveryCompleted =
+      true;
+
+    applicationLifecycle
+      .startupRecoveryCompleted =
+      true;
+
+    applicationLifecycle
+      .startupRecoveryFailed =
+      false;
+
+    transitionApplicationState(
+      APPLICATION_STATE
+        .READY,
+      "startup_recovery_completed"
+    );
+
+    console.log(
+      `[replay-recovery] ✓ Startup recovery completed discovered=${replayRecoveryStatus.discovered} recovered=${replayRecoveryStatus.recovered} failed=${replayRecoveryStatus.failed}`
+    );
+
+    return result;
+  } catch (
+    error
+  ) {
+    replayRecoveryStatus
+      .startupRecoveryCompleted =
+      false;
+
+    replayRecoveryStatus
+      .lastError =
+      error.message;
+
+    applicationLifecycle
+      .startupRecoveryCompleted =
+      false;
+
+    applicationLifecycle
+      .startupRecoveryFailed =
+      true;
+
+    transitionApplicationState(
+      APPLICATION_STATE
+        .FAILED,
+      "startup_recovery_failed",
+      error
+    );
+
+    console.error(
+      "[replay-recovery] Startup recovery failed:",
+      error.message
+    );
+
+    /*
+     * Production must fail closed.
+     *
+     * We keep the HTTP listener alive long enough for readiness
+     * and diagnostics to expose the failure, but operational
+     * admission remains closed.
+     */
+    if (
+      process.env.NODE_ENV ===
+      "production"
+    ) {
+      return {
+        failed:
+          true,
+
+        error:
+          error.message,
+
+        code:
+          error.code ||
+          "STARTUP_RECOVERY_FAILED",
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    /*
+     * Development/test may continue for debugging, but it is
+     * intentionally NOT marked READY when recovery itself failed.
+     */
+    return {
+      failed:
+        true,
+
+      error:
+        error.message,
+
+      code:
+        error.code ||
+        "STARTUP_RECOVERY_FAILED",
+
+      executionAuthorized:
+        false,
+    };
+  }
+}
+
+// ============================================================================
+// START HTTP SERVER
+// ============================================================================
+
+async function startHttpServer() {
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+      const httpServer =
+        http.createServer(
+          app
+        );
+
+      httpServer
+        .once(
+          "error",
+          reject
+        );
+
+      httpServer
+        .listen(
+          PORT,
+          () => {
+            httpServer
+              .removeListener(
+                "error",
+                reject
+              );
+
+            serverInstance =
+              httpServer;
+
+            console.log(
+              `[server] HTTP listener active on port ${PORT}`
+            );
+
+            console.log(
+              "[server] Process is live; operational readiness depends on startup recovery"
+            );
+
+            resolve(
+              httpServer
+            );
+          }
+        );
+    }
+  );
+}
+
+// ============================================================================
+// MAIN STARTUP
+// ============================================================================
+
+async function startServer() {
+  transitionApplicationState(
+    APPLICATION_STATE
+      .STARTING,
+    "initializing_services"
+  );
+
+  try {
+    /*
+     * Start the listener first so orchestration can observe
+     * /health/live and /health/ready during recovery.
+     *
+     * The global admission gate prevents operational writes
+     * until lifecycle reaches READY.
+     */
+    await startHttpServer();
+
+    await initializeServices();
+
+    await runStartupRecovery();
+
+    if (
+      isApplicationReady()
+    ) {
+      console.log(
+        `[server] ✓ AIRA operationally ready on port ${PORT}`
+      );
+    } else {
+      console.warn(
+        `[server] AIRA is live but not operationally ready state=${applicationLifecycle.state}`
+      );
+    }
+  } catch (
+    error
+  ) {
+    transitionApplicationState(
+      APPLICATION_STATE
+        .FAILED,
+      "startup_failed",
+      error
+    );
+
+    console.error(
+      "[server] Startup failed:",
+      error
+    );
+
+    /*
+     * Best-effort cleanup. Do not leave partially initialized
+     * resources alive after a hard startup failure.
+     */
+    try {
+      await shutdown(
+        "STARTUP_FAILURE",
+        {
+          exitProcess:
+            false,
+
+          exitCode:
+            1,
+        }
+      );
+    } catch (
+      shutdownError
+    ) {
+      console.error(
+        "[server] Startup cleanup failed:",
+        shutdownError.message
+      );
+    }
+
+    process.exitCode =
+      1;
+  }
+}
+
+// ============================================================================
+// PHASE 11.10 — GRACEFUL SHUTDOWN
 // ============================================================================
 
 async function shutdown(
   signal =
-    "UNKNOWN"
+    "UNKNOWN",
+  options = {}
 ) {
   if (
     shutdown.inProgress
   ) {
-    return;
+    return shutdown.promise;
   }
 
   shutdown.inProgress =
     true;
 
-  console.log(
-    `\n[server] Shutting down signal=${signal}...`
-  );
+  const exitProcess =
+    options.exitProcess !==
+    false;
 
-  // =========================================================================
-  // 1. STOP DURABLE OUTBOX DRAINING FIRST
-  // =========================================================================
+  const exitCode =
+    Number.isInteger(
+      options.exitCode
+    )
+      ? options.exitCode
+      : 0;
 
-  if (
-    workflowOutboxRuntime
-  ) {
-    try {
-      await workflowOutboxRuntime
-        .stop({
-          waitForCurrent:
-            true,
+  const shutdownTimeoutMs =
+    Number(
+      process.env
+        .SERVER_SHUTDOWN_TIMEOUT_MS
+    ) ||
+    30000;
 
-          timeoutMs:
-            Number(
-              process.env
-                .WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS
-            ) ||
-            10000,
-        });
+  const outboxShutdownTimeoutMs =
+    Number(
+      process.env
+        .WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS
+    ) ||
+    10000;
 
+  shutdown.promise =
+    (async () => {
       console.log(
-        "[workflow-outbox] ✓ Durable runtime stopped"
+        `\n[server] Shutting down signal=${signal}...`
       );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[workflow-outbox] Runtime shutdown warning:",
-        error.message
+
+      transitionApplicationState(
+        APPLICATION_STATE
+          .DRAINING,
+        `signal_${signal}`
       );
-    }
-  }
 
-  // =========================================================================
-  // 2. STOP MULTI-INSTANCE COORDINATION
-  // =========================================================================
+      /*
+       * The lifecycle admission gate immediately rejects new
+       * state-changing operational traffic after DRAINING begins.
+       *
+       * Existing requests can complete while the HTTP server
+       * is closed below.
+       */
 
-  if (
-    global
-      .multiInstanceCoordinator
-  ) {
-    try {
-      await global
-        .multiInstanceCoordinator
-        .stop();
+      // ======================================================================
+      // 1. STOP ACCEPTING NEW HTTP CONNECTIONS
+      // ======================================================================
 
-      console.log(
-        "[server] ✓ Multi-instance coordinator stopped"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Multi-instance coordinator shutdown warning:",
-        error.message
-      );
-    }
-  }
+      if (
+        serverInstance
+      ) {
+        await safeShutdownStep(
+          "HTTP admission stopped",
+          async () => {
+            await new Promise(
+              (
+                resolve,
+                reject
+              ) => {
+                let settled =
+                  false;
 
-  // =========================================================================
-  // 3. STOP MONITOR SCHEDULER
-  // =========================================================================
+                const finish =
+                  (
+                    error
+                  ) => {
+                    if (
+                      settled
+                    ) {
+                      return;
+                    }
 
-  if (
-    global
-      .monitorScheduler
-  ) {
-    try {
-      await global
-        .monitorScheduler
-        .stop();
+                    settled =
+                      true;
 
-      console.log(
-        "[server] ✓ Monitor scheduler stopped"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Monitor scheduler shutdown warning:",
-        error.message
-      );
-    }
-  }
+                    if (
+                      error
+                    ) {
+                      reject(
+                        error
+                      );
+                    } else {
+                      resolve();
+                    }
+                  };
 
-  // =========================================================================
-  // 4. STOP BACKGROUND JOBS
-  // =========================================================================
+                try {
+                  serverInstance
+                    .close(
+                      finish
+                    );
 
-  try {
-    memoryCleanupJob
-      .stop();
-
-    console.log(
-      "[server] ✓ Memory cleanup job stopped"
-    );
-  } catch (
-    error
-  ) {
-    console.warn(
-      "[server] Memory cleanup shutdown warning:",
-      error.message
-    );
-  }
-
-  try {
-    retryProcessorJob
-      .stop();
-
-    console.log(
-      "[server] ✓ Retry processor job stopped"
-    );
-  } catch (
-    error
-  ) {
-    console.warn(
-      "[server] Retry processor shutdown warning:",
-      error.message
-    );
-  }
-
-  // =========================================================================
-  // 5. STOP HTTP SERVER
-  // =========================================================================
-
-  if (
-    serverInstance
-  ) {
-    try {
-      await new Promise(
-        (
-          resolve
-        ) => {
-          serverInstance
-            .close(
-              resolve
+                  /*
+                   * Node versions that expose closeIdleConnections()
+                   * can proactively close keep-alive sockets that
+                   * are not serving active requests.
+                   */
+                  if (
+                    typeof serverInstance
+                      .closeIdleConnections ===
+                    "function"
+                  ) {
+                    serverInstance
+                      .closeIdleConnections();
+                  }
+                } catch (
+                  error
+                ) {
+                  finish(
+                    error
+                  );
+                }
+              }
             );
+          },
+          Math.min(
+            shutdownTimeoutMs,
+            10000
+          )
+        );
+
+        serverInstance =
+          null;
+      }
+
+      transitionApplicationState(
+        APPLICATION_STATE
+          .SHUTTING_DOWN,
+        `draining_${signal}`
+      );
+
+      // ======================================================================
+      // 2. STOP DURABLE OUTBOX DRAINING
+      // ======================================================================
+
+      if (
+        workflowOutboxRuntime
+      ) {
+        await safeShutdownStep(
+          "Durable workflow outbox runtime stopped",
+          async () => {
+            await workflowOutboxRuntime
+              .stop({
+                waitForCurrent:
+                  true,
+
+                timeoutMs:
+                  outboxShutdownTimeoutMs,
+              });
+          },
+          outboxShutdownTimeoutMs +
+            1000
+        );
+      }
+
+      // ======================================================================
+      // 3. STOP OUTBOX CONSUMERS
+      // ======================================================================
+
+      if (
+        workflowOutboxConsumers &&
+        typeof workflowOutboxConsumers
+          .stop ===
+        "function"
+      ) {
+        await safeShutdownStep(
+          "Workflow outbox consumers stopped",
+          async () => {
+            await workflowOutboxConsumers
+              .stop();
+          }
+        );
+      }
+
+      // ======================================================================
+      // 4. STOP QUEUE CONSUMERS
+      // ======================================================================
+
+      if (
+        diagnosisQueueConsumer &&
+        typeof diagnosisQueueConsumer
+          .stop ===
+        "function"
+      ) {
+        await safeShutdownStep(
+          "Diagnosis consumer stopped",
+          async () => {
+            await diagnosisQueueConsumer
+              .stop();
+          }
+        );
+      }
+
+      if (
+        recoveryDecisionQueueConsumer &&
+        typeof recoveryDecisionQueueConsumer
+          .stop ===
+        "function"
+      ) {
+        await safeShutdownStep(
+          "Recovery decision consumer stopped",
+          async () => {
+            await recoveryDecisionQueueConsumer
+              .stop();
+          }
+        );
+      }
+
+      // ======================================================================
+      // 5. STOP MULTI-INSTANCE COORDINATION
+      // ======================================================================
+
+      if (
+        global
+          .multiInstanceCoordinator
+      ) {
+        await safeShutdownStep(
+          "Multi-instance coordinator stopped",
+          async () => {
+            if (
+              typeof global
+                .multiInstanceCoordinator
+                .stop ===
+              "function"
+            ) {
+              await global
+                .multiInstanceCoordinator
+                .stop();
+            }
+          }
+        );
+      }
+
+      // ======================================================================
+      // 6. STOP MONITOR SCHEDULER
+      // ======================================================================
+
+      if (
+        global
+          .monitorScheduler
+      ) {
+        await safeShutdownStep(
+          "Monitor scheduler stopped",
+          async () => {
+            if (
+              typeof global
+                .monitorScheduler
+                .stop ===
+              "function"
+            ) {
+              await global
+                .monitorScheduler
+                .stop();
+            }
+          }
+        );
+      }
+
+      // ======================================================================
+      // 7. STOP BACKGROUND JOBS
+      // ======================================================================
+
+      await safeShutdownStep(
+        "Memory cleanup job stopped",
+        async () => {
+          if (
+            typeof memoryCleanupJob
+              .stop ===
+            "function"
+          ) {
+            await memoryCleanupJob
+              .stop();
+          }
         }
       );
 
+      await safeShutdownStep(
+        "Retry processor job stopped",
+        async () => {
+          if (
+            typeof retryProcessorJob
+              .stop ===
+            "function"
+          ) {
+            await retryProcessorJob
+              .stop();
+          }
+        }
+      );
+
+      // ======================================================================
+      // 8. RELEASE / DISCONNECT DISTRIBUTED LOCK INFRASTRUCTURE
+      // ======================================================================
+
+      if (
+        distributedLockService
+      ) {
+        if (
+          typeof distributedLockService
+            .releaseAll ===
+          "function"
+        ) {
+          await safeShutdownStep(
+            "Distributed locks released",
+            async () => {
+              await distributedLockService
+                .releaseAll();
+            }
+          );
+        }
+
+        if (
+          typeof distributedLockService
+            .disconnect ===
+          "function"
+        ) {
+          await safeShutdownStep(
+            "Distributed lock service disconnected",
+            async () => {
+              await distributedLockService
+                .disconnect();
+            }
+          );
+        }
+      }
+
+      // ======================================================================
+      // 9. DISCONNECT RABBITMQ
+      // ======================================================================
+
+      if (
+        queueService &&
+        typeof queueService
+          .disconnect ===
+        "function"
+      ) {
+        await safeShutdownStep(
+          "Queue service disconnected",
+          async () => {
+            await queueService
+              .disconnect();
+          }
+        );
+      }
+
+      // ======================================================================
+      // 10. DISCONNECT IDEMPOTENCY / REDIS
+      // ======================================================================
+
+      if (
+        idempotencyService &&
+        typeof idempotencyService
+          .disconnect ===
+        "function"
+      ) {
+        await safeShutdownStep(
+          "Idempotency service disconnected",
+          async () => {
+            await idempotencyService
+              .disconnect();
+          }
+        );
+      }
+
+      /*
+       * Rate limiting owns its own Redis client. Disconnect it
+       * after HTTP admission has stopped.
+       */
+      try {
+        const rateLimitService =
+          getRateLimitService();
+
+        if (
+          rateLimitService &&
+          typeof rateLimitService
+            .disconnect ===
+          "function"
+        ) {
+          await safeShutdownStep(
+            "Rate limit service disconnected",
+            async () => {
+              await rateLimitService
+                .disconnect();
+            }
+          );
+        }
+      } catch (
+        error
+      ) {
+        console.warn(
+          "[server] Rate limit shutdown warning:",
+          error.message
+        );
+      }
+
+      // ======================================================================
+      // 11. DISCONNECT DATABASE LAST
+      // ======================================================================
+
+      await safeShutdownStep(
+        "Database disconnected",
+        async () => {
+          await disconnectDatabase();
+        }
+      );
+
+      transitionApplicationState(
+        APPLICATION_STATE
+          .STOPPED,
+        `shutdown_complete_${signal}`
+      );
+
       console.log(
-        "[server] ✓ HTTP server stopped"
+        "[server] ✓ Shutdown complete"
       );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] HTTP shutdown warning:",
-        error.message
-      );
-    }
-  }
 
-  // =========================================================================
-  // 6. DISCONNECT RABBITMQ
-  // =========================================================================
+      if (
+        exitProcess
+      ) {
+        process.exit(
+          exitCode
+        );
+      }
 
+      return {
+        stopped:
+          true,
+
+        signal,
+
+        exitCode,
+
+        executionAuthorized:
+          false,
+      };
+    })();
+
+  /*
+   * Hard shutdown deadline.
+   *
+   * A graceful shutdown should never hang forever because one
+   * dependency refuses to close.
+   */
   if (
-    queueService &&
-    typeof queueService
-      .disconnect ===
+    exitProcess
+  ) {
+    const forceTimer =
+      setTimeout(
+        () => {
+          console.error(
+            `[server] Graceful shutdown exceeded ${shutdownTimeoutMs}ms; forcing process exit`
+          );
+
+          process.exit(
+            exitCode ===
+              0
+              ? 1
+              : exitCode
+          );
+        },
+        shutdownTimeoutMs
+      );
+
+    if (
+      typeof forceTimer
+        .unref ===
       "function"
-  ) {
-    try {
-      await queueService
-        .disconnect();
-
-      console.log(
-        "[server] ✓ Queue service disconnected"
-      );
-    } catch (
-      error
     ) {
-      console.warn(
-        "[server] Error disconnecting queue service:",
-        error.message
-      );
+      forceTimer
+        .unref();
     }
-  }
 
-  // =========================================================================
-  // 7. DISCONNECT IDEMPOTENCY SERVICE
-  // =========================================================================
-
-  if (
-    idempotencyService &&
-    typeof idempotencyService
-      .disconnect ===
-      "function"
-  ) {
-    try {
-      await idempotencyService
-        .disconnect();
-
-      console.log(
-        "[server] ✓ Idempotency service disconnected"
+    shutdown.promise
+      .finally(
+        () => {
+          clearTimeout(
+            forceTimer
+          );
+        }
       );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[server] Error disconnecting idempotency service:",
-        error.message
-      );
-    }
   }
 
-  // =========================================================================
-  // 8. DISCONNECT DATABASE LAST
-  // =========================================================================
-
-  try {
-    await disconnectDatabase();
-
-    console.log(
-      "[server] ✓ Database disconnected"
-    );
-  } catch (
-    error
-  ) {
-    console.warn(
-      "[server] Database shutdown warning:",
-      error.message
-    );
-  }
-
-  console.log(
-    "[server] ✓ Shutdown complete"
-  );
-
-  process.exit(
-    0
-  );
+  return shutdown.promise;
 }
 
 shutdown.inProgress =
   false;
 
-process.on(
-  "SIGINT",
-  () =>
-    shutdown(
-      "SIGINT"
-    )
-);
+shutdown.promise =
+  null;
 
-process.on(
-  "SIGTERM",
-  () =>
-    shutdown(
-      "SIGTERM"
-    )
-);
+// ============================================================================
+// PROCESS SIGNAL HANDLERS
+// ============================================================================
 
-/* eslint-disable-next-line unicorn/prefer-top-level-await */
-startServer();
+function registerProcessSignalHandlers() {
+  process.on(
+    "SIGINT",
+    () => {
+      void shutdown(
+        "SIGINT"
+      );
+    }
+  );
+
+  process.on(
+    "SIGTERM",
+    () => {
+      void shutdown(
+        "SIGTERM"
+      );
+    }
+  );
+}
+
+
+// ============================================================================
+// DIRECT PROCESS ENTRYPOINT
+// ============================================================================
+
+/*
+ * Importing server.js must NOT automatically start AIRA.
+ *
+ * This prevents Jest from connecting Redis, RabbitMQ,
+ * Kubernetes, schedulers and background jobs just because
+ * the Express app was imported.
+ *
+ * AIRA starts normally only when we run:
+ *
+ *   node server.js
+ */
+
+if (
+  require.main ===
+  module
+) {
+  registerProcessSignalHandlers();
+
+  startServer()
+    .catch(
+      (
+        error
+      ) => {
+        console.error(
+          "[server] Fatal startup failure:",
+          error
+        );
+
+        applicationLifecycle
+          .state =
+          APPLICATION_STATE
+            .FAILED;
+
+        applicationLifecycle
+          .lastError =
+          error.message;
+
+        process.exitCode =
+          1;
+      }
+    );
+}
+
+
+// ============================================================================
+// TESTABLE LIFECYCLE EXPORTS
+// ============================================================================
+
+app.applicationLifecycle =
+  applicationLifecycle;
+
+app.APPLICATION_STATE =
+  APPLICATION_STATE;
+
+app.getApplicationLifecycleStatus =
+  getApplicationLifecycleStatus;
+
+app.isApplicationReady =
+  isApplicationReady;
+
+app.transitionApplicationState =
+  transitionApplicationState;
+
+app.startServer =
+  startServer;
+
+app.shutdown =
+  shutdown;
+
+app.registerProcessSignalHandlers =
+  registerProcessSignalHandlers;
+
+
+// ============================================================================
+// EXPRESS APP EXPORT
+// ============================================================================
 
 module.exports =
   app;

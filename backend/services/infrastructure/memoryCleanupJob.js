@@ -1,349 +1,836 @@
+"use strict";
+
 /**
- * Memory Cleanup Job
- * Scheduled job to clean up old incident memory and prevent unbounded growth
- * 
- * Runs every 5 minutes to:
- * - Delete incident memory older than TTL
- * - Archive old decision traces
- * - Trim oversized pattern histories
- * - Enforce max entries per tenant
+ * ============================================================================
+ * PHASE 11.11 — RETENTION / CLEANUP SCHEDULER
+ * ============================================================================
+ *
+ * Responsibilities:
+ *
+ * - schedule bounded retention cycles
+ * - delegate archival/deletion decisions to RetentionService
+ * - trim active IncidentMemory occurrence arrays
+ * - update infrastructure metrics
+ * - avoid overlapping cleanup cycles
+ *
+ * It MUST NOT directly delete audit/security chains.
  */
 
-const IncidentMemory = require('../../models/IncidentMemory');
-const DecisionTrace = require('../../models/DecisionTrace');
-const RunbookExecution = require('../../models/RunbookExecution');
-const FailedMessage = require('../../models/FailedMessage');
-const TenantConfig = require('../../models/TenantConfig');
+const IncidentMemory =
+  require(
+    "../../models/IncidentMemory"
+  );
 
-// Lazy getter for metricsService to avoid circular dependencies
-let metricsServiceCache = null;
-const getMetricsService = () => {
-  if (!metricsServiceCache) {
-    try {
-      const infraServices = require('./index');
-      metricsServiceCache = infraServices.metricsService;
-    } catch (e) {
-      console.warn('[memory-cleanup] Could not load metricsService:', e.message);
-      return null;
-    }
-  }
-  return metricsServiceCache;
-};
+const DecisionTrace =
+  require(
+    "../../models/DecisionTrace"
+  );
 
-class MemoryCleanupJob {
-  constructor() {
-    this.config = {
-      // TTL for different data types (in days)
-      ttls: {
-        incidentMemory: 30,
-        decisionTrace: 90,
-        runbookExecution: 90,
-        failedMessage: 7,
-      },
-      // Max entries per tenant
-      limits: {
-        incidentMemoryPerTenant: 10000,
-        decisionTracePerTenant: 50000,
-      },
-      // Trim old occurrences in IncidentMemory
-      maxOccurrencesPerPattern: 100,
-      // Job interval (minutes)
-      intervalMinutes: 5,
-    };
+const TenantConfig =
+  require(
+    "../../models/TenantConfig"
+  );
 
-    this.isRunning = false;
-    this.timerId = null;
+const retentionService =
+  require(
+    "./retentionService"
+  );
+
+
+// ============================================================================
+// LAZY METRICS
+// ============================================================================
+
+let metricsServiceCache =
+  null;
+
+
+function getMetricsService() {
+  if (
+    metricsServiceCache
+  ) {
+    return metricsServiceCache;
   }
 
-  /**
-   * Start cleanup job
-   */
-  start() {
-    if (this.isRunning) {
-      console.warn('[memory-cleanup] Job already running');
-      return;
-    }
 
-    this.isRunning = true;
-    console.log(
-      `[memory-cleanup] ✓ Started cleanup job (runs every ${this.config.intervalMinutes} minutes)`
-    );
-
-    // Run immediately, then on interval
-    this.cleanup();
-    this.timerId = setInterval(() => this.cleanup(), this.config.intervalMinutes * 60 * 1000);
-  }
-
-  /**
-   * Stop cleanup job
-   */
-  stop() {
-    if (this.timerId) {
-      clearInterval(this.timerId);
-      this.timerId = null;
-      this.isRunning = false;
-      console.log('[memory-cleanup] ✓ Stopped cleanup job');
-    }
-  }
-
-  /**
-   * Run cleanup
-   */
-  async cleanup() {
-    try {
-      const startTime = Date.now();
-      const results = {};
-
-      // Clean each collection
-      results.incidentMemory = await this.cleanIncidentMemory();
-      results.decisionTrace = await this.cleanDecisionTrace();
-      results.runbookExecution = await this.cleanRunbookExecution();
-      results.failedMessages = await this.cleanFailedMessages();
-      results.enforcement = await this.enforcePerTenantLimits();
-
-      // FIX #6: INFRASTRUCTURE METRICS - Update memory and trace count gauges
-      // After cleanup, update metrics to reflect current database state
-      await this.updateInfrastructureMetrics();
-
-      const duration = Date.now() - startTime;
-
-      // Log summary
-      console.log(
-        `[memory-cleanup] ✓ Cleanup cycle completed (${duration}ms):`,
-        results
+  try {
+    const infrastructure =
+      require(
+        "./index"
       );
 
-      return results;
-    } catch (error) {
-      console.error('[memory-cleanup] Error during cleanup:', error.message);
-      return { error: error.message };
-    }
+
+    metricsServiceCache =
+      infrastructure
+        .metricsService ||
+      null;
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[memory-cleanup] Could not load metricsService:",
+      error.message
+    );
   }
 
-  /**
-   * Update infrastructure metrics after cleanup
-   * Counts current incident patterns and decision traces per tenant
-   */
-  async updateInfrastructureMetrics() {
-    try {
-      // Get all tenants
-      const tenants = await TenantConfig.find({}).select('tenantId').lean();
 
-      for (const tenant of tenants) {
-        try {
-          const tenantId = tenant.tenantId;
+  return metricsServiceCache;
+}
 
-          // Count incident memory patterns
-          const patternCount = await IncidentMemory.countDocuments({ tenantId });
 
-          // Count decision traces
-          const traceCount = await DecisionTrace.countDocuments({ tenantId });
+// ============================================================================
+// JOB
+// ============================================================================
 
-          // Update metrics in Prometheus
-          const metrics = getMetricsService();
-          if (metrics) {
-            metrics.updateMemoryMetrics(tenantId, patternCount, traceCount);
-          }
+class MemoryCleanupJob {
+  constructor(
+    options = {}
+  ) {
+    this.intervalMinutes =
+      this.normalizePositiveInteger(
+        options
+          .intervalMinutes ??
+        process.env
+          .RETENTION_JOB_INTERVAL_MINUTES,
+        5
+      );
 
-          console.log(
-            `[memory-cleanup] Updated metrics: tenant=${tenantId}, patterns=${patternCount}, traces=${traceCount}`
-          );
-        } catch (error) {
-          console.warn(`[memory-cleanup] Failed to update metrics for tenant=${tenant.tenantId}:`, error.message);
-        }
-      }
-    } catch (error) {
-      console.error('[memory-cleanup] Error updating infrastructure metrics:', error.message);
-    }
+
+    this.maxOccurrencesPerPattern =
+      this.normalizePositiveInteger(
+        options
+          .maxOccurrencesPerPattern ??
+        process.env
+          .RETENTION_MAX_PATTERN_OCCURRENCES,
+        100
+      );
+
+
+    this.isRunning =
+      false;
+
+
+    this.cleanupInProgress =
+      false;
+
+
+    this.timerId =
+      null;
+
+
+    this.startedAt =
+      null;
+
+
+    this.lastRunAt =
+      null;
+
+
+    this.lastCompletedAt =
+      null;
+
+
+    this.lastDurationMs =
+      null;
+
+
+    this.lastError =
+      null;
+
+
+    this.lastResult =
+      null;
   }
 
-  /**
-   * Clean old incident memory records
-   */
-  async cleanIncidentMemory() {
-    try {
-      const ttlMs = this.config.ttls.incidentMemory * 24 * 60 * 60 * 1000;
-      const cutoffTime = new Date(Date.now() - ttlMs);
 
-      // Delete inactive patterns older than TTL
-      const deleteResult = await IncidentMemory.deleteMany({
-        isActive: false,
-        updatedAt: { $lt: cutoffTime },
-      });
+  // ==========================================================================
+  // NORMALIZATION
+  // ==========================================================================
 
-      // Trim occurrences in active patterns (keep only recent 100)
-      const activePatterns = await IncidentMemory.find({ isActive: true });
-      let trimmedCount = 0;
+  normalizePositiveInteger(
+    value,
+    fallback
+  ) {
+    const parsed =
+      Number.parseInt(
+        value,
+        10
+      );
 
-      for (const pattern of activePatterns) {
-        if (pattern.occurrences && pattern.occurrences.length > this.config.maxOccurrencesPerPattern) {
-          const toTrim = pattern.occurrences.length - this.config.maxOccurrencesPerPattern;
-          pattern.occurrences = pattern.occurrences.slice(-this.config.maxOccurrencesPerPattern);
-          trimmedCount += toTrim;
-          await pattern.save();
-        }
-      }
 
+    return Number.isFinite(
+      parsed
+    ) &&
+    parsed >
+      0
+      ? parsed
+      : fallback;
+  }
+
+
+  // ==========================================================================
+  // START
+  // ==========================================================================
+
+  start() {
+    if (
+      this.isRunning
+    ) {
       return {
-        deleted: deleteResult.deletedCount,
-        trimmed: trimmedCount,
+        started:
+          false,
+
+        reason:
+          "ALREADY_RUNNING",
+
+        executionAuthorized:
+          false,
       };
-    } catch (error) {
-      console.error('[memory-cleanup] Error cleaning IncidentMemory:', error.message);
-      return { error: error.message };
     }
+
+
+    this.isRunning =
+      true;
+
+
+    this.startedAt =
+      new Date();
+
+
+    console.log(
+      `[memory-cleanup] ✓ Started retention job interval=${this.intervalMinutes}m`
+    );
+
+
+    /*
+     * Initial run is asynchronous but failures are contained.
+     */
+    void this
+      .cleanup()
+      .catch(
+        (
+          error
+        ) => {
+          console.error(
+            "[memory-cleanup] Initial retention cycle failed:",
+            error.message
+          );
+        }
+      );
+
+
+    this.timerId =
+      setInterval(
+        () => {
+          void this
+            .cleanup()
+            .catch(
+              (
+                error
+              ) => {
+                console.error(
+                  "[memory-cleanup] Scheduled retention cycle failed:",
+                  error.message
+                );
+              }
+            );
+        },
+        this.intervalMinutes *
+          60 *
+          1000
+      );
+
+
+    if (
+      typeof this.timerId
+        .unref ===
+      "function"
+    ) {
+      this.timerId
+        .unref();
+    }
+
+
+    return {
+      started:
+        true,
+
+      intervalMinutes:
+        this.intervalMinutes,
+
+      executionAuthorized:
+        false,
+    };
   }
 
-  /**
-   * Clean old decision traces
-   */
-  async cleanDecisionTrace() {
-    try {
-      const ttlMs = this.config.ttls.decisionTrace * 24 * 60 * 60 * 1000;
-      const cutoffTime = new Date(Date.now() - ttlMs);
 
-      const result = await DecisionTrace.deleteMany({
-        createdAt: { $lt: cutoffTime },
-      });
+  // ==========================================================================
+  // STOP
+  // ==========================================================================
 
-      return { deleted: result.deletedCount };
-    } catch (error) {
-      console.error('[memory-cleanup] Error cleaning DecisionTrace:', error.message);
-      return { error: error.message };
+  stop() {
+    if (
+      this.timerId
+    ) {
+      clearInterval(
+        this.timerId
+      );
+
+
+      this.timerId =
+        null;
     }
+
+
+    this.isRunning =
+      false;
+
+
+    console.log(
+      "[memory-cleanup] ✓ Stopped retention job"
+    );
+
+
+    return {
+      stopped:
+        true,
+
+      cleanupInProgress:
+        this.cleanupInProgress,
+
+      executionAuthorized:
+        false,
+    };
   }
 
-  /**
-   * Clean old runbook executions
-   */
-  async cleanRunbookExecution() {
-    try {
-      const ttlMs = this.config.ttls.runbookExecution * 24 * 60 * 60 * 1000;
-      const cutoffTime = new Date(Date.now() - ttlMs);
 
-      const result = await RunbookExecution.deleteMany({
-        startTime: { $lt: cutoffTime },
-      });
+  // ==========================================================================
+  // CLEANUP
+  // ==========================================================================
 
-      return { deleted: result.deletedCount };
-    } catch (error) {
-      console.error('[memory-cleanup] Error cleaning RunbookExecution:', error.message);
-      return { error: error.message };
+  async cleanup(
+    options = {}
+  ) {
+    if (
+      this.cleanupInProgress
+    ) {
+      return {
+        skipped:
+          true,
+
+        reason:
+          "CLEANUP_ALREADY_RUNNING",
+
+        executionAuthorized:
+          false,
+      };
     }
-  }
 
-  /**
-   * Clean old failed messages from DLQ
-   */
-  async cleanFailedMessages() {
+
+    this.cleanupInProgress =
+      true;
+
+
+    const startTime =
+      Date.now();
+
+
+    this.lastRunAt =
+      new Date();
+
+
+    this.lastError =
+      null;
+
+
     try {
-      const ttlMs = this.config.ttls.failedMessage * 24 * 60 * 60 * 1000;
-      const cutoffTime = new Date(Date.now() - ttlMs);
+      const dryRun =
+        options.dryRun ===
+        true;
 
-      // Delete old resolved messages
-      const result = await FailedMessage.deleteMany({
-        status: 'resolved',
-        dlqEntryTime: { $lt: cutoffTime },
-      });
 
-      return { deleted: result.deletedCount };
-    } catch (error) {
-      console.error('[memory-cleanup] Error cleaning FailedMessage:', error.message);
-      return { error: error.message };
-    }
-  }
-
-  /**
-   * Enforce per-tenant limits
-   */
-  async enforcePerTenantLimits() {
-    try {
-      const results = { tenants: {} };
-
-      // Get all unique tenant IDs
-      const tenants = await IncidentMemory.distinct('tenantId');
-
-      for (const tenantId of tenants) {
-        // Enforce IncidentMemory limit
-        const memoryCount = await IncidentMemory.countDocuments({ tenantId });
-        if (memoryCount > this.config.limits.incidentMemoryPerTenant) {
-          // Delete oldest inactive patterns
-          const excess = memoryCount - this.config.limits.incidentMemoryPerTenant;
-          const toDelete = await IncidentMemory.find({
-            tenantId,
-            isActive: false,
-          })
-            .sort({ updatedAt: 1 })
-            .limit(excess);
-
-          const ids = toDelete.map((m) => m._id);
-          const deleteResult = await IncidentMemory.deleteMany({
-            _id: { $in: ids },
+      const retention =
+        await retentionService
+          .runCycle({
+            dryRun,
           });
 
-          results.tenants[tenantId] = {
-            memoryDeleted: deleteResult.deletedCount,
-          };
-        }
 
-        // Enforce DecisionTrace limit
-        const traceCount = await DecisionTrace.countDocuments({ tenantId });
-        if (traceCount > this.config.limits.decisionTracePerTenant) {
-          const excess = traceCount - this.config.limits.decisionTracePerTenant;
-          const toDelete = await DecisionTrace.find({ tenantId })
-            .sort({ createdAt: 1 })
-            .limit(excess);
+      /*
+       * Active patterns are never deleted by retention.
+       *
+       * Their embedded occurrence history is bounded separately.
+       */
+      const patternTrim =
+        await this
+          .trimActivePatternHistory({
+            dryRun,
+          });
 
-          const ids = toDelete.map((t) => t._id);
-          await DecisionTrace.deleteMany({ _id: { $in: ids } });
 
-          if (!results.tenants[tenantId]) {
-            results.tenants[tenantId] = {};
-          }
-          results.tenants[tenantId].tracesDeleted = excess;
-        }
+      if (
+        !dryRun
+      ) {
+        await this
+          .updateInfrastructureMetrics();
       }
 
-      return results;
-    } catch (error) {
-      console.error('[memory-cleanup] Error enforcing limits:', error.message);
-      return { error: error.message };
+
+      const duration =
+        Date.now() -
+        startTime;
+
+
+      this.lastDurationMs =
+        duration;
+
+
+      this.lastCompletedAt =
+        new Date();
+
+
+      this.lastResult = {
+        retention,
+
+        patternTrim,
+
+        durationMs:
+          duration,
+
+        dryRun,
+
+        executionAuthorized:
+          false,
+      };
+
+
+      console.log(
+        `[memory-cleanup] ✓ Retention cycle completed duration=${duration}ms dryRun=${dryRun}`
+      );
+
+
+      return this.lastResult;
+    } catch (
+      error
+    ) {
+      this.lastError =
+        error.message;
+
+
+      this.lastDurationMs =
+        Date.now() -
+        startTime;
+
+
+      console.error(
+        "[memory-cleanup] Retention cycle failed:",
+        error.message
+      );
+
+
+      return {
+        error:
+          error.message,
+
+        code:
+          error.code ||
+          "RETENTION_CYCLE_FAILED",
+
+        executionAuthorized:
+          false,
+      };
+    } finally {
+      this.cleanupInProgress =
+        false;
     }
   }
 
-  /**
-   * Get current memory status
-   */
+
+  // ==========================================================================
+  // DRY RUN
+  // ==========================================================================
+
+  async dryRun() {
+    return this
+      .cleanup({
+        dryRun:
+          true,
+      });
+  }
+
+
+  // ==========================================================================
+  // ACTIVE PATTERN HISTORY
+  // ==========================================================================
+
+  async trimActivePatternHistory({
+    dryRun =
+      false,
+  } = {}) {
+    const tenants =
+      await TenantConfig
+        .find({
+          status: {
+            $ne:
+              "archived",
+          },
+        })
+        .select(
+          "tenantId"
+        )
+        .lean();
+
+
+    let trimmed =
+      0;
+
+
+    let patterns =
+      0;
+
+
+    for (
+      const tenant
+      of tenants
+    ) {
+      const activePatterns =
+        await IncidentMemory
+          .find({
+            tenantId:
+              tenant
+                .tenantId,
+
+            isActive:
+              true,
+
+            $expr: {
+              $gt: [
+                {
+                  $size: {
+                    $ifNull: [
+                      "$occurrences",
+                      [],
+                    ],
+                  },
+                },
+
+                this
+                  .maxOccurrencesPerPattern,
+              ],
+            },
+          });
+
+
+      for (
+        const pattern
+        of activePatterns
+      ) {
+        const occurrences =
+          Array.isArray(
+            pattern
+              .occurrences
+          )
+            ? pattern
+                .occurrences
+            : [];
+
+
+        if (
+          occurrences.length <=
+          this
+            .maxOccurrencesPerPattern
+        ) {
+          continue;
+        }
+
+
+        const removed =
+          occurrences.length -
+          this
+            .maxOccurrencesPerPattern;
+
+
+        patterns +=
+          1;
+
+
+        trimmed +=
+          removed;
+
+
+        if (
+          dryRun
+        ) {
+          continue;
+        }
+
+
+        pattern.occurrences =
+          occurrences
+            .slice(
+              -this
+                .maxOccurrencesPerPattern
+            );
+
+
+        await pattern
+          .save();
+      }
+    }
+
+
+    return {
+      patterns,
+
+      trimmed,
+
+      dryRun,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  // ==========================================================================
+  // METRICS
+  // ==========================================================================
+
+  async updateInfrastructureMetrics() {
+    try {
+      const tenants =
+        await TenantConfig
+          .find({
+            status: {
+              $ne:
+                "archived",
+            },
+          })
+          .select(
+            "tenantId"
+          )
+          .lean();
+
+
+      const metrics =
+        getMetricsService();
+
+
+      if (
+        !metrics
+      ) {
+        return;
+      }
+
+
+      for (
+        const tenant
+        of tenants
+      ) {
+        try {
+          const tenantId =
+            tenant
+              .tenantId;
+
+
+          const [
+            patternCount,
+            traceCount,
+          ] =
+            await Promise
+              .all([
+                IncidentMemory
+                  .countDocuments({
+                    tenantId,
+                  }),
+
+                DecisionTrace
+                  .countDocuments({
+                    tenantId,
+                  }),
+              ]);
+
+
+          if (
+            typeof metrics
+              .updateMemoryMetrics ===
+            "function"
+          ) {
+            metrics
+              .updateMemoryMetrics(
+                tenantId,
+                patternCount,
+                traceCount
+              );
+          }
+        } catch (
+          error
+        ) {
+          console.warn(
+            `[memory-cleanup] Metric update failed tenant=${tenant.tenantId}:`,
+            error.message
+          );
+        }
+      }
+    } catch (
+      error
+    ) {
+      console.warn(
+        "[memory-cleanup] Infrastructure metric update failed:",
+        error.message
+      );
+    }
+  }
+
+
+  // ==========================================================================
+  // STATUS
+  // ==========================================================================
+
   async getStatus() {
     try {
-      const tenants = await IncidentMemory.distinct('tenantId');
-      const status = {
-        isRunning: this.isRunning,
-        nextRunMs: this.timerId
-          ? this.config.intervalMinutes * 60 * 1000 - ((Date.now() - startTime) % (this.config.intervalMinutes * 60 * 1000))
-          : 0,
-        tenants: {},
-      };
+      const intervalMs =
+        this.intervalMinutes *
+        60 *
+        1000;
 
-      for (const tenantId of tenants) {
-        const memoryCount = await IncidentMemory.countDocuments({ tenantId });
-        const traceCount = await DecisionTrace.countDocuments({ tenantId });
 
-        status.tenants[tenantId] = {
-          incidentMemoryRecords: memoryCount,
-          decisionTraces: traceCount,
-          atCapacity:
-            memoryCount >= this.config.limits.incidentMemoryPerTenant ||
-            traceCount >= this.config.limits.decisionTracePerTenant,
+      const elapsed =
+        this.lastRunAt
+          ? Date.now() -
+            this.lastRunAt
+              .getTime()
+          : 0;
+
+
+      const nextRunMs =
+        this.isRunning
+          ? Math.max(
+              0,
+              intervalMs -
+              elapsed
+            )
+          : 0;
+
+
+      const tenants =
+        await TenantConfig
+          .find({
+            status: {
+              $ne:
+                "archived",
+            },
+          })
+          .select(
+            "tenantId"
+          )
+          .lean();
+
+
+      const tenantStatus =
+        {};
+
+
+      for (
+        const tenant
+        of tenants
+      ) {
+        const tenantId =
+          tenant
+            .tenantId;
+
+
+        const [
+          memoryCount,
+          traceCount,
+        ] =
+          await Promise
+            .all([
+              IncidentMemory
+                .countDocuments({
+                  tenantId,
+                }),
+
+              DecisionTrace
+                .countDocuments({
+                  tenantId,
+                }),
+            ]);
+
+
+        tenantStatus[
+          tenantId
+        ] = {
+          incidentMemoryRecords:
+            memoryCount,
+
+          decisionTraces:
+            traceCount,
         };
       }
 
-      return status;
-    } catch (error) {
-      console.error('[memory-cleanup] Error getting status:', error.message);
-      return { error: error.message };
+
+      return {
+        isRunning:
+          this.isRunning,
+
+        cleanupInProgress:
+          this.cleanupInProgress,
+
+        intervalMinutes:
+          this.intervalMinutes,
+
+        nextRunMs,
+
+        startedAt:
+          this.startedAt,
+
+        lastRunAt:
+          this.lastRunAt,
+
+        lastCompletedAt:
+          this.lastCompletedAt,
+
+        lastDurationMs:
+          this.lastDurationMs,
+
+        lastError:
+          this.lastError,
+
+        retention:
+          retentionService
+            .getStatus(),
+
+        tenants:
+          tenantStatus,
+
+        executionAuthorized:
+          false,
+      };
+    } catch (
+      error
+    ) {
+      return {
+        error:
+          error.message,
+
+        isRunning:
+          this.isRunning,
+
+        cleanupInProgress:
+          this.cleanupInProgress,
+
+        executionAuthorized:
+          false,
+      };
     }
   }
 }
 
-module.exports = new MemoryCleanupJob();
+
+module.exports =
+  new MemoryCleanupJob();
+
+module.exports
+  .MemoryCleanupJob =
+  MemoryCleanupJob;

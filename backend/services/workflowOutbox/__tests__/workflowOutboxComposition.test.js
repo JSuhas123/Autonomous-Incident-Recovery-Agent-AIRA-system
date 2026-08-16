@@ -430,6 +430,351 @@ describe(
     );
 
 
+    // ========================================================================
+    // PHASE 11.5 — RABBITMQ DEPENDENCY ISOLATION
+    // ========================================================================
+
+    test(
+      "stage publisher routes RabbitMQ publish through dependency isolation",
+      async () => {
+        const isolatedQueueService = {
+          publishEvent:
+            jest.fn()
+              .mockResolvedValue({
+                eventId:
+                  "broker-event-1",
+
+                correlationId:
+                  "corr-1",
+              }),
+        };
+
+        const dependencyIsolation = {
+          execute:
+            jest.fn(
+              async (
+                name,
+                operation
+              ) => ({
+                ok:
+                  true,
+
+                dependency:
+                  name,
+
+                result:
+                  await operation(),
+
+                circuit: {
+                  state:
+                    "CLOSED",
+                },
+
+                executionAuthorized:
+                  false,
+              })
+            ),
+        };
+
+        const composition =
+          new WorkflowOutboxComposition({
+            queueService:
+              isolatedQueueService,
+
+            dependencyIsolation,
+          });
+
+        const publisher =
+          composition
+            .createStagePublisher({
+              stage:
+                "verification",
+
+              topic:
+                "aira.workflow.verification.requested",
+            });
+
+        const result =
+          await publisher({
+            organizationId:
+              "org-1",
+
+            environmentId:
+              "prod",
+
+            incidentId:
+              "incident-1",
+
+            executionRequestId:
+              "execution-request-1",
+
+            correlationId:
+              "corr-1",
+
+            executionAuthorized:
+              false,
+          });
+
+        expect(
+          dependencyIsolation.execute
+        )
+          .toHaveBeenCalledTimes(
+            1
+          );
+
+        expect(
+          dependencyIsolation.execute
+        )
+          .toHaveBeenCalledWith(
+            "rabbitmq",
+
+            expect.any(
+              Function
+            ),
+
+            expect.objectContaining({
+              organizationId:
+                "org-1",
+
+              environmentId:
+                "prod",
+
+              incidentId:
+                "incident-1",
+
+              stage:
+                "verification",
+            })
+          );
+
+        expect(
+          isolatedQueueService
+            .publishEvent
+        )
+          .toHaveBeenCalledTimes(
+            1
+          );
+
+        expect(
+          result
+        )
+          .toMatchObject({
+            messageId:
+              "broker-event-1",
+
+            executionAuthorized:
+              false,
+          });
+      }
+    );
+
+
+    test(
+      "RabbitMQ failure becomes retryable outbox transport failure",
+      async () => {
+        const isolatedQueueService = {
+          publishEvent:
+            jest.fn(),
+        };
+
+        const dependencyIsolation = {
+          execute:
+            jest.fn()
+              .mockResolvedValue({
+                ok:
+                  false,
+
+                degraded:
+                  true,
+
+                dependency:
+                  "rabbitmq",
+
+                decision:
+                  "DURABLE_RETRY",
+
+                retryable:
+                  true,
+
+                circuit: {
+                  state:
+                    "OPEN",
+                },
+
+                executionAuthorized:
+                  false,
+              }),
+        };
+
+        const composition =
+          new WorkflowOutboxComposition({
+            queueService:
+              isolatedQueueService,
+
+            dependencyIsolation,
+          });
+
+        const publisher =
+          composition
+            .createStagePublisher({
+              stage:
+                "execution",
+
+              topic:
+                "aira.workflow.execution.requested",
+            });
+
+        await expect(
+          publisher({
+            organizationId:
+              "org-1",
+
+            environmentId:
+              "prod",
+
+            incidentId:
+              "incident-1",
+
+            executionRequestId:
+              "execution-request-1",
+
+            executionAuthorized:
+              false,
+          })
+        )
+          .rejects
+          .toMatchObject({
+            code:
+              "OUTBOX_RABBITMQ_UNAVAILABLE",
+
+            isolationCode:
+              "OUTBOX_RABBITMQ_UNAVAILABLE",
+
+            dependency:
+              "rabbitmq",
+
+            dependencyDecision:
+              "DURABLE_RETRY",
+
+            circuitState:
+              "OPEN",
+
+            retryable:
+              true,
+
+            executionAuthorized:
+              false,
+          });
+
+        expect(
+          isolatedQueueService
+            .publishEvent
+        )
+          .not
+          .toHaveBeenCalled();
+      }
+    );
+
+
+    test(
+      "RabbitMQ isolation cannot manufacture execution authority",
+      async () => {
+        const isolatedQueueService = {
+          publishEvent:
+            jest.fn()
+              .mockResolvedValue({
+                eventId:
+                  "event-1",
+              }),
+        };
+
+        const dependencyIsolation = {
+          execute:
+            jest.fn(
+              async (
+                name,
+                operation
+              ) => ({
+                ok:
+                  true,
+
+                dependency:
+                  name,
+
+                result:
+                  await operation(),
+
+                circuit: {
+                  state:
+                    "CLOSED",
+                },
+
+                executionAuthorized:
+                  false,
+              })
+            ),
+        };
+
+        const composition =
+          new WorkflowOutboxComposition({
+            queueService:
+              isolatedQueueService,
+
+            dependencyIsolation,
+          });
+
+        const publisher =
+          composition
+            .createStagePublisher({
+              stage:
+                "lifecycle",
+
+              topic:
+                "aira.workflow.lifecycle.requested",
+            });
+
+        const result =
+          await publisher({
+            organizationId:
+              "org-1",
+
+            environmentId:
+              "prod",
+
+            incidentId:
+              "incident-1",
+
+            executionRequestId:
+              "execution-request-1",
+
+            executionAuthorized:
+              false,
+          });
+
+        const brokerPayload =
+          isolatedQueueService
+            .publishEvent
+            .mock
+            .calls[0][1];
+
+        expect(
+          brokerPayload
+            .executionAuthorized
+        )
+          .toBe(
+            false
+          );
+
+        expect(
+          result.executionAuthorized
+        )
+          .toBe(
+            false
+          );
+      }
+    );
+
+
     test(
       "transport refuses authorizationGranted",
       async () => {
@@ -479,6 +824,11 @@ describe(
     test(
       "queue publication failure propagates to retry coordinator",
       async () => {
+        /*
+         * Phase 11.3 contract:
+         *
+         * Preserve the original RabbitMQ transport identity.
+         */
         queueService
           .publishEvent
           .mockRejectedValue(
@@ -493,10 +843,95 @@ describe(
             )
           );
 
+
+        /*
+         * Simulate the real Phase 11.5 DependencyIsolationService
+         * behavior.
+         *
+         * The isolation layer catches the broker exception,
+         * classifies it as DURABLE_RETRY and preserves the
+         * original error identity.
+         */
+        const dependencyIsolation = {
+          execute:
+            jest.fn(
+              async (
+                name,
+                operation
+              ) => {
+                try {
+                  const result =
+                    await operation();
+
+                  return {
+                    ok:
+                      true,
+
+                    degraded:
+                      false,
+
+                    dependency:
+                      name,
+
+                    result,
+
+                    circuit: {
+                      state:
+                        "CLOSED",
+                    },
+
+                    executionAuthorized:
+                      false,
+                  };
+                } catch (
+                  error
+                ) {
+                  return {
+                    ok:
+                      false,
+
+                    degraded:
+                      true,
+
+                    dependency:
+                      name,
+
+                    decision:
+                      "DURABLE_RETRY",
+
+                    retryable:
+                      true,
+
+                    error: {
+                      code:
+                        error.code ||
+                        null,
+
+                      message:
+                        error.message,
+                    },
+
+                    circuit: {
+                      state:
+                        "CLOSED",
+                    },
+
+                    executionAuthorized:
+                      false,
+                  };
+                }
+              }
+            ),
+        };
+
+
         const composition =
           new WorkflowOutboxComposition({
             queueService,
+
+            dependencyIsolation,
           });
+
 
         const publisher =
           composition
@@ -508,6 +943,7 @@ describe(
                 WORKFLOW_OUTBOX_TOPIC
                   .EXECUTION,
             });
+
 
         await expect(
           publisher({
@@ -529,9 +965,52 @@ describe(
         )
           .rejects
           .toMatchObject({
+            /*
+             * Phase 11.3:
+             * original transport error survives.
+             */
             code:
               "ECONNREFUSED",
+
+            /*
+             * Phase 11.5:
+             * isolation classification is added separately.
+             */
+            isolationCode:
+              "OUTBOX_RABBITMQ_UNAVAILABLE",
+
+            dependency:
+              "rabbitmq",
+
+            dependencyDecision:
+              "DURABLE_RETRY",
+
+            retryable:
+              true,
+
+            executionAuthorized:
+              false,
           });
+
+
+        expect(
+          dependencyIsolation.execute
+        )
+          .toHaveBeenCalledTimes(
+            1
+          );
+
+
+        /*
+         * CLOSED circuit means the actual broker operation
+         * was attempted once.
+         */
+        expect(
+          queueService.publishEvent
+        )
+          .toHaveBeenCalledTimes(
+            1
+          );
       }
     );
 

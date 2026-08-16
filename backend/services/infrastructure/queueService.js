@@ -10,6 +10,7 @@ const crypto =
     "crypto"
   );
 
+
 // ============================================================================
 // HELPERS
 // ============================================================================
@@ -44,12 +45,15 @@ function redactUrl(
   }
 }
 
+
 // ============================================================================
 // QUEUE SERVICE
 // ============================================================================
 
 class QueueService {
-  constructor() {
+  constructor(
+    options = {}
+  ) {
     this.connection =
       null;
 
@@ -59,38 +63,99 @@ class QueueService {
     this.connected =
       false;
 
+
+    // ========================================================================
+    // PHASE 11.6 — PUBLISHER LOAD PROTECTION
+    // ========================================================================
+
+    this.maxInFlightPublishes =
+      this.normalizePositiveInteger(
+        options.maxInFlightPublishes ??
+        process.env
+          .QUEUE_MAX_IN_FLIGHT_PUBLISHES,
+        100
+      );
+
+
+    this.publishDrainTimeoutMs =
+      this.normalizePositiveInteger(
+        options.publishDrainTimeoutMs ??
+        process.env
+          .QUEUE_PUBLISH_DRAIN_TIMEOUT_MS,
+        5000
+      );
+
+
+    this.publishRetryAfterMs =
+      this.normalizePositiveInteger(
+        options.publishRetryAfterMs ??
+        process.env
+          .QUEUE_PUBLISH_RETRY_AFTER_MS,
+        1000
+      );
+
+
+    this.defaultConsumerPrefetch =
+      this.normalizePositiveInteger(
+        options.defaultConsumerPrefetch ??
+        process.env
+          .QUEUE_DEFAULT_PREFETCH,
+        1
+      );
+
+
+    this.maxConsumerPrefetch =
+      this.normalizePositiveInteger(
+        options.maxConsumerPrefetch ??
+        process.env
+          .QUEUE_MAX_PREFETCH,
+        100
+      );
+
+
+    this.inFlightPublishes =
+      0;
+
+    this.publisherBlocked =
+      false;
+
+    this.publisherBlockedUntil =
+      0;
+
+    this.backpressureEvents =
+      0;
+
+    this.saturationRejects =
+      0;
+
+    this.lastBackpressureAt =
+      null;
+
+
     // ========================================================================
     // CANONICAL EVENT TOPICS
     // ========================================================================
 
     this.topics =
       Object.freeze({
-        // --------------------------------------------------------------------
-        // SIGNAL / TELEMETRY
-        // --------------------------------------------------------------------
-
         SIGNAL_RECEIVED:
           "signal.received",
 
         TELEMETRY_INGESTED:
           "telemetry.ingested",
 
-        // --------------------------------------------------------------------
-        // INCIDENT LIFECYCLE
-        // --------------------------------------------------------------------
-
         INCIDENT_DETECTED:
           "incident.detected",
-        
-         DIAGNOSIS_REQUESTED:
-    "diagnosis.requested",
 
-  DIAGNOSIS_COMPLETED:
-    "diagnosis.completed",
+        DIAGNOSIS_REQUESTED:
+          "diagnosis.requested",
 
-  DIAGNOSIS_FAILED:
-    "diagnosis.failed",
-    
+        DIAGNOSIS_COMPLETED:
+          "diagnosis.completed",
+
+        DIAGNOSIS_FAILED:
+          "diagnosis.failed",
+
         INCIDENT_UPDATED:
           "incident.updated",
 
@@ -121,23 +186,11 @@ class QueueService {
         INCIDENT_SEVERITY_ESCALATED:
           "incident.severity_escalated",
 
-        // --------------------------------------------------------------------
-        // AGENT INTELLIGENCE
-        // --------------------------------------------------------------------
-
         INCIDENT_ANALYZED:
           "incident.analyzed",
 
-        // --------------------------------------------------------------------
-        // DECISION
-        // --------------------------------------------------------------------
-
         DECISION_PROPOSED:
           "decision.proposed",
-
-        // --------------------------------------------------------------------
-        // APPROVALS
-        // --------------------------------------------------------------------
 
         ACTION_APPROVED:
           "action.approved",
@@ -145,19 +198,11 @@ class QueueService {
         ACTION_REJECTED:
           "action.rejected",
 
-        // --------------------------------------------------------------------
-        // EXECUTION
-        // --------------------------------------------------------------------
-
         ACTION_EXECUTED:
           "action.executed",
 
         ACTION_FAILED:
           "action.failed",
-
-        // --------------------------------------------------------------------
-        // OTHER PLATFORM EVENTS
-        // --------------------------------------------------------------------
 
         AUDIT_EVENTS:
           "audit.events",
@@ -165,6 +210,7 @@ class QueueService {
         ALERT_CREATED:
           "alert.created",
       });
+
 
     // ========================================================================
     // DEAD LETTER
@@ -178,6 +224,7 @@ class QueueService {
         "dlx.queue",
     };
   }
+
 
   // ==========================================================================
   // CONNECT
@@ -196,10 +243,12 @@ class QueueService {
         )}...`
       );
 
+
       const connectionPromise =
         amqp.connect(
           url
         );
+
 
       const timeoutPromise =
         new Promise(
@@ -218,16 +267,16 @@ class QueueService {
             )
         );
 
+
       try {
         this.connection =
           await Promise
             .race([
               connectionPromise,
-
               timeoutPromise,
             ]);
       } catch (
-        timeoutError
+        error
       ) {
         console.warn(
           `[queue] RabbitMQ connection timeout (non-fatal): ${redactUrl(
@@ -240,6 +289,7 @@ class QueueService {
 
         return this;
       }
+
 
       this.connection
         .on(
@@ -257,6 +307,7 @@ class QueueService {
           }
         );
 
+
       this.connection
         .on(
           "close",
@@ -270,10 +321,12 @@ class QueueService {
           }
         );
 
+
       this.channel =
         await this
           .connection
           .createChannel();
+
 
       this.channel
         .on(
@@ -313,6 +366,7 @@ class QueueService {
           }
         );
 
+
       // ======================================================================
       // DLX
       // ======================================================================
@@ -329,6 +383,7 @@ class QueueService {
           }
         );
 
+
       await this
         .channel
         .assertQueue(
@@ -340,6 +395,7 @@ class QueueService {
           }
         );
 
+
       await this
         .channel
         .bindQueue(
@@ -350,12 +406,15 @@ class QueueService {
           "dead-letter"
         );
 
+
       this.connected =
         true;
+
 
       console.log(
         "[queue] ✓ Connected to RabbitMQ"
       );
+
 
       return this;
     } catch (
@@ -371,6 +430,7 @@ class QueueService {
       return this;
     }
   }
+
 
   // ==========================================================================
   // PUBLISH
@@ -392,9 +452,94 @@ class QueueService {
         {
           code:
             "QUEUE_NOT_CONNECTED",
+
+          retryable:
+            true,
         }
       );
     }
+
+
+    // ========================================================================
+    // PHASE 11.6 — ADMISSION / SATURATION GUARD
+    // ========================================================================
+
+    if (
+      this.inFlightPublishes >=
+      this.maxInFlightPublishes
+    ) {
+      this.saturationRejects +=
+        1;
+
+
+      throw Object.assign(
+        new Error(
+          `Queue publisher saturated: ${this.inFlightPublishes}/${this.maxInFlightPublishes} publishes in flight`
+        ),
+        {
+          code:
+            "QUEUE_PUBLISH_SATURATED",
+
+          retryable:
+            true,
+
+          retryAfterMs:
+            this.publishRetryAfterMs,
+
+          inFlight:
+            this.inFlightPublishes,
+
+          maxInFlight:
+            this.maxInFlightPublishes,
+
+          executionAuthorized:
+            false,
+        }
+      );
+    }
+
+
+    /*
+     * If RabbitMQ previously signalled write-buffer pressure,
+     * temporarily reject new publishers until the drain event clears it.
+     */
+    if (
+      this.publisherBlocked &&
+      Date.now() <
+      this.publisherBlockedUntil
+    ) {
+      this.saturationRejects +=
+        1;
+
+
+      throw Object.assign(
+        new Error(
+          "RabbitMQ publisher is applying backpressure"
+        ),
+        {
+          code:
+            "QUEUE_PUBLISH_BACKPRESSURE_ACTIVE",
+
+          retryable:
+            true,
+
+          retryAfterMs:
+            Math.max(
+              1,
+              this.publisherBlockedUntil -
+              Date.now()
+            ),
+
+          executionAuthorized:
+            false,
+        }
+      );
+    }
+
+
+    this.inFlightPublishes +=
+      1;
+
 
     try {
       const eventId =
@@ -402,9 +547,11 @@ class QueueService {
         crypto
           .randomUUID();
 
+
       const timestamp =
         options.timestamp ||
         Date.now();
+
 
       const correlationId =
         options
@@ -412,11 +559,13 @@ class QueueService {
         crypto
           .randomUUID();
 
+
       const priority =
         this
           .normalizePriority(
             options.priority
           );
+
 
       const message = {
         eventId,
@@ -452,12 +601,14 @@ class QueueService {
           1,
       };
 
+
       const buffer =
         Buffer.from(
           JSON.stringify(
             message
           )
         );
+
 
       await this
         .channel
@@ -470,7 +621,22 @@ class QueueService {
           }
         );
 
-      const published =
+
+      /*
+       * IMPORTANT:
+       *
+       * amqplib channel.publish() returning false does NOT mean
+       * the message failed.
+       *
+       * It means the writable buffer reached its high-water mark.
+       *
+       * The message has already been accepted into the client-side
+       * buffer.
+       *
+       * Retrying this event immediately could therefore cause a
+       * duplicate publish.
+       */
+      const writable =
         this
           .channel
           .publish(
@@ -530,29 +696,50 @@ class QueueService {
             }
           );
 
-      /*
-       * amqplib returns false when its write buffer has reached
-       * the high-water mark.
-       *
-       * Do not silently drop operational events.
-       */
+
+      let backpressured =
+        false;
+
+
       if (
-        !published
+        writable ===
+        false
       ) {
-        throw Object.assign(
-          new Error(
-            `[queue] BACKPRESSURE: Publisher buffer full for event ${eventId} on topic ${topic}`
-          ),
-          {
-            code:
-              "QUEUE_BACKPRESSURE",
-          }
-        );
+        backpressured =
+          true;
+
+        this.backpressureEvents +=
+          1;
+
+        this.lastBackpressureAt =
+          new Date();
+
+        this.publisherBlocked =
+          true;
+
+        this.publisherBlockedUntil =
+          Date.now() +
+          this.publishDrainTimeoutMs;
+
+
+        /*
+         * Wait for the writable stream to drain.
+         *
+         * This does NOT republish the current event.
+         */
+        await this
+          .waitForPublisherDrain();
       }
 
+
       console.log(
-        `[queue] → ${topic} | eventId=${eventId} | correlationId=${correlationId}`
+        `[queue] → ${topic} | eventId=${eventId} | correlationId=${correlationId}${
+          backpressured
+            ? " | backpressure=drained"
+            : ""
+        }`
       );
+
 
       return {
         eventId,
@@ -562,6 +749,11 @@ class QueueService {
         timestamp,
 
         topic,
+
+        backpressured,
+
+        executionAuthorized:
+          false,
       };
     } catch (
       error
@@ -572,8 +764,157 @@ class QueueService {
       );
 
       throw error;
+    } finally {
+      this.inFlightPublishes =
+        Math.max(
+          0,
+          this.inFlightPublishes -
+          1
+        );
     }
   }
+
+
+  // ==========================================================================
+  // PUBLISHER DRAIN
+  // ==========================================================================
+
+  async waitForPublisherDrain() {
+    if (
+      !this.channel
+    ) {
+      throw Object.assign(
+        new Error(
+          "Queue channel unavailable while waiting for publisher drain"
+        ),
+        {
+          code:
+            "QUEUE_CHANNEL_UNAVAILABLE",
+
+          retryable:
+            true,
+
+          executionAuthorized:
+            false,
+        }
+      );
+    }
+
+
+    /*
+     * Some channel mocks/tests may not expose EventEmitter methods.
+     */
+    if (
+      typeof this.channel.once !==
+      "function"
+    ) {
+      this.publisherBlocked =
+        false;
+
+      this.publisherBlockedUntil =
+        0;
+
+      return {
+        drained:
+          true,
+
+        simulated:
+          true,
+      };
+    }
+
+
+    await new Promise(
+      (
+        resolve,
+        reject
+      ) => {
+        let settled =
+          false;
+
+
+        const finish =
+          (
+            error =
+              null
+          ) => {
+            if (
+              settled
+            ) {
+              return;
+            }
+
+            settled =
+              true;
+
+            clearTimeout(
+              timer
+            );
+
+
+            if (
+              error
+            ) {
+              reject(
+                error
+              );
+            } else {
+              resolve();
+            }
+          };
+
+
+        const timer =
+          setTimeout(
+            () => {
+              finish(
+                Object.assign(
+                  new Error(
+                    `RabbitMQ publisher drain timed out after ${this.publishDrainTimeoutMs}ms`
+                  ),
+                  {
+                    code:
+                      "QUEUE_BACKPRESSURE_DRAIN_TIMEOUT",
+
+                    retryable:
+                      true,
+
+                    retryAfterMs:
+                      this.publishRetryAfterMs,
+
+                    executionAuthorized:
+                      false,
+                  }
+                )
+              );
+            },
+            this.publishDrainTimeoutMs
+          );
+
+
+        this.channel
+          .once(
+            "drain",
+            () => {
+              this.publisherBlocked =
+                false;
+
+              this.publisherBlockedUntil =
+                0;
+
+              finish();
+            }
+          );
+      }
+    );
+
+
+    return {
+      drained:
+        true,
+    };
+  }
+
 
   // ==========================================================================
   // CONSUME
@@ -596,13 +937,18 @@ class QueueService {
         {
           code:
             "QUEUE_NOT_CONNECTED",
+
+          retryable:
+            true,
         }
       );
     }
 
+
     let queueName;
     let handler;
     let opts;
+
 
     if (
       typeof queueNameOrHandler ===
@@ -628,6 +974,7 @@ class QueueService {
         options;
     }
 
+
     if (
       typeof handler !==
       "function"
@@ -639,24 +986,39 @@ class QueueService {
         {
           code:
             "QUEUE_HANDLER_REQUIRED",
+
+          retryable:
+            false,
         }
       );
     }
 
+
     try {
-      const prefetch =
-        Math.max(
-          1,
-          Number(
-            opts.prefetch
-          ) ||
-          1
+      /*
+       * Phase 11.6 consumer load protection.
+       *
+       * Consumer-prefetch cannot exceed the configured global cap.
+       */
+      const requestedPrefetch =
+        this.normalizePositiveInteger(
+          opts.prefetch,
+          this.defaultConsumerPrefetch
         );
+
+
+      const prefetch =
+        Math.min(
+          requestedPrefetch,
+          this.maxConsumerPrefetch
+        );
+
 
       const isDurable =
         Boolean(
           queueName
         );
+
 
       const resolvedName =
         queueName ||
@@ -666,6 +1028,7 @@ class QueueService {
             0,
             8
           )}.tmp`;
+
 
       await this
         .channel
@@ -677,6 +1040,7 @@ class QueueService {
               true,
           }
         );
+
 
       await this
         .channel
@@ -713,6 +1077,7 @@ class QueueService {
           }
         );
 
+
       await this
         .channel
         .bindQueue(
@@ -721,15 +1086,18 @@ class QueueService {
           "#"
         );
 
+
       await this
         .channel
         .prefetch(
           prefetch
         );
 
+
       console.log(
-        `[queue] Subscribing to ${topic} via ${resolvedName}`
+        `[queue] Subscribing to ${topic} via ${resolvedName} prefetch=${prefetch}`
       );
+
 
       await this
         .channel
@@ -744,11 +1112,13 @@ class QueueService {
               return;
             }
 
+
             const headers =
               message
                 .properties
                 .headers ||
               {};
+
 
             const eventId =
               headers[
@@ -759,6 +1129,7 @@ class QueueService {
                 .messageId ||
               null;
 
+
             const correlationId =
               headers[
                 "x-correlation-id"
@@ -768,11 +1139,13 @@ class QueueService {
                 .correlationId ||
               null;
 
+
             const tenantId =
               headers[
                 "x-tenant-id"
               ] ||
               null;
+
 
             const organizationId =
               headers[
@@ -780,11 +1153,13 @@ class QueueService {
               ] ||
               null;
 
+
             const environmentId =
               headers[
                 "x-environment-id"
               ] ||
               null;
+
 
             try {
               const content =
@@ -794,12 +1169,15 @@ class QueueService {
                     .toString()
                 );
 
+
               console.log(
                 `[queue] ← ${topic} | eventId=${eventId} | correlationId=${correlationId}`
               );
 
+
               let settled =
                 false;
+
 
               const ack =
                 () => {
@@ -817,6 +1195,7 @@ class QueueService {
                       message
                     );
                 };
+
 
               const nack =
                 (
@@ -839,6 +1218,7 @@ class QueueService {
                       requeue
                     );
                 };
+
 
               await handler({
                 eventId,
@@ -867,13 +1247,7 @@ class QueueService {
                 nack,
               });
 
-              /*
-               * Preserve backwards compatibility:
-               *
-               * Existing handlers may call ack themselves.
-               * New handlers that simply return successfully are
-               * automatically acknowledged.
-               */
+
               if (
                 !settled
               ) {
@@ -887,14 +1261,12 @@ class QueueService {
                 error.message
               );
 
-              /*
-               * retryable === false sends the message to DLX
-               * for durable queues.
-               */
+
               const requeue =
                 error
                   .retryable !==
                 false;
+
 
               this.channel
                 .nack(
@@ -910,6 +1282,7 @@ class QueueService {
           }
         );
 
+
       return resolvedName;
     } catch (
       error
@@ -922,6 +1295,7 @@ class QueueService {
       throw error;
     }
   }
+
 
   // ==========================================================================
   // CREATE PERSISTENT QUEUE
@@ -936,15 +1310,26 @@ class QueueService {
       !this.connected ||
       !this.channel
     ) {
-      throw new Error(
-        "Queue service not connected"
+      throw Object.assign(
+        new Error(
+          "Queue service not connected"
+        ),
+        {
+          code:
+            "QUEUE_NOT_CONNECTED",
+
+          retryable:
+            true,
+        }
       );
     }
+
 
     try {
       const durable =
         options.durable !==
         false;
+
 
       await this
         .channel
@@ -956,6 +1341,7 @@ class QueueService {
               true,
           }
         );
+
 
       await this
         .channel
@@ -982,6 +1368,7 @@ class QueueService {
           }
         );
 
+
       await this
         .channel
         .bindQueue(
@@ -990,9 +1377,11 @@ class QueueService {
           "#"
         );
 
+
       console.log(
         `[queue] ✓ Created persistent queue: ${queueName}`
       );
+
 
       return queueName;
     } catch (
@@ -1007,6 +1396,7 @@ class QueueService {
     }
   }
 
+
   // ==========================================================================
   // PURGE
   // ==========================================================================
@@ -1018,10 +1408,20 @@ class QueueService {
       !this.connected ||
       !this.channel
     ) {
-      throw new Error(
-        "Queue service not connected"
+      throw Object.assign(
+        new Error(
+          "Queue service not connected"
+        ),
+        {
+          code:
+            "QUEUE_NOT_CONNECTED",
+
+          retryable:
+            true,
+        }
       );
     }
+
 
     try {
       await this
@@ -1029,6 +1429,7 @@ class QueueService {
         .purgeQueue(
           queueName
         );
+
 
       console.log(
         `[queue] ✓ Purged ${queueName}`
@@ -1045,6 +1446,7 @@ class QueueService {
     }
   }
 
+
   // ==========================================================================
   // STATS
   // ==========================================================================
@@ -1056,10 +1458,20 @@ class QueueService {
       !this.connected ||
       !this.channel
     ) {
-      throw new Error(
-        "Queue service not connected"
+      throw Object.assign(
+        new Error(
+          "Queue service not connected"
+        ),
+        {
+          code:
+            "QUEUE_NOT_CONNECTED",
+
+          retryable:
+            true,
+        }
       );
     }
+
 
     try {
       const result =
@@ -1068,6 +1480,7 @@ class QueueService {
           .checkQueue(
             queueName
           );
+
 
       return {
         queue:
@@ -1093,6 +1506,63 @@ class QueueService {
     }
   }
 
+
+  // ==========================================================================
+  // PHASE 11.6 — LOAD STATUS
+  // ==========================================================================
+
+  getLoadStatus() {
+    const saturated =
+      this.inFlightPublishes >=
+      this.maxInFlightPublishes;
+
+
+    return {
+      connected:
+        this.connected,
+
+      inFlightPublishes:
+        this.inFlightPublishes,
+
+      maxInFlightPublishes:
+        this.maxInFlightPublishes,
+
+      saturated,
+
+      publisherBlocked:
+        this.publisherBlocked,
+
+      publisherBlockedUntil:
+        this.publisherBlockedUntil ||
+        null,
+
+      backpressureEvents:
+        this.backpressureEvents,
+
+      saturationRejects:
+        this.saturationRejects,
+
+      lastBackpressureAt:
+        this.lastBackpressureAt,
+
+      publishDrainTimeoutMs:
+        this.publishDrainTimeoutMs,
+
+      publishRetryAfterMs:
+        this.publishRetryAfterMs,
+
+      defaultConsumerPrefetch:
+        this.defaultConsumerPrefetch,
+
+      maxConsumerPrefetch:
+        this.maxConsumerPrefetch,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
   // ==========================================================================
   // PRIORITY
   // ==========================================================================
@@ -1105,6 +1575,7 @@ class QueueService {
         value
       );
 
+
     if (
       !Number.isFinite(
         parsed
@@ -1112,6 +1583,7 @@ class QueueService {
     ) {
       return 5;
     }
+
 
     return Math.min(
       10,
@@ -1123,6 +1595,37 @@ class QueueService {
       )
     );
   }
+
+
+  normalizePositiveInteger(
+    value,
+    fallback
+  ) {
+    const parsed =
+      Number(
+        value
+      );
+
+
+    if (
+      !Number.isFinite(
+        parsed
+      ) ||
+      parsed <=
+        0
+    ) {
+      return fallback;
+    }
+
+
+    return Math.max(
+      1,
+      Math.floor(
+        parsed
+      )
+    );
+  }
+
 
   // ==========================================================================
   // DISCONNECT
@@ -1138,6 +1641,7 @@ class QueueService {
           .close();
       }
 
+
       if (
         this.connection
       ) {
@@ -1145,6 +1649,7 @@ class QueueService {
           .connection
           .close();
       }
+
 
       this.channel =
         null;
@@ -1154,6 +1659,16 @@ class QueueService {
 
       this.connected =
         false;
+
+      this.inFlightPublishes =
+        0;
+
+      this.publisherBlocked =
+        false;
+
+      this.publisherBlockedUntil =
+        0;
+
 
       console.log(
         "[queue] ✓ Disconnected from RabbitMQ"
@@ -1171,6 +1686,7 @@ class QueueService {
   }
 }
 
+
 // ============================================================================
 // SINGLETON
 // ============================================================================
@@ -1180,6 +1696,7 @@ let instance =
 
 let useMockFallback =
   false;
+
 
 // ============================================================================
 // MOCK
@@ -1199,6 +1716,9 @@ const inMemoryMock = {
 
       reason:
         "MOCK_QUEUE",
+
+      executionAuthorized:
+        false,
     }),
 
   consumeEvents:
@@ -1221,6 +1741,33 @@ const inMemoryMock = {
         0,
     }),
 
+  getLoadStatus:
+    () => ({
+      connected:
+        false,
+
+      inFlightPublishes:
+        0,
+
+      maxInFlightPublishes:
+        0,
+
+      saturated:
+        false,
+
+      publisherBlocked:
+        false,
+
+      backpressureEvents:
+        0,
+
+      saturationRejects:
+        0,
+
+      executionAuthorized:
+        false,
+    }),
+
   disconnect:
     async () => {},
 
@@ -1228,6 +1775,7 @@ const inMemoryMock = {
     () =>
       false,
 };
+
 
 // ============================================================================
 // GET SINGLETON
@@ -1242,6 +1790,7 @@ async function getQueueService(
     return inMemoryMock;
   }
 
+
   if (
     !instance
   ) {
@@ -1254,8 +1803,10 @@ async function getQueueService(
       );
   }
 
+
   return instance;
 }
+
 
 // ============================================================================
 // MOCK FALLBACK
@@ -1269,6 +1820,7 @@ function setMockFallback() {
     null;
 }
 
+
 function clearMockFallback() {
   useMockFallback =
     false;
@@ -1276,6 +1828,7 @@ function clearMockFallback() {
   instance =
     null;
 }
+
 
 // ============================================================================
 // EXPORTS

@@ -1,357 +1,1395 @@
 /**
  * Resilient K8s Executor
- * Wraps K8s operations with comprehensive audit logging, retry strategies, and timeout handling
- * 
- * CRITICAL IMPROVEMENTS:
- * 1. Adds execution audit logs to every K8s operation
- * 2. Enforces timeouts (fails fast if operation takes too long)
- * 3. Tracks pre/post state for validation
- * 4. Generates execution reports for decision tracing
- * 5. Handles partial failures gracefully
+ *
+ * PHASE 11.5 — CIRCUIT BREAKERS & DEPENDENCY FAILURE ISOLATION
+ *
+ * Wraps Kubernetes operations with:
+ *
+ * - comprehensive audit logging
+ * - timeout enforcement
+ * - pre/post-state validation
+ * - dependency isolation
+ * - circuit-breaker protection
+ * - fail-closed mutation semantics
+ *
+ * IMPORTANT:
+ *
+ * Kubernetes mutations are CRITICAL dependency operations.
+ *
+ * Dependency failure must NEVER:
+ *
+ * - authorize execution
+ * - be interpreted as mutation success
+ * - trigger blind mutation replay
+ *
+ * Ambiguous execution outcomes are handled by the Phase 11.4
+ * replay/reconciliation boundary.
  */
 
-const { loggingService } = require('../infrastructure/loggingService');
-const { metricsService } = require('../infrastructure/metricsService');
+"use strict";
+
+const loggingService =
+  require(
+    "../infrastructure/loggingService"
+  );
+
+const metricsService =
+  require(
+    "../infrastructure/metricsService"
+  );
+
+const dependencyIsolationService =
+  require(
+    "../infrastructure/dependencyIsolationService"
+  );
+
 
 class ResilientK8sExecutor {
-  constructor(k8sClient) {
-    this.k8sClient = k8sClient;
-    this.defaultTimeout = parseInt(process.env.K8S_EXEC_TIMEOUT || '60000'); // 60s default
-    this.auditLogs = [];
+  constructor(
+    k8sClient,
+    options = {}
+  ) {
+    if (
+      !k8sClient
+    ) {
+      throw new Error(
+        "ResilientK8sExecutor requires a Kubernetes client"
+      );
+    }
+
+    this.k8sClient =
+      k8sClient;
+
+    this.dependencyIsolation =
+      options.dependencyIsolation ||
+      dependencyIsolationService;
+
+    this.defaultTimeout =
+      parseInt(
+        process.env
+          .K8S_EXEC_TIMEOUT ||
+        "60000",
+        10
+      );
+
+    this.auditLogs =
+      [];
   }
 
-  /**
-   * Restart a pod with audit trail
-   * @param {string} podName - Pod to restart
-   * @param {string} namespace - K8s namespace
-   * @param {object} options - { timeout, correlationId, decisionId }
-   * @returns {Promise<object>} - Execution result with audit trail
-   */
-  async restartPod(podName, namespace, options = {}) {
-    const { timeout = this.defaultTimeout, correlationId, decisionId } = options;
-    const executionId = `exec-${podName}-${Date.now()}`;
+
+  // ==========================================================================
+  // RESTART POD
+  // ==========================================================================
+
+  async restartPod(
+    podName,
+    namespace,
+    options = {}
+  ) {
+    const {
+      timeout =
+        this.defaultTimeout,
+
+      correlationId,
+
+      decisionId,
+
+      organizationId,
+
+      environmentId,
+
+      incidentId,
+    } =
+      options;
+
+    const executionId =
+      `exec-${podName}-${Date.now()}`;
 
     const auditEntry = {
       executionId,
-      action: 'restart-pod',
-      resource: `pod/${podName}`,
+
+      action:
+        "restart-pod",
+
+      resource:
+        `pod/${podName}`,
+
       namespace,
+
       correlationId,
+
       decisionId,
-      startTime: new Date(),
-      status: 'IN_PROGRESS',
+
+      organizationId,
+
+      environmentId,
+
+      incidentId,
+
+      startTime:
+        new Date(),
+
+      status:
+        "IN_PROGRESS",
+
+      executionAuthorized:
+        false,
     };
 
+
     try {
-      // Get pre-state
-      const preState = await this._getResourceState(
-        'pod',
-        podName,
-        namespace,
-        timeout / 3
-      );
-      auditEntry.preState = preState;
+      // ----------------------------------------------------------------------
+      // PRE-STATE
+      // ----------------------------------------------------------------------
 
-      // Execute with timeout
-      const result = await this._executeWithTimeout(
-        () => this.k8sClient.restartPod(podName, namespace, options),
-        timeout,
-        `Restart pod ${podName}`
+      const preState =
+        await this
+          ._getResourceState(
+            "pod",
+            podName,
+            namespace,
+            timeout / 3
+          );
+
+      auditEntry.preState =
+        preState;
+
+
+      // ----------------------------------------------------------------------
+      // MUTATION — CRITICAL DEPENDENCY BOUNDARY
+      // ----------------------------------------------------------------------
+
+      const dependencyResult =
+        await this
+          ._executeWithTimeout(
+            () =>
+              this.dependencyIsolation
+                .execute(
+                  "kubernetes",
+
+                  () =>
+                    this.k8sClient
+                      .restartPod(
+                        podName,
+                        namespace,
+                        options
+                      ),
+
+                  {
+                    organizationId:
+                      organizationId ||
+                      null,
+
+                    environmentId:
+                      environmentId ||
+                      null,
+
+                    incidentId:
+                      incidentId ||
+                      null,
+
+                    correlationId:
+                      correlationId ||
+                      null,
+
+                    executionId,
+
+                    operation:
+                      "restart-pod",
+                  }
+                ),
+
+            timeout,
+
+            `Restart pod ${podName}`
+          );
+
+
+      if (
+        !dependencyResult ||
+        dependencyResult.ok !==
+          true
+      ) {
+        throw Object.assign(
+          new Error(
+            `Kubernetes restart operation did not complete successfully for pod ${podName}`
+          ),
+          {
+            code:
+              "K8S_DEPENDENCY_OPERATION_FAILED",
+
+            executionAuthorized:
+              false,
+
+            dependencyResult:
+              dependencyResult ||
+              null,
+          }
+        );
+      }
+
+
+      const result =
+        dependencyResult.result;
+
+
+      // ----------------------------------------------------------------------
+      // POST-STATE — BEST EFFORT FOR RESTART
+      // ----------------------------------------------------------------------
+
+      await this
+        ._delay(
+          2000
+        );
+
+      const postState =
+        await this
+          ._getResourceState(
+            "pod",
+            podName,
+            namespace,
+            timeout / 3
+          );
+
+      auditEntry.postState =
+        postState;
+
+
+      // ----------------------------------------------------------------------
+      // SUCCESS
+      // ----------------------------------------------------------------------
+
+      auditEntry.status =
+        "SUCCESS";
+
+      auditEntry.result =
+        result;
+
+      auditEntry.circuit =
+        dependencyResult
+          .circuit ||
+        null;
+
+      auditEntry.endTime =
+        new Date();
+
+      auditEntry.duration =
+        auditEntry.endTime -
+        auditEntry.startTime;
+
+
+      this._recordAudit(
+        auditEntry
       );
 
-      // Get post-state (after brief delay for K8s to start changes)
-      await this._delay(2000); // Wait for K8s to start processing
-      const postState = await this._getResourceState(
-        'pod',
-        podName,
-        namespace,
-        timeout / 3
+      this._logExecution(
+        auditEntry
       );
-      auditEntry.postState = postState;
 
-      // Log success
-      auditEntry.status = 'SUCCESS';
-      auditEntry.result = result;
-      auditEntry.endTime = new Date();
-      auditEntry.duration = auditEntry.endTime - auditEntry.startTime;
-
-      this._recordAudit(auditEntry);
-      this._logExecution(auditEntry);
-      metricsService.recordK8sOperation(
-        'restart-pod',
-        'success',
-        auditEntry.duration
+      this._recordK8sMetric(
+        "restart-pod",
+        "success",
+        auditEntry.duration,
+        {
+          organizationId,
+          environmentId,
+        }
       );
+
 
       return {
-        success: true,
-        ...result,
-        executionId,
-        auditEntry,
-      };
-    } catch (error) {
-      auditEntry.status = 'FAILED';
-      auditEntry.error = error.message;
-      auditEntry.endTime = new Date();
-      auditEntry.duration = auditEntry.endTime - auditEntry.startTime;
+        success:
+          true,
 
-      this._recordAudit(auditEntry);
-      this._logExecution(auditEntry);
-      metricsService.recordK8sOperation(
-        'restart-pod',
-        'failure',
-        auditEntry.duration
+        ...(
+          result &&
+          typeof result ===
+            "object"
+            ? result
+            : {
+                result,
+              }
+        ),
+
+        executionId,
+
+        auditEntry,
+
+        circuit:
+          dependencyResult
+            .circuit ||
+          null,
+
+        executionAuthorized:
+          false,
+      };
+    } catch (
+      error
+    ) {
+      auditEntry.status =
+        "FAILED";
+
+      auditEntry.error =
+        error.message;
+
+      auditEntry.errorCode =
+        error.code ||
+        null;
+
+      auditEntry.executionOutcome =
+        error.executionOutcome ||
+        null;
+
+      auditEntry.requiresReconciliation =
+        error.requiresReconciliation ===
+        true;
+
+      auditEntry.endTime =
+        new Date();
+
+      auditEntry.duration =
+        auditEntry.endTime -
+        auditEntry.startTime;
+
+
+      this._recordAudit(
+        auditEntry
       );
 
-      const errorMsg = `[K8sExecutor] Failed to restart pod. ExecutionId: ${executionId}. Error: ${error.message}`;
-      loggingService.logStructured({
-        level: 'error',
-        message: errorMsg,
-        service: 'k8s-executor',
-        executionId,
-        podName,
-        namespace,
-        error: error.message,
-      });
+      this._logExecution(
+        auditEntry
+      );
 
-      throw new Error(errorMsg);
+      this._recordK8sMetric(
+        "restart-pod",
+        "failure",
+        auditEntry.duration,
+        {
+          organizationId,
+          environmentId,
+        }
+      );
+
+
+      const errorMsg =
+        `[K8sExecutor] Failed to restart pod. ` +
+        `ExecutionId: ${executionId}. ` +
+        `Error: ${error.message}`;
+
+
+      this._safeLog(
+        "error",
+        errorMsg,
+        {
+          component:
+            "k8s-executor",
+
+          executionId,
+
+          correlationId,
+
+          decisionId,
+
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+
+          podName,
+
+          namespace,
+
+          dependency:
+            "kubernetes",
+
+          circuitState:
+            error
+              ?.circuitState ||
+            null,
+
+          executionOutcome:
+            error
+              ?.executionOutcome ||
+            null,
+
+          requiresReconciliation:
+            error
+              ?.requiresReconciliation ===
+            true,
+
+          errorCode:
+            error
+              ?.code ||
+            null,
+
+          error:
+            error.message,
+
+          executionAuthorized:
+            false,
+        }
+      );
+
+
+      throw Object.assign(
+        new Error(
+          errorMsg
+        ),
+        {
+          code:
+            error.code ||
+            "K8S_RESTART_FAILED",
+
+          executionId,
+
+          dependency:
+            "kubernetes",
+
+          circuitState:
+            error
+              ?.circuitState ||
+            null,
+
+          executionOutcome:
+            error
+              ?.executionOutcome ||
+            null,
+
+          requiresReconciliation:
+            error
+              ?.requiresReconciliation ===
+            true,
+
+          retryable:
+            error.retryable !==
+            false,
+
+          executionAuthorized:
+            false,
+
+          cause:
+            error,
+        }
+      );
     }
   }
 
-  /**
-   * Scale deployment with audit trail
-   * @param {string} deploymentName - Deployment to scale
-   * @param {string} namespace - K8s namespace
-   * @param {number} replicas - Target replica count
-   * @param {object} options - { timeout, correlationId, decisionId }
-   * @returns {Promise<object>} - Execution result with audit trail
-   */
-  async scaleDeployment(deploymentName, namespace, replicas, options = {}) {
-    const { timeout = this.defaultTimeout, correlationId, decisionId } = options;
-    const executionId = `exec-scale-${deploymentName}-${Date.now()}`;
+
+  // ==========================================================================
+  // SCALE DEPLOYMENT
+  // ==========================================================================
+
+  async scaleDeployment(
+    deploymentName,
+    namespace,
+    replicas,
+    options = {}
+  ) {
+    const {
+      timeout =
+        this.defaultTimeout,
+
+      correlationId,
+
+      decisionId,
+
+      organizationId,
+
+      environmentId,
+
+      incidentId,
+    } =
+      options;
+
+
+    const executionId =
+      `exec-scale-${deploymentName}-${Date.now()}`;
+
 
     const auditEntry = {
       executionId,
-      action: 'scale-deployment',
-      resource: `deployment/${deploymentName}`,
+
+      action:
+        "scale-deployment",
+
+      resource:
+        `deployment/${deploymentName}`,
+
       namespace,
-      targetReplicas: replicas,
+
+      targetReplicas:
+        replicas,
+
       correlationId,
+
       decisionId,
-      startTime: new Date(),
-      status: 'IN_PROGRESS',
+
+      organizationId,
+
+      environmentId,
+
+      incidentId,
+
+      startTime:
+        new Date(),
+
+      status:
+        "IN_PROGRESS",
+
+      executionAuthorized:
+        false,
     };
 
-    try {
-      // Get pre-state
-      const preState = await this._getResourceState(
-        'deployment',
-        deploymentName,
-        namespace,
-        timeout / 3
-      );
-      auditEntry.preState = preState;
 
-      // Execute with timeout
-      const result = await this._executeWithTimeout(
-        () =>
-          this.k8sClient.scaleDeployment(
+    try {
+      // ----------------------------------------------------------------------
+      // PRE-STATE
+      // ----------------------------------------------------------------------
+
+      const preState =
+        await this
+          ._getResourceState(
+            "deployment",
             deploymentName,
             namespace,
-            replicas,
-            options
+            timeout / 3
+          );
+
+      auditEntry.preState =
+        preState;
+
+
+      // ----------------------------------------------------------------------
+      // MUTATION — CRITICAL DEPENDENCY BOUNDARY
+      // ----------------------------------------------------------------------
+
+      const dependencyResult =
+        await this
+          ._executeWithTimeout(
+            () =>
+              this.dependencyIsolation
+                .execute(
+                  "kubernetes",
+
+                  () =>
+                    this.k8sClient
+                      .scaleDeployment(
+                        deploymentName,
+                        namespace,
+                        replicas,
+                        options
+                      ),
+
+                  {
+                    organizationId:
+                      organizationId ||
+                      null,
+
+                    environmentId:
+                      environmentId ||
+                      null,
+
+                    incidentId:
+                      incidentId ||
+                      null,
+
+                    correlationId:
+                      correlationId ||
+                      null,
+
+                    executionId,
+
+                    operation:
+                      "scale-deployment",
+                  }
+                ),
+
+            timeout,
+
+            `Scale deployment ${deploymentName} to ${replicas} replicas`
+          );
+
+
+      if (
+        !dependencyResult ||
+        dependencyResult.ok !==
+          true
+      ) {
+        throw Object.assign(
+          new Error(
+            `Kubernetes scale operation did not complete successfully for deployment ${deploymentName}`
           ),
-        timeout,
-        `Scale deployment ${deploymentName} to ${replicas} replicas`
-      );
+          {
+            code:
+              "K8S_DEPENDENCY_OPERATION_FAILED",
 
-      // Get post-state
-      await this._delay(2000); // Wait for K8s to start updating
-      const postState = await this._getResourceState(
-        'deployment',
-        deploymentName,
-        namespace,
-        timeout / 3
-      );
-      auditEntry.postState = postState;
+            executionAuthorized:
+              false,
 
-      // Verify scaling worked
-      const scalingSucceeded =
-        postState.desiredReplicas === replicas ||
-        postState.updatedReplicas >= replicas;
-      if (!scalingSucceeded) {
-        throw new Error(
-          `Scaling verification failed. Expected ${replicas} replicas, ` +
-          `got ${postState.desiredReplicas} desired, ${postState.updatedReplicas} updated`
+            dependencyResult:
+              dependencyResult ||
+              null,
+          }
         );
       }
 
-      auditEntry.status = 'SUCCESS';
-      auditEntry.result = result;
-      auditEntry.endTime = new Date();
-      auditEntry.duration = auditEntry.endTime - auditEntry.startTime;
 
-      this._recordAudit(auditEntry);
-      this._logExecution(auditEntry);
-      metricsService.recordK8sOperation(
-        'scale-deployment',
-        'success',
-        auditEntry.duration
+      const result =
+        dependencyResult.result;
+
+
+      // ----------------------------------------------------------------------
+      // POST-STATE
+      // ----------------------------------------------------------------------
+
+      await this
+        ._delay(
+          2000
+        );
+
+      const postState =
+        await this
+          ._getResourceState(
+            "deployment",
+            deploymentName,
+            namespace,
+            timeout / 3
+          );
+
+      auditEntry.postState =
+        postState;
+
+
+      // ----------------------------------------------------------------------
+      // VERIFY
+      // ----------------------------------------------------------------------
+
+      if (
+        !postState
+      ) {
+        throw Object.assign(
+          new Error(
+            "Scaling verification could not establish deployment post-state"
+          ),
+          {
+            code:
+              "K8S_SCALE_VERIFICATION_UNKNOWN",
+
+            executionOutcome:
+              "UNKNOWN",
+
+            requiresReconciliation:
+              true,
+
+            executionAuthorized:
+              false,
+          }
+        );
+      }
+
+
+      const desiredReplicas =
+        Number(
+          postState
+            .desiredReplicas
+        );
+
+      const updatedReplicas =
+        Number(
+          postState
+            .updatedReplicas
+        );
+
+
+      const scalingSucceeded =
+        desiredReplicas ===
+          Number(
+            replicas
+          ) ||
+        (
+          Number.isFinite(
+            updatedReplicas
+          ) &&
+          updatedReplicas >=
+            Number(
+              replicas
+            )
+        );
+
+
+      if (
+        !scalingSucceeded
+      ) {
+        throw Object.assign(
+          new Error(
+            `Scaling verification failed. Expected ${replicas} replicas, ` +
+            `got ${postState.desiredReplicas} desired, ` +
+            `${postState.updatedReplicas} updated`
+          ),
+          {
+            code:
+              "K8S_SCALE_VERIFICATION_FAILED",
+
+            executionOutcome:
+              "UNKNOWN",
+
+            requiresReconciliation:
+              true,
+
+            executionAuthorized:
+              false,
+          }
+        );
+      }
+
+
+      // ----------------------------------------------------------------------
+      // SUCCESS
+      // ----------------------------------------------------------------------
+
+      auditEntry.status =
+        "SUCCESS";
+
+      auditEntry.result =
+        result;
+
+      auditEntry.circuit =
+        dependencyResult
+          .circuit ||
+        null;
+
+      auditEntry.endTime =
+        new Date();
+
+      auditEntry.duration =
+        auditEntry.endTime -
+        auditEntry.startTime;
+
+
+      this._recordAudit(
+        auditEntry
       );
+
+      this._logExecution(
+        auditEntry
+      );
+
+      this._recordK8sMetric(
+        "scale-deployment",
+        "success",
+        auditEntry.duration,
+        {
+          organizationId,
+          environmentId,
+        }
+      );
+
 
       return {
-        success: true,
-        ...result,
-        executionId,
-        auditEntry,
-      };
-    } catch (error) {
-      auditEntry.status = 'FAILED';
-      auditEntry.error = error.message;
-      auditEntry.endTime = new Date();
-      auditEntry.duration = auditEntry.endTime - auditEntry.startTime;
+        success:
+          true,
 
-      this._recordAudit(auditEntry);
-      this._logExecution(auditEntry);
-      metricsService.recordK8sOperation(
-        'scale-deployment',
-        'failure',
-        auditEntry.duration
+        ...(
+          result &&
+          typeof result ===
+            "object"
+            ? result
+            : {
+                result,
+              }
+        ),
+
+        executionId,
+
+        auditEntry,
+
+        circuit:
+          dependencyResult
+            .circuit ||
+          null,
+
+        executionAuthorized:
+          false,
+      };
+    } catch (
+      error
+    ) {
+      auditEntry.status =
+        "FAILED";
+
+      auditEntry.error =
+        error.message;
+
+      auditEntry.errorCode =
+        error.code ||
+        null;
+
+      auditEntry.executionOutcome =
+        error.executionOutcome ||
+        null;
+
+      auditEntry.requiresReconciliation =
+        error.requiresReconciliation ===
+        true;
+
+      auditEntry.endTime =
+        new Date();
+
+      auditEntry.duration =
+        auditEntry.endTime -
+        auditEntry.startTime;
+
+
+      this._recordAudit(
+        auditEntry
       );
 
-      const errorMsg = `[K8sExecutor] Failed to scale deployment. ExecutionId: ${executionId}. Error: ${error.message}`;
-      loggingService.logStructured({
-        level: 'error',
-        message: errorMsg,
-        service: 'k8s-executor',
-        executionId,
-        deploymentName,
-        namespace,
-        targetReplicas: replicas,
-        error: error.message,
-      });
+      this._logExecution(
+        auditEntry
+      );
 
-      throw new Error(errorMsg);
+      this._recordK8sMetric(
+        "scale-deployment",
+        "failure",
+        auditEntry.duration,
+        {
+          organizationId,
+          environmentId,
+        }
+      );
+
+
+      const errorMsg =
+        `[K8sExecutor] Failed to scale deployment. ` +
+        `ExecutionId: ${executionId}. ` +
+        `Error: ${error.message}`;
+
+
+      this._safeLog(
+        "error",
+        errorMsg,
+        {
+          component:
+            "k8s-executor",
+
+          executionId,
+
+          correlationId,
+
+          decisionId,
+
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+
+          deploymentName,
+
+          namespace,
+
+          targetReplicas:
+            replicas,
+
+          dependency:
+            "kubernetes",
+
+          circuitState:
+            error
+              ?.circuitState ||
+            null,
+
+          executionOutcome:
+            error
+              ?.executionOutcome ||
+            null,
+
+          requiresReconciliation:
+            error
+              ?.requiresReconciliation ===
+            true,
+
+          errorCode:
+            error
+              ?.code ||
+            null,
+
+          error:
+            error.message,
+
+          executionAuthorized:
+            false,
+        }
+      );
+
+
+      throw Object.assign(
+        new Error(
+          errorMsg
+        ),
+        {
+          code:
+            error.code ||
+            "K8S_SCALE_FAILED",
+
+          executionId,
+
+          dependency:
+            "kubernetes",
+
+          circuitState:
+            error
+              ?.circuitState ||
+            null,
+
+          executionOutcome:
+            error
+              ?.executionOutcome ||
+            null,
+
+          requiresReconciliation:
+            error
+              ?.requiresReconciliation ===
+            true,
+
+          retryable:
+            error.retryable !==
+            false,
+
+          executionAuthorized:
+            false,
+
+          cause:
+            error,
+        }
+      );
     }
   }
 
-  /**
-   * Execute operation with timeout
-   * Throws error if operation takes longer than timeout
-   * @private
-   */
-  async _executeWithTimeout(operation, timeoutMs, operationName) {
-    return new Promise(async (resolve, reject) => {
-      let completed = false;
 
-      const timer = setTimeout(() => {
-        if (!completed) {
-          completed = true;
-          reject(
-            new Error(
-              `${operationName} timed out after ${timeoutMs}ms`
-            )
+  // ==========================================================================
+  // TIMEOUT
+  // ==========================================================================
+
+  async _executeWithTimeout(
+    operation,
+    timeoutMs,
+    operationName
+  ) {
+    const safeTimeout =
+      Math.max(
+        1,
+        Number(
+          timeoutMs
+        ) ||
+        this.defaultTimeout
+      );
+
+
+    return new Promise(
+      (
+        resolve,
+        reject
+      ) => {
+        let completed =
+          false;
+
+
+        const timer =
+          setTimeout(
+            () => {
+              if (
+                completed
+              ) {
+                return;
+              }
+
+              completed =
+                true;
+
+
+              reject(
+                Object.assign(
+                  new Error(
+                    `${operationName} timed out after ${safeTimeout}ms`
+                  ),
+                  {
+                    code:
+                      "K8S_OPERATION_TIMEOUT",
+
+                    dependency:
+                      "kubernetes",
+
+                    executionOutcome:
+                      "UNKNOWN",
+
+                    requiresReconciliation:
+                      true,
+
+                    retryable:
+                      true,
+
+                    executionAuthorized:
+                      false,
+                  }
+                )
+              );
+            },
+
+            safeTimeout
           );
-        }
-      }, timeoutMs);
 
-      try {
-        const result = await operation();
-        if (!completed) {
-          completed = true;
-          clearTimeout(timer);
-          resolve(result);
-        }
-      } catch (error) {
-        if (!completed) {
-          completed = true;
-          clearTimeout(timer);
-          reject(error);
-        }
+
+        Promise
+          .resolve()
+          .then(
+            operation
+          )
+          .then(
+            (
+              result
+            ) => {
+              if (
+                completed
+              ) {
+                return;
+              }
+
+              completed =
+                true;
+
+              clearTimeout(
+                timer
+              );
+
+              resolve(
+                result
+              );
+            }
+          )
+          .catch(
+            (
+              error
+            ) => {
+              if (
+                completed
+              ) {
+                return;
+              }
+
+              completed =
+                true;
+
+              clearTimeout(
+                timer
+              );
+
+              reject(
+                error
+              );
+            }
+          );
       }
-    });
+    );
   }
 
-  /**
-   * Get resource state (pod or deployment)
-   * @private
-   */
-  async _getResourceState(resourceType, name, namespace, timeout) {
+
+  // ==========================================================================
+  // RESOURCE STATE
+  // ==========================================================================
+
+  async _getResourceState(
+    resourceType,
+    name,
+    namespace,
+    timeout
+  ) {
     try {
-      if (resourceType === 'pod') {
-        return await this._executeWithTimeout(
-          () => this.k8sClient.getPodStatus(name, namespace),
-          timeout,
-          `Get pod status for ${name}`
-        );
-      } else if (resourceType === 'deployment') {
-        return await this._executeWithTimeout(
-          () => this.k8sClient.getDeploymentStatus(name, namespace),
-          timeout,
-          `Get deployment status for ${name}`
-        );
+      if (
+        resourceType ===
+        "pod"
+      ) {
+        return await this
+          ._executeWithTimeout(
+            () =>
+              this.k8sClient
+                .getPodStatus(
+                  name,
+                  namespace
+                ),
+
+            timeout,
+
+            `Get pod status for ${name}`
+          );
       }
-    } catch (error) {
-      // Log but don't fail - pre/post state is best-effort
+
+
+      if (
+        resourceType ===
+        "deployment"
+      ) {
+        return await this
+          ._executeWithTimeout(
+            () =>
+              this.k8sClient
+                .getDeploymentStatus(
+                  name,
+                  namespace
+                ),
+
+            timeout,
+
+            `Get deployment status for ${name}`
+          );
+      }
+
+
+      return null;
+    } catch (
+      error
+    ) {
       console.warn(
         `[K8sExecutor] Could not get ${resourceType} state: ${error.message}`
       );
+
       return null;
     }
   }
 
-  /**
-   * Record audit entry to memory and log
-   * @private
-   */
-  _recordAudit(auditEntry) {
-    this.auditLogs.push(auditEntry);
-    // Keep only last 1000 entries
-    if (this.auditLogs.length > 1000) {
-      this.auditLogs = this.auditLogs.slice(-1000);
+
+  // ==========================================================================
+  // AUDIT
+  // ==========================================================================
+
+  _recordAudit(
+    auditEntry
+  ) {
+    this.auditLogs
+      .push(
+        auditEntry
+      );
+
+    if (
+      this.auditLogs.length >
+      1000
+    ) {
+      this.auditLogs =
+        this.auditLogs
+          .slice(
+            -1000
+          );
     }
   }
 
-  /**
-   * Log execution for observability
-   * @private
-   */
-  _logExecution(auditEntry) {
-    loggingService.logStructured({
-      level: auditEntry.status === 'SUCCESS' ? 'info' : 'warn',
-      message: `K8s ${auditEntry.action} ${auditEntry.status}`,
-      service: 'k8s-executor',
-      executionId: auditEntry.executionId,
-      action: auditEntry.action,
-      resource: auditEntry.resource,
-      namespace: auditEntry.namespace,
-      status: auditEntry.status,
-      duration: auditEntry.duration,
-      error: auditEntry.error,
-    });
+
+  _logExecution(
+    auditEntry
+  ) {
+    this._safeLog(
+      auditEntry.status ===
+        "SUCCESS"
+        ? "info"
+        : "warn",
+
+      `K8s ${auditEntry.action} ${auditEntry.status}`,
+
+      {
+        component:
+          "k8s-executor",
+
+        executionId:
+          auditEntry.executionId,
+
+        correlationId:
+          auditEntry.correlationId,
+
+        decisionId:
+          auditEntry.decisionId,
+
+        organizationId:
+          auditEntry.organizationId,
+
+        environmentId:
+          auditEntry.environmentId,
+
+        incidentId:
+          auditEntry.incidentId,
+
+        action:
+          auditEntry.action,
+
+        resource:
+          auditEntry.resource,
+
+        namespace:
+          auditEntry.namespace,
+
+        status:
+          auditEntry.status,
+
+        duration:
+          auditEntry.duration,
+
+        errorCode:
+          auditEntry.errorCode,
+
+        error:
+          auditEntry.error,
+
+        executionOutcome:
+          auditEntry.executionOutcome,
+
+        requiresReconciliation:
+          auditEntry
+            .requiresReconciliation ===
+          true,
+
+        executionAuthorized:
+          false,
+      }
+    );
   }
 
-  /**
-   * Utility: delay
-   * @private
-   */
-  _delay(ms) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+
+  // ==========================================================================
+  // OBSERVABILITY SAFETY
+  // ==========================================================================
+
+  _safeLog(
+    level,
+    message,
+    context = {}
+  ) {
+    try {
+      if (
+        loggingService &&
+        typeof loggingService.log ===
+          "function"
+      ) {
+        loggingService.log(
+          level,
+          message,
+          context
+        );
+
+        return;
+      }
+
+
+      if (
+        loggingService &&
+        typeof loggingService[level] ===
+          "function"
+      ) {
+        loggingService[level](
+          message,
+          context
+        );
+      }
+    } catch (
+      loggingError
+    ) {
+      console.warn(
+        `[K8sExecutor] Logging failure suppressed: ${loggingError.message}`
+      );
+    }
   }
 
-  /**
-   * Get audit trail for decision
-   */
-  getAuditTrail(decisionId) {
-    return this.auditLogs.filter((log) => log.decisionId === decisionId);
+
+  _recordK8sMetric(
+    operation,
+    status,
+    duration,
+    context = {}
+  ) {
+    try {
+      if (
+        !metricsService ||
+        typeof metricsService
+          .recordActionExecution !==
+        "function"
+      ) {
+        return;
+      }
+
+
+      const tenantId =
+        context.organizationId ||
+        context.tenantId ||
+        "system";
+
+
+      metricsService
+        .recordActionExecution(
+          String(
+            tenantId
+          ),
+
+          `k8s:${operation}`,
+
+          status,
+
+          Number(
+            duration
+          ) ||
+          0
+        );
+    } catch (
+      metricsError
+    ) {
+      console.warn(
+        `[K8sExecutor] Metrics failure suppressed: ${metricsError.message}`
+      );
+    }
   }
 
-  /**
-   * Get recent audit entries
-   */
-  getRecentAudit(count = 50) {
-    return this.auditLogs.slice(-count);
+
+  // ==========================================================================
+  // UTILITIES
+  // ==========================================================================
+
+  _delay(
+    ms
+  ) {
+    return new Promise(
+      (
+        resolve
+      ) =>
+        setTimeout(
+          resolve,
+          ms
+        )
+    );
+  }
+
+
+  getAuditTrail(
+    decisionId
+  ) {
+    return this.auditLogs
+      .filter(
+        (
+          log
+        ) =>
+          log.decisionId ===
+          decisionId
+      );
+  }
+
+
+  getRecentAudit(
+    count = 50
+  ) {
+    return this.auditLogs
+      .slice(
+        -count
+      );
   }
 }
 
-module.exports = { ResilientK8sExecutor };
+
+module.exports = {
+  ResilientK8sExecutor,
+};

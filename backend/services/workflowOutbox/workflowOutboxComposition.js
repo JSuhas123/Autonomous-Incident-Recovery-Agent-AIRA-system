@@ -48,61 +48,49 @@ const workflowOutboxRetryPolicy =
     "./workflowOutboxRetryPolicy"
   );
 
+const dependencyIsolationService =
+  require(
+    "../infrastructure/dependencyIsolationService"
+  );
+
+
 /*
  * ============================================================================
- * AIRA PHASE 11.3.13A
+ * AIRA PHASE 11.3 + 11.5
  * WORKFLOW OUTBOX PRODUCTION COMPOSITION
  * ============================================================================
  *
- * Purpose:
+ * Durable workflow:
  *
- * Assemble the Phase 11.3 durable workflow pipeline from the components
- * already implemented and tested.
- *
- *
- *        WorkflowOutboxEvent
- *                 ↓
- *        Persistence Service
- *                 ↓
- *        WorkflowOutboxWorker
- *                 ↓
- *        Delivery Coordinator
- *                 ↓
- *           Dispatcher
- *                 ↓
- *         Routing Registry
- *                 ↓
- *       Infrastructure Queue
- *
+ * WorkflowOutboxEvent
+ *        ↓
+ * Persistence
+ *        ↓
+ * WorkflowOutboxWorker
+ *        ↓
+ * Delivery Coordinator
+ *        ↓
+ * Dispatcher
+ *        ↓
+ * Routing Registry
+ *        ↓
+ * Stage Publisher
+ *        ↓
+ * Dependency Isolation
+ *        ↓
+ * RabbitMQ
  *
  * IMPORTANT:
  *
- * This module DOES NOT:
- *
- * - start timers
- * - register consumers
- * - execute workers directly
- * - mutate infrastructure
- * - grant execution authorization
- *
- * Startup and shutdown are intentionally handled separately.
+ * - Outbox owns durable intent.
+ * - RabbitMQ owns transport.
+ * - Dependency isolation owns broker failure classification.
+ * - Delivery coordinator owns retry scheduling.
+ * - This layer NEVER grants execution authority.
  * ============================================================================
  */
 
-/*
- * These are durable workflow transport topics.
- *
- * They are separate from observability events such as:
- *
- *   execution.started
- *   execution.completed
- *   verification.completed
- *   lifecycle.failed
- *
- * These topics mean:
- *
- *   "protected worker stage must process this durable workflow handoff"
- */
+
 const WORKFLOW_OUTBOX_TOPIC =
   Object.freeze({
     EXECUTION:
@@ -147,24 +135,40 @@ class WorkflowOutboxComposition {
       );
     }
 
+
     this.queueService =
       options.queueService;
+
+
+    /*
+     * Phase 11.5 dependency boundary.
+     *
+     * Injectable for deterministic testing.
+     */
+    this.dependencyIsolation =
+      options.dependencyIsolation ||
+      dependencyIsolationService;
+
 
     this.claimService =
       options.claimService ||
       workflowOutboxClaimService;
 
+
     this.persistence =
       options.persistence ||
       workflowOutboxPersistenceService;
+
 
     this.retryPolicy =
       options.retryPolicy ||
       workflowOutboxRetryPolicy;
 
+
     this.lifecycleJobAdapter =
       options.lifecycleJobAdapter ||
       undefined;
+
 
     this.workerId =
       options.workerId ||
@@ -176,22 +180,27 @@ class WorkflowOutboxComposition {
         ":"
       );
 
+
     this.batchSize =
       options.batchSize ||
       25;
 
+
     this.leaseMs =
       options.leaseMs ||
       60000;
+
 
     this.now =
       options.now ||
       (() =>
         new Date());
 
+
     this.components =
       null;
   }
+
 
   // ==========================================================================
   // BUILD
@@ -202,13 +211,12 @@ class WorkflowOutboxComposition {
       this.components
     ) {
       /*
-       * Composition is intentionally stable.
-       *
-       * Calling build() twice must not create multiple dispatcher /
-       * worker graphs inside one process.
+       * Calling build twice must not construct multiple
+       * dispatcher/worker graphs in one process.
        */
       return this.components;
     }
+
 
     const routingRegistry =
       new WorkflowOutboxRoutingRegistry({
@@ -250,9 +258,11 @@ class WorkflowOutboxComposition {
           : {}),
       });
 
+
     const publishers =
       routingRegistry
         .createPublishers();
+
 
     const dispatcher =
       new WorkflowOutboxDispatcher({
@@ -271,6 +281,7 @@ class WorkflowOutboxComposition {
           this.now,
       });
 
+
     const deliveryCoordinator =
       new WorkflowOutboxDeliveryCoordinator({
         dispatcher,
@@ -284,6 +295,7 @@ class WorkflowOutboxComposition {
         now:
           this.now,
       });
+
 
     const worker =
       new WorkflowOutboxWorker({
@@ -301,6 +313,7 @@ class WorkflowOutboxComposition {
         now:
           this.now,
       });
+
 
     this.components = {
       routingRegistry,
@@ -335,8 +348,10 @@ class WorkflowOutboxComposition {
         false,
     };
 
+
     return this.components;
   }
+
 
   // ==========================================================================
   // STAGE PUBLISHER
@@ -361,6 +376,7 @@ class WorkflowOutboxComposition {
       );
     }
 
+
     return async (
       job
     ) => {
@@ -368,6 +384,7 @@ class WorkflowOutboxComposition {
         stage,
         job,
       });
+
 
       if (
         typeof this
@@ -388,42 +405,231 @@ class WorkflowOutboxComposition {
         );
       }
 
+
       /*
-       * The central queue service owns RabbitMQ transport.
+       * ======================================================================
+       * PHASE 11.5 — RABBITMQ DEPENDENCY ISOLATION
+       * ======================================================================
        *
-       * The outbox owns durable intent.
+       * IMPORTANT:
        *
-       * The worker receiving this event still owns all business and
-       * safety decisions.
+       * The outbox event already exists durably before reaching this point.
+       *
+       * Therefore RabbitMQ failure must NEVER:
+       *
+       * - lose the workflow event
+       * - grant execution authority
+       * - create another independent retry mechanism
+       *
+       * DependencyIsolationService classifies the dependency failure.
+       *
+       * WorkflowOutboxDeliveryCoordinator remains responsible for durable
+       * retry scheduling.
+       * ======================================================================
        */
-      const result =
+
+      const dependencyResult =
         await this
-          .queueService
-          .publishEvent(
-            topic,
+          .dependencyIsolation
+          .execute(
+            "rabbitmq",
+
+            () =>
+              this.queueService
+                .publishEvent(
+                  topic,
+
+                  {
+                    ...job,
+
+                    /*
+                     * Transport cannot manufacture authority.
+                     */
+                    executionAuthorized:
+                      false,
+                  },
+
+                  {
+                    tenantId:
+                      job.organizationId,
+
+                    correlationId:
+                      job.correlationId ||
+                      job.executionRequestId ||
+                      job.incidentId,
+
+                    priority:
+                      this.resolvePriority(
+                        stage
+                      ),
+                  }
+                ),
 
             {
-              ...job,
-
-              executionAuthorized:
-                false,
-            },
-
-            {
-              tenantId:
+              organizationId:
                 job.organizationId,
+
+              environmentId:
+                job.environmentId,
+
+              incidentId:
+                job.incidentId,
 
               correlationId:
                 job.correlationId ||
-                job.executionRequestId ||
-                job.incidentId,
+                null,
 
-              priority:
-                this.resolvePriority(
-                  stage
-                ),
+              stage,
+
+              topic,
             }
           );
+
+
+      /*
+       * ======================================================================
+       * FAILURE TRANSLATION
+       * ======================================================================
+       *
+       * RabbitMQ is DURABLE_ASYNC.
+       *
+       * DependencyIsolationService normally returns a decision instead of
+       * throwing:
+       *
+       * {
+       *   ok: false,
+       *   decision: "DURABLE_RETRY"
+       * }
+       *
+       * Phase 11.3 however expects publication failure to surface as an
+       * exception so DeliveryCoordinator can apply the existing durable
+       * retry policy.
+       *
+       * Therefore:
+       *
+       * dependency decision
+       *        ↓
+       * transport exception
+       *        ↓
+       * existing outbox retry coordinator
+       *
+       * No second retry system is introduced here.
+       * ======================================================================
+       */
+
+      if (
+        !dependencyResult ||
+        dependencyResult.ok !==
+          true
+      ) {
+        /*
+         * Different dependency adapters/mocks may expose the original
+         * transport error slightly differently.
+         *
+         * Prefer the canonical `error` field.
+         */
+        const originalError =
+          dependencyResult
+            ?.error ||
+          dependencyResult
+            ?.cause ||
+          dependencyResult
+            ?.originalError ||
+          null;
+
+
+        /*
+         * Preserve the actual transport code whenever available.
+         *
+         * Examples:
+         *
+         * ECONNREFUSED
+         * ECONNRESET
+         * ETIMEDOUT
+         * ENOTFOUND
+         */
+        const originalCode =
+          originalError
+            ?.code ||
+          dependencyResult
+            ?.errorCode ||
+          dependencyResult
+            ?.causeCode ||
+          null;
+
+
+        const originalMessage =
+          originalError
+            ?.message ||
+          dependencyResult
+            ?.errorMessage ||
+          dependencyResult
+            ?.message ||
+          `RabbitMQ workflow publish unavailable for ${stage}`;
+
+
+        /*
+         * Stable Phase 11.5 classification.
+         *
+         * `code` preserves transport identity when known.
+         *
+         * `isolationCode` always identifies this dependency boundary.
+         */
+        const transportError =
+          Object.assign(
+            new Error(
+              originalMessage
+            ),
+            {
+              code:
+                originalCode ||
+                "OUTBOX_RABBITMQ_UNAVAILABLE",
+
+              isolationCode:
+                "OUTBOX_RABBITMQ_UNAVAILABLE",
+
+              dependency:
+                "rabbitmq",
+
+              dependencyDecision:
+                dependencyResult
+                  ?.decision ||
+                "DURABLE_RETRY",
+
+              circuitState:
+                dependencyResult
+                  ?.circuit
+                  ?.state ||
+                null,
+
+              retryable:
+                dependencyResult
+                  ?.retryable !==
+                false,
+
+              stage,
+
+              topic,
+
+              executionAuthorized:
+                false,
+
+              originalError,
+
+              dependencyResult:
+                dependencyResult ||
+                null,
+            }
+          );
+
+
+        throw transportError;
+      }
+
+
+      const result =
+        dependencyResult.result;
+
 
       return {
         messageId:
@@ -454,6 +660,7 @@ class WorkflowOutboxComposition {
     };
   }
 
+
   // ==========================================================================
   // QUEUE NAME
   // ==========================================================================
@@ -468,13 +675,16 @@ class WorkflowOutboxComposition {
         return WORKFLOW_OUTBOX_QUEUE
           .EXECUTION;
 
+
       case "verification":
         return WORKFLOW_OUTBOX_QUEUE
           .VERIFICATION;
 
+
       case "lifecycle":
         return WORKFLOW_OUTBOX_QUEUE
           .LIFECYCLE;
+
 
       default:
         throw Object.assign(
@@ -491,6 +701,7 @@ class WorkflowOutboxComposition {
     }
   }
 
+
   // ==========================================================================
   // PRIORITY
   // ==========================================================================
@@ -499,10 +710,10 @@ class WorkflowOutboxComposition {
     stage
   ) {
     /*
-     * Critical recovery workflow transitions receive a high but not maximum
-     * priority.
+     * Critical recovery transitions receive high priority.
      *
-     * Reserve the maximum for emergency/control-plane use if needed later.
+     * Maximum priority remains reserved for emergency/control-plane
+     * operations.
      */
     switch (
       stage
@@ -510,16 +721,20 @@ class WorkflowOutboxComposition {
       case "execution":
         return 8;
 
+
       case "verification":
         return 7;
 
+
       case "lifecycle":
         return 6;
+
 
       default:
         return 5;
     }
   }
+
 
   // ==========================================================================
   // SAFETY
@@ -547,6 +762,10 @@ class WorkflowOutboxComposition {
       );
     }
 
+
+    /*
+     * Transport boundaries cannot create or propagate authority.
+     */
     if (
       job.executionAuthorized ===
         true ||
@@ -566,6 +785,10 @@ class WorkflowOutboxComposition {
       );
     }
 
+
+    /*
+     * Tenant/environment/incident scope must always be explicit.
+     */
     for (
       const field
       of [
@@ -593,6 +816,7 @@ class WorkflowOutboxComposition {
       }
     }
 
+
     return true;
   }
 }
@@ -609,6 +833,7 @@ function createWorkflowOutboxComposition(
     new WorkflowOutboxComposition(
       options
     );
+
 
   return composition.build();
 }

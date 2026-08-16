@@ -301,6 +301,8 @@ executionRequestSchema.index(
 );
 
 module.exports =
+  mongoose.models
+    .ExecutionRequest ||
   mongoose.model(
     "ExecutionRequest",
     executionRequestSchema

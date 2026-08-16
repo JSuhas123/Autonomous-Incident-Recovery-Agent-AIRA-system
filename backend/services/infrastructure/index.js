@@ -17,7 +17,8 @@ module.exports = {
   retryProcessorJob: require("./retryProcessorJob"),
   distributedLockService: require("./distributedLockService"),
   memoryCleanupJob: require("./memoryCleanupJob"),
-  
+  circuitBreakerService:require("./circuitBreakerService"),
+  dependencyIsolationService:require("./dependencyIsolationService"),
   // System Health & Safety - PRODUCTION READY
   systemHealthService: require("./systemHealthService"),
   

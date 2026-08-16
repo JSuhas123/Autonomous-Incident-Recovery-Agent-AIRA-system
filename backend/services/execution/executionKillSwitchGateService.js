@@ -175,24 +175,30 @@ class ExecutionKillSwitchGateService {
         {};
 
       if (
-        statuses
-          .EMERGENCY_MODE ===
-        true
-      ) {
-        reasons.push(
-          "Emergency mode is active."
-        );
+  statuses
+    .emergencyMode ===
+    true ||
+  statuses
+    .EMERGENCY_MODE ===
+    true
+) {
+  reasons.push(
+    "Emergency mode is active."
+  );
 
-        state =
-          KILL_SWITCH_STATE
-            .EMERGENCY_MODE;
-      }
+  state =
+    KILL_SWITCH_STATE
+      .EMERGENCY_MODE;
+}
 
-      if (
-        statuses
-          .RECOVERY_EXECUTION_ENABLED ===
-        false
-      ) {
+     if (
+  statuses
+    .recoveryExecutionEnabled ===
+    false ||
+  statuses
+    .RECOVERY_EXECUTION_ENABLED ===
+    false
+) {
         reasons.push(
           "Recovery execution is disabled."
         );

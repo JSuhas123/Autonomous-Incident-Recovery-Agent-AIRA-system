@@ -1,368 +1,1415 @@
-const AuditEvent = require("../../models/AuditEvent");
-const crypto = require("crypto");
+"use strict";
+
+const AuditEvent =
+  require(
+    "../../models/AuditEvent"
+  );
+
+const crypto =
+  require(
+    "node:crypto"
+  );
+
+
+const MAX_CHAIN_WRITE_RETRIES =
+  5;
+
+
+const FORBIDDEN_KEYS =
+  new Set([
+    "password",
+    "passwd",
+    "passwordhash",
+
+    "secret",
+    "clientsecret",
+    "apisecret",
+
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "sessiontoken",
+    "bearertoken",
+    "csrftoken",
+
+    "authorization",
+    "cookie",
+    "set-cookie",
+
+    "apikey",
+    "api_key",
+
+    "privatekey",
+    "private_key",
+
+    "credential",
+    "credentials",
+  ]);
+
+
+// ============================================================================
+// CANONICALIZATION / REDACTION
+// ============================================================================
+
+function isForbiddenKey(
+  key
+) {
+  const normalized =
+    String(
+      key
+    )
+      .replace(
+        /[^a-z0-9]/gi,
+        ""
+      )
+      .toLowerCase();
+
+
+  return FORBIDDEN_KEYS
+    .has(
+      normalized
+    );
+}
+
+
+function sanitizeAuditValue(
+  value,
+  depth =
+    0
+) {
+  if (
+    depth >
+    10
+  ) {
+    return "[MAX_DEPTH]";
+  }
+
+
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
+    return value;
+  }
+
+
+  if (
+    value instanceof
+    Date
+  ) {
+    return value
+      .toISOString();
+  }
+
+
+  if (
+    Buffer.isBuffer(
+      value
+    )
+  ) {
+    return "[BUFFER_REDACTED]";
+  }
+
+
+  if (
+    Array.isArray(
+      value
+    )
+  ) {
+    return value.map(
+      (
+        item
+      ) =>
+        sanitizeAuditValue(
+          item,
+          depth +
+            1
+        )
+    );
+  }
+
+
+  if (
+    typeof value ===
+      "object"
+  ) {
+    const output =
+      {};
+
+
+    for (
+      const [
+        key,
+        childValue,
+      ]
+      of Object.entries(
+        value
+      )
+    ) {
+      if (
+        isForbiddenKey(
+          key
+        )
+      ) {
+        continue;
+      }
+
+
+      output[key] =
+        sanitizeAuditValue(
+          childValue,
+          depth +
+            1
+        );
+    }
+
+
+    return output;
+  }
+
+
+  if (
+    typeof value ===
+      "bigint"
+  ) {
+    return value
+      .toString();
+  }
+
+
+  return value;
+}
+
+
+function canonicalize(
+  value
+) {
+  if (
+    value ===
+      null
+  ) {
+    return "null";
+  }
+
+
+  if (
+    value ===
+      undefined
+  ) {
+    return '"[UNDEFINED]"';
+  }
+
+
+  if (
+    value instanceof
+    Date
+  ) {
+    return JSON.stringify(
+      value
+        .toISOString()
+    );
+  }
+
+
+  if (
+    Array.isArray(
+      value
+    )
+  ) {
+    return (
+      "[" +
+      value
+        .map(
+          (
+            item
+          ) =>
+            canonicalize(
+              item
+            )
+        )
+        .join(
+          ","
+        ) +
+      "]"
+    );
+  }
+
+
+  if (
+    typeof value ===
+      "object"
+  ) {
+    const keys =
+      Object.keys(
+        value
+      )
+        .sort();
+
+
+    return (
+      "{" +
+      keys
+        .map(
+          (
+            key
+          ) =>
+            JSON.stringify(
+              key
+            ) +
+            ":" +
+            canonicalize(
+              value[
+                key
+              ]
+            )
+        )
+        .join(
+          ","
+        ) +
+      "}"
+    );
+  }
+
+
+  if (
+    typeof value ===
+      "bigint"
+  ) {
+    return JSON.stringify(
+      value
+        .toString()
+    );
+  }
+
+
+  return JSON.stringify(
+    value
+  );
+}
+
+
+function timingSafeHexEqual(
+  left,
+  right
+) {
+  if (
+    typeof left !==
+      "string" ||
+    typeof right !==
+      "string" ||
+    !/^[a-f0-9]+$/i
+      .test(
+        left
+      ) ||
+    !/^[a-f0-9]+$/i
+      .test(
+        right
+      )
+  ) {
+    return false;
+  }
+
+
+  const leftBuffer =
+    Buffer.from(
+      left,
+      "hex"
+    );
+
+
+  const rightBuffer =
+    Buffer.from(
+      right,
+      "hex"
+    );
+
+
+  if (
+    leftBuffer.length !==
+    rightBuffer.length
+  ) {
+    return false;
+  }
+
+
+  return crypto
+    .timingSafeEqual(
+      leftBuffer,
+      rightBuffer
+    );
+}
+
+
+// ============================================================================
+// AUDIT SERVICE
+// ============================================================================
 
 class AuditService {
-  /**
-   * Record an audit event with tamper signature
-   * @param {string} tenantId - Tenant identifier
-   * @param {string} eventType - Type of event (decision_made, action_executed, etc.)
-   * @param {object} payload - Event data to audit
-   * @param {object} context - {userId, ipAddress, correlationId, etc.}
-   */
-  static async recordEvent(tenantId, eventType, payload, context = {}) {
-    try {
-      // Get previous event hash for chain-of-custody
-      const lastEvent = await AuditEvent.findOne({ tenantId }).sort({
-        timestamp: -1,
-      });
+  // ==========================================================================
+  // SECRET
+  // ==========================================================================
 
-      const previousEventHash = lastEvent ? lastEvent.eventHash : null;
+  static _getAuditSecret() {
+    const secret =
+      process.env
+        .AUDIT_SECRET;
 
-      // Create event ID
-      const eventId = crypto.randomUUID();
-      const timestamp = Date.now();
 
-      // Compute signature
-      const signature = this._computeSignature(tenantId, payload, timestamp);
+    if (
+      !secret
+    ) {
+      throw Object.assign(
+        new Error(
+          "AUDIT_SECRET is required for audit integrity"
+        ),
+        {
+          code:
+            "AUDIT_SECRET_MISSING",
 
-      // Create audit event
-      const auditEvent = new AuditEvent({
-        eventId,
-        tenantId,
-        eventType,
-        payload,
-        signature,
-        previousEventHash,
-        principal: context.principal || 'system', // Default to system if not provided
-        principalId: context.principalId || (context.userId || 'system'),
-        userId: context.userId,
-        ipAddress: context.ipAddress,
-        correlationId: context.correlationId || crypto.randomUUID(),
-        timestamp,
-        status: "created",
-      });
-
-      // Compute event hash for next event's chain
-      auditEvent.eventHash = this._computeEventHash(auditEvent);
-
-      await auditEvent.save();
-
-      console.log(
-        `[audit] ✓ Recorded ${eventType} | eventId=${eventId} | tenant=${tenantId}`
-      );
-
-      return auditEvent;
-    } catch (error) {
-      console.error("[audit] Error recording event:", error.message);
-      throw error;
-    }
-  }
-
-  /**
-   * Compute HMAC-SHA256 signature for event
-   * @private
-   */
-  static _computeSignature(tenantId, payload, timestamp) {
-    // Normalize timestamp to milliseconds (number) regardless of input type
-    const timestampMs = timestamp instanceof Date ? timestamp.getTime() : timestamp;
-    const message = JSON.stringify(payload) + tenantId + timestampMs;
-    const secret = process.env.AUDIT_SECRET;
-    if (!secret) {
-      throw new Error(
-        "AUDIT_SECRET environment variable is not set. " +
-        "Cannot compute audit signature without a secret."
+          executionAuthorized:
+            false,
+        }
       );
     }
-    return crypto.createHmac("sha256", secret).update(message).digest("hex");
+
+
+    return String(
+      secret
+    );
   }
 
-  /**
-   * Compute hash of entire event for chain-of-custody
-   * @private
-   */
-  static _computeEventHash(event) {
-    const data =
-      event.eventId +
-      event.tenantId +
-      event.eventType +
-      JSON.stringify(event.payload) +
-      event.signature;
-    return crypto.createHash("sha256").update(data).digest("hex");
+
+  // ==========================================================================
+  // IMMUTABLE CONTENT
+  // ==========================================================================
+
+  static _immutableContent(
+    event
+  ) {
+    return {
+      eventId:
+        String(
+          event.eventId
+        ),
+
+      tenantId:
+        String(
+          event.tenantId
+        ),
+
+      organizationId:
+        event.organizationId
+          ?.toString?.() ||
+        null,
+
+      environmentId:
+        event.environmentId
+          ?.toString?.() ||
+        null,
+
+      chainIndex:
+        Number(
+          event.chainIndex
+        ),
+
+      timestamp:
+        event.timestamp instanceof
+        Date
+          ? event.timestamp
+              .toISOString()
+          : new Date(
+              event.timestamp
+            )
+              .toISOString(),
+
+      eventType:
+        event.eventType,
+
+      principal:
+        event.principal,
+
+      principalId:
+        event.principalId ||
+        null,
+
+      action:
+        event.action ||
+        null,
+
+      serviceId:
+        event.serviceId ||
+        null,
+
+      correlationId:
+        event.correlationId ||
+        null,
+
+      actionDetails:
+        sanitizeAuditValue(
+          event.actionDetails ||
+          null
+        ),
+
+      payload:
+        sanitizeAuditValue(
+          event.payload ||
+          null
+        ),
+
+      metadata:
+        sanitizeAuditValue(
+          event.metadata ||
+          null
+        ),
+
+      previousEventHash:
+        event.previousEventHash ||
+        null,
+    };
   }
 
-  /**
-   * Verify an audit event has not been tampered with
-   * @param {object} event - AuditEvent document
-   */
-  static async verifyEvent(event) {
-    try {
-      // Recompute signature
-      const expectedSignature = this._computeSignature(
-        event.tenantId,
-        event.payload,
-        event.timestamp
+
+  // ==========================================================================
+  // CRYPTO
+  // ==========================================================================
+
+  static _computeSignature(
+    event
+  ) {
+    const canonical =
+      canonicalize(
+        this
+          ._immutableContent(
+            event
+          )
       );
 
-      const signatureValid = crypto.timingSafeEqual(
-        Buffer.from(event.signature),
-        Buffer.from(expectedSignature)
-      );
 
-      if (!signatureValid) {
-        console.warn(
-          `[audit] Signature mismatch for event ${event.eventId} | tenant=${event.tenantId}`
+    return crypto
+      .createHmac(
+        "sha256",
+        this
+          ._getAuditSecret()
+      )
+      .update(
+        canonical,
+        "utf8"
+      )
+      .digest(
+        "hex"
+      );
+  }
+
+
+  static _computeEventHash(
+    event
+  ) {
+    const data = {
+      ...this
+        ._immutableContent(
+          event
+        ),
+
+      signature:
+        event.signature,
+    };
+
+
+    return crypto
+      .createHash(
+        "sha256"
+      )
+      .update(
+        canonicalize(
+          data
+        ),
+        "utf8"
+      )
+      .digest(
+        "hex"
+      );
+  }
+
+
+  // ==========================================================================
+  // RECORD
+  // ==========================================================================
+
+  static async recordEvent(
+    tenantId,
+    eventType,
+    payload,
+    context =
+      {}
+  ) {
+    if (
+      !tenantId
+    ) {
+      throw Object.assign(
+        new Error(
+          "tenantId is required for audit event"
+        ),
+        {
+          code:
+            "AUDIT_TENANT_REQUIRED",
+
+          executionAuthorized:
+            false,
+        }
+      );
+    }
+
+
+    for (
+      let attempt =
+        1;
+      attempt <=
+        MAX_CHAIN_WRITE_RETRIES;
+      attempt++
+    ) {
+      try {
+        const lastEvent =
+          await AuditEvent
+            .findOne({
+              tenantId,
+            })
+            .sort({
+              chainIndex:
+                -1,
+
+              timestamp:
+                -1,
+            });
+
+
+        const previousEventHash =
+          lastEvent
+            ?.eventHash ||
+          null;
+
+
+        const chainIndex =
+          (
+            Number(
+              lastEvent
+                ?.chainIndex
+            ) ||
+            0
+          ) +
+          1;
+
+
+        const eventId =
+          crypto
+            .randomUUID();
+
+
+        const timestamp =
+          new Date();
+
+
+        const safePayload =
+          sanitizeAuditValue(
+            payload
+          );
+
+
+        const safeMetadata =
+          sanitizeAuditValue(
+            context
+              .metadata ||
+            null
+          );
+
+
+        const eventData = {
+          eventId,
+
+          tenantId:
+            String(
+              tenantId
+            ),
+
+          organizationId:
+            context
+              .organizationId ||
+            null,
+
+          environmentId:
+            context
+              .environmentId ||
+            null,
+
+          chainIndex,
+
+          timestamp,
+
+          eventType,
+
+          principal:
+            context
+              .principal ||
+            "system",
+
+          principalId:
+            context
+              .principalId ||
+            context
+              .userId ||
+            "system",
+
+          action:
+            context
+              .action ||
+            null,
+
+          serviceId:
+            context
+              .serviceId ||
+            null,
+
+          actionDetails:
+            sanitizeAuditValue(
+              context
+                .actionDetails ||
+              null
+            ),
+
+          payload:
+            safePayload,
+
+          metadata:
+            safeMetadata,
+
+          correlationId:
+            context
+              .correlationId ||
+            crypto
+              .randomUUID(),
+
+          previousEventHash,
+
+          status:
+            "created",
+        };
+
+
+        eventData.signature =
+          this
+            ._computeSignature(
+              eventData
+            );
+
+
+        eventData.eventHash =
+          this
+            ._computeEventHash(
+              eventData
+            );
+
+
+        const auditEvent =
+          new AuditEvent(
+            eventData
+          );
+
+
+        await auditEvent
+          .save();
+
+
+        console.log(
+          `[audit] ✓ Recorded ${eventType} | eventId=${eventId} | tenant=${tenantId} | chain=${chainIndex}`
         );
+
+
+        return auditEvent;
+      } catch (
+        error
+      ) {
+        /*
+         * Two writers can race for the same chainIndex.
+         *
+         * The unique tenantId+chainIndex index allows one writer
+         * to win. The other fetches the new chain tail and retries.
+         */
+        if (
+          error
+            ?.code ===
+            11000 &&
+          attempt <
+            MAX_CHAIN_WRITE_RETRIES
+        ) {
+          continue;
+        }
+
+
+        console.error(
+          "[audit] Error recording event:",
+          error.message
+        );
+
+
+        if (
+          error.executionAuthorized ===
+          undefined
+        ) {
+          error.executionAuthorized =
+            false;
+        }
+
+
+        throw error;
+      }
+    }
+
+
+    throw Object.assign(
+      new Error(
+        "Unable to append audit event after concurrent write retries"
+      ),
+      {
+        code:
+          "AUDIT_CHAIN_APPEND_CONFLICT",
+
+        retryable:
+          true,
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  // ==========================================================================
+  // VERIFY SINGLE EVENT
+  // ==========================================================================
+
+  static async verifyEvent(
+    event,
+    options =
+      {}
+  ) {
+    try {
+      if (
+        !event
+      ) {
         return {
-          valid: false,
-          reason: "Signature mismatch",
-          eventId: event.eventId,
+          valid:
+            false,
+
+          reason:
+            "AUDIT_EVENT_REQUIRED",
+
+          executionAuthorized:
+            false,
         };
       }
 
-      // Verify chain-of-custody (if not first event)
-      if (event.previousEventHash) {
-        const previousEvent = await AuditEvent.findOne({
-          tenantId: event.tenantId,
-          eventHash: event.previousEventHash,
-        });
 
-        if (!previousEvent) {
-          console.warn(
-            `[audit] Chain-of-custody broken for event ${event.eventId}`
+      const expectedSignature =
+        this
+          ._computeSignature(
+            event
           );
+
+
+      if (
+        !timingSafeHexEqual(
+          event.signature,
+          expectedSignature
+        )
+      ) {
+        return {
+          valid:
+            false,
+
+          reason:
+            "SIGNATURE_MISMATCH",
+
+          eventId:
+            event.eventId,
+
+          executionAuthorized:
+            false,
+        };
+      }
+
+
+      const expectedEventHash =
+        this
+          ._computeEventHash(
+            event
+          );
+
+
+      if (
+        !timingSafeHexEqual(
+          event.eventHash,
+          expectedEventHash
+        )
+      ) {
+        return {
+          valid:
+            false,
+
+          reason:
+            "EVENT_HASH_MISMATCH",
+
+          eventId:
+            event.eventId,
+
+          executionAuthorized:
+            false,
+        };
+      }
+
+
+      if (
+        options
+          .verifyPredecessor !==
+          false &&
+        event
+          .previousEventHash
+      ) {
+        const previousEvent =
+          await AuditEvent
+            .findOne({
+              tenantId:
+                event
+                  .tenantId,
+
+              eventHash:
+                event
+                  .previousEventHash,
+
+              chainIndex:
+                Number(
+                  event
+                    .chainIndex
+                ) -
+                1,
+            });
+
+
+        if (
+          !previousEvent
+        ) {
           return {
-            valid: false,
-            reason: "Chain-of-custody broken",
-            eventId: event.eventId,
+            valid:
+              false,
+
+            reason:
+              "CHAIN_PREDECESSOR_MISSING",
+
+            eventId:
+              event.eventId,
+
+            executionAuthorized:
+              false,
           };
         }
       }
 
-      // Mark as verified
-      event.status = "verified";
-      await event.save();
 
-      console.log(`[audit] ✓ Verified event ${event.eventId}`);
-
+      /*
+       * Verification is READ-ONLY.
+       *
+       * We do not mutate event.status because audit events are
+       * append-only.
+       */
       return {
-        valid: true,
-        eventId: event.eventId,
+        valid:
+          true,
+
+        eventId:
+          event.eventId,
+
+        chainIndex:
+          event.chainIndex,
+
+        executionAuthorized:
+          false,
       };
-    } catch (error) {
-      console.error("[audit] Error verifying event:", error.message);
+    } catch (
+      error
+    ) {
+      console.error(
+        "[audit] Error verifying event:",
+        error.message
+      );
+
+
       return {
-        valid: false,
-        reason: error.message,
-        eventId: event?.eventId,
+        valid:
+          false,
+
+        reason:
+          error.code ||
+          error.message,
+
+        eventId:
+          event
+            ?.eventId,
+
+        executionAuthorized:
+          false,
       };
     }
   }
 
-  /**
-   * Get audit trail for a correlation ID (trace incident through pipeline)
-   * @param {string} tenantId - Tenant identifier
-   * @param {string} correlationId - Correlation ID across incident pipeline
-   */
-  static async getAuditTrail(tenantId, correlationId) {
-    try {
-      const events = await AuditEvent.find({
-        tenantId,
-        correlationId,
-      }).sort({ timestamp: 1 });
 
-      console.log(
-        `[audit] Retrieved ${events.length} events for correlationId=${correlationId}`
-      );
+  // ==========================================================================
+  // VERIFY COMPLETE TENANT CHAIN
+  // ==========================================================================
 
-      // Verify each event
-      const verified = [];
-      for (const event of events) {
-        const verification = await this.verifyEvent(event);
-        verified.push({
-          ...event.toJSON(),
-          verification,
+  static async verifyAuditIntegrity(
+    tenantId
+  ) {
+    const events =
+      await AuditEvent
+        .find({
+          tenantId,
+        })
+        .sort({
+          chainIndex:
+            1,
+
+          timestamp:
+            1,
         });
+
+
+    const verificationResults =
+      [];
+
+
+    let integrityValid =
+      true;
+
+
+    for (
+      let index =
+        0;
+      index <
+        events.length;
+      index++
+    ) {
+      const event =
+        events[
+          index
+        ];
+
+
+      const verification =
+        await this
+          .verifyEvent(
+            event,
+            {
+              verifyPredecessor:
+                false,
+            }
+          );
+
+
+      const expectedIndex =
+        index ===
+          0
+          ? Number(
+              event
+                .chainIndex
+            )
+          : Number(
+              events[
+                index -
+                1
+              ]
+                .chainIndex
+            ) +
+            1;
+
+
+      const chainIndexValid =
+        index ===
+          0
+          ? Number(
+              event
+                .chainIndex
+            ) >=
+            1
+          : Number(
+              event
+                .chainIndex
+            ) ===
+            expectedIndex;
+
+
+      const predecessorValid =
+        index ===
+          0
+          ? event
+              .previousEventHash ===
+            null ||
+            event
+              .previousEventHash ===
+            undefined
+          : event
+              .previousEventHash ===
+            events[
+              index -
+                1
+            ]
+              .eventHash;
+
+
+      const valid =
+        verification.valid &&
+        chainIndexValid &&
+        predecessorValid;
+
+
+      if (
+        !valid
+      ) {
+        integrityValid =
+          false;
       }
 
-      return verified;
-    } catch (error) {
-      console.error("[audit] Error getting audit trail:", error.message);
-      throw error;
+
+      verificationResults
+        .push({
+          ...verification,
+
+          chainIndexValid,
+
+          predecessorValid,
+
+          valid,
+        });
     }
+
+
+    return {
+      tenantId,
+
+      totalEvents:
+        events.length,
+
+      integrityValid,
+
+      verificationResults,
+
+      timestamp:
+        Date.now(),
+
+      executionAuthorized:
+        false,
+    };
   }
 
-  /**
-   * Verify entire audit trail integrity (all events valid and chained)
-   * @param {string} tenantId - Tenant identifier
-   */
-  static async verifyAuditIntegrity(tenantId) {
-    try {
-      const events = await AuditEvent.find({ tenantId }).sort({
-        timestamp: 1,
+
+  // ==========================================================================
+  // AUDIT TRAIL
+  // ==========================================================================
+
+  static async getAuditTrail(
+    tenantId,
+    correlationId
+  ) {
+    const events =
+      await AuditEvent
+        .find({
+          tenantId,
+
+          correlationId,
+        })
+        .sort({
+          chainIndex:
+            1,
+
+          timestamp:
+            1,
+        });
+
+
+    const verified =
+      [];
+
+
+    for (
+      const event
+      of events
+    ) {
+      const verification =
+        await this
+          .verifyEvent(
+            event
+          );
+
+
+      verified.push({
+        ...event
+          .toJSON(),
+
+        verification,
       });
+    }
 
-      let integrityValid = true;
-      let verificationResults = [];
 
-      for (let i = 0; i < events.length; i++) {
-        const event = events[i];
-        const verification = await this.verifyEvent(event);
+    return verified;
+  }
 
-        verificationResults.push(verification);
 
-        if (!verification.valid) {
-          integrityValid = false;
-        }
+  // ==========================================================================
+  // QUERY
+  // ==========================================================================
 
-        // Verify chain
-        if (i > 0) {
-          const previousEvent = events[i - 1];
-          if (event.previousEventHash !== previousEvent.eventHash) {
-            console.warn(
-              `[audit] Chain broken between events ${previousEvent.eventId} → ${event.eventId}`
-            );
-            integrityValid = false;
-            verificationResults[i].chainValid = false;
-          } else {
-            verificationResults[i].chainValid = true;
-          }
-        }
-      }
-
-      const report = {
-        tenantId,
-        totalEvents: events.length,
-        integrityValid,
-        verificationResults,
-        timestamp: Date.now(),
-      };
-
-      console.log(
-        `[audit] ✓ Integrity check: ${integrityValid ? "VALID" : "INVALID"} (${events.length} events)`
+  static async getEventsByType(
+    tenantId,
+    eventType,
+    limit =
+      100
+  ) {
+    const safeLimit =
+      Math.min(
+        1000,
+        Math.max(
+          1,
+          Number(
+            limit
+          ) ||
+          100
+        )
       );
 
-      return report;
-    } catch (error) {
-      console.error("[audit] Error verifying integrity:", error.message);
-      throw error;
-    }
-  }
 
-  /**
-   * Get events by type for audit queries
-   * @param {string} tenantId - Tenant identifier
-   * @param {string} eventType - Event type to filter
-   * @param {number} limit - Max results
-   */
-  static async getEventsByType(tenantId, eventType, limit = 100) {
-    try {
-      const events = await AuditEvent.find({
+    return AuditEvent
+      .find({
         tenantId,
+
         eventType,
       })
-        .sort({ timestamp: -1 })
-        .limit(limit);
-
-      console.log(
-        `[audit] Retrieved ${events.length} ${eventType} events for tenant=${tenantId}`
+      .sort({
+        chainIndex:
+          -1,
+      })
+      .limit(
+        safeLimit
       );
+  }
 
-      return events;
-    } catch (error) {
-      console.error("[audit] Error getting events by type:", error.message);
-      throw error;
+
+  static async exportAuditLog(
+    tenantId,
+    filters =
+      {}
+  ) {
+    const query = {
+      tenantId,
+    };
+
+
+    if (
+      filters.startDate ||
+      filters.endDate
+    ) {
+      query.timestamp =
+        {};
+
+
+      if (
+        filters.startDate
+      ) {
+        query.timestamp.$gte =
+          new Date(
+            filters.startDate
+          );
+      }
+
+
+      if (
+        filters.endDate
+      ) {
+        query.timestamp.$lte =
+          new Date(
+            filters.endDate
+          );
+      }
     }
-  }
 
-  /**
-   * Export audit log for compliance (e.g., regulatory reports)
-   * @param {string} tenantId - Tenant identifier
-   * @param {object} filters - {startDate, endDate, eventType, correlationId}
-   */
-  static async exportAuditLog(tenantId, filters = {}) {
-    try {
-      const query = { tenantId };
 
-      if (filters.startDate || filters.endDate) {
-        query.timestamp = {};
-        if (filters.startDate) {
-          query.timestamp.$gte = new Date(filters.startDate).getTime();
-        }
-        if (filters.endDate) {
-          query.timestamp.$lte = new Date(filters.endDate).getTime();
-        }
-      }
-
-      if (filters.eventType) {
-        query.eventType = filters.eventType;
-      }
-
-      if (filters.correlationId) {
-        query.correlationId = filters.correlationId;
-      }
-
-      const events = await AuditEvent.find(query).sort({ timestamp: 1 });
-
-      console.log(`[audit] Exported ${events.length} audit events for tenant=${tenantId}`);
-
-      return events;
-    } catch (error) {
-      console.error("[audit] Error exporting audit log:", error.message);
-      throw error;
+    if (
+      filters.eventType
+    ) {
+      query.eventType =
+        filters.eventType;
     }
+
+
+    if (
+      filters.correlationId
+    ) {
+      query.correlationId =
+        filters
+          .correlationId;
+    }
+
+
+    return AuditEvent
+      .find(
+        query
+      )
+      .sort({
+        chainIndex:
+          1,
+
+        timestamp:
+          1,
+      });
   }
 
-  /**
-   * Utility: Sign message data with secret (for tests and compatibility)
-   * @param {object} data - Data to sign
-   * @param {string} secret - Secret key
-   */
-  static signMessage(data, secret) {
-    const message = JSON.stringify(data);
-    return crypto.createHmac('sha256', secret).update(message).digest('hex');
-  }
 
-  /**
-   * Utility: Verify signature (for tests and compatibility)
-   * @param {object} data - Data to verify
-   * @param {string} signature - Signature to verify
-   * @param {string} secret - Secret key
-   */
-  static verifySignature(data, signature, secret = process.env.AUDIT_SECRET) {
-    if (!signature) return false;
-    const expectedSignature = this.signMessage(data, secret);
-    try {
-      return crypto.timingSafeEqual(
-        Buffer.from(signature),
-        Buffer.from(expectedSignature)
+  // ==========================================================================
+  // COMPATIBILITY CRYPTO HELPERS
+  // ==========================================================================
+
+  static signMessage(
+    data,
+    secret
+  ) {
+    if (
+      !secret
+    ) {
+      throw Object.assign(
+        new Error(
+          "Audit signing secret is required"
+        ),
+        {
+          code:
+            "AUDIT_SECRET_MISSING",
+
+          executionAuthorized:
+            false,
+        }
       );
-    } catch (error) {
+    }
+
+
+    return crypto
+      .createHmac(
+        "sha256",
+        String(
+          secret
+        )
+      )
+      .update(
+        canonicalize(
+          sanitizeAuditValue(
+            data
+          )
+        )
+      )
+      .digest(
+        "hex"
+      );
+  }
+
+
+  static verifySignature(
+    data,
+    signature,
+    secret =
+      process.env
+        .AUDIT_SECRET
+  ) {
+    if (
+      !signature ||
+      !secret
+    ) {
       return false;
     }
+
+
+    const expected =
+      this
+        .signMessage(
+          data,
+          secret
+        );
+
+
+    return timingSafeHexEqual(
+      signature,
+      expected
+    );
   }
 
-  /**
-   * Utility: Create audit entry (for tests and compatibility)
-   * @param {string} tenantId - Tenant ID
-   * @param {string} userId - User ID
-   * @param {string} action - Action type
-   * @param {string} resourceId - Resource ID
-   * @param {object} changes - Changes made
-   * @param {string} secret - Secret key for signing
-   */
-  static createAuditEntry(tenantId, userId, action, resourceId, changes, secret) {
-    const timestamp = Date.now();
+
+  static createAuditEntry(
+    tenantId,
+    userId,
+    action,
+    resourceId,
+    changes,
+    secret
+  ) {
     const entry = {
       tenantId,
+
       userId,
+
       action,
+
       resourceId,
-      changes,
-      timestamp,
+
+      changes:
+        sanitizeAuditValue(
+          changes
+        ),
+
+      timestamp:
+        Date.now(),
     };
-    entry.signature = this.signMessage(entry, secret);
-    return entry;
+
+
+    entry.signature =
+      this
+        .signMessage(
+          entry,
+          secret
+        );
+
+
+    return {
+      ...entry,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  static sanitizeAuditValue(
+    value
+  ) {
+    return sanitizeAuditValue(
+      value
+    );
+  }
+
+
+  static canonicalize(
+    value
+  ) {
+    return canonicalize(
+      value
+    );
   }
 }
 
-module.exports = AuditService;
+
+module.exports =
+  AuditService;
