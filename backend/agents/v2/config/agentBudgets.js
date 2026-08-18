@@ -1,110 +1,444 @@
-'use strict';
+"use strict";
 
 /**
- * Agent Reasoning Budgets
+ * AIRA Agent Reasoning Budgets
  *
- * Central configuration for all cost and safety limits across the v2 agent platform.
- * No agent may hardcode expensive defaults — they must read from here.
+ * Phase 12.12
  *
- * All values can be overridden via environment variables.
+ * Central source of truth for bounded agent execution.
+ *
+ * Budgets are fail-closed safety boundaries, not performance hints.
  */
 
-const DEFAULT_BUDGETS = Object.freeze({
-  // ── Per-incident orchestration ────────────────────────────────────────────
-  /** Max total model calls across all 8 agents for a single incident */
-  maxModelCallsPerIncident: 20,
-  /** Max concurrent agent runs per orchestrator instance */
-  maxConcurrentRuns: 10,
-  /** Total orchestrator wall-clock timeout (ms) */
-  orchestratorTimeoutMs: 120_000,
+const DEFAULT_BUDGETS =
+  Object.freeze({
+    // ------------------------------------------------------------------------
+    // Per workflow / incident run
+    // ------------------------------------------------------------------------
 
-  // ── Per-agent limits ─────────────────────────────────────────────────────
-  /** Default single-agent execution timeout (ms) */
-  agentTimeoutMs: 15_000,
-  /** Max reasoning retries per agent before MANUAL_REQUIRED */
-  maxAgentRetries: 2,
-  /** Max model calls a single agent may make per incident */
-  maxModelCallsPerAgent: 3,
+    maxStepsPerIncident:
+      50,
 
-  // ── Evidence / context size ───────────────────────────────────────────────
-  /** Max evidence items passed to any agent */
-  maxEvidenceItems: 50,
-  /** Max bytes of a single evidence item's structured data */
-  maxEvidenceItemBytes: 4_096,
-  /** Max log lines extracted per evidence source */
-  maxLogLines: 100,
-  /** Max characters per log line before truncation */
-  maxLogLineChars: 512,
-  /** Max characters of structured context passed to model */
-  maxContextChars: 8_000,
+    maxToolCallsPerIncident:
+      40,
 
-  // ── Model configuration ───────────────────────────────────────────────────
-  /** Primary model identifier (provider-specific string) */
-  primaryModel: process.env.AIRA_PRIMARY_MODEL || 'gpt-4o-mini',
-  /** Fallback model used when primary is rate-limited / unavailable */
-  fallbackModel: process.env.AIRA_FALLBACK_MODEL || 'gpt-3.5-turbo',
-  /** Reasoning temperature (low = deterministic) */
-  temperature: 0.1,
-  /** Max tokens per model response */
-  maxResponseTokens: 1_024,
+    maxModelCallsPerIncident:
+      20,
 
-  // ── Cache ─────────────────────────────────────────────────────────────────
-  /** Seconds before a cached agent result is considered stale */
-  cacheTtlSeconds: 300,
-  /** Cache is per (tenantId + incidentId + agentName + evidenceFingerprint) */
-  cacheEnabled: true,
+    maxRetriesPerIncident:
+      20,
 
-  // ── Provider / fallback ───────────────────────────────────────────────────
-  /** ms before a model call is considered timed out */
-  providerTimeoutMs: 10_000,
-  /** Max provider-level retries before falling back */
-  providerMaxRetries: 2,
-});
+    maxInputTokensPerIncident:
+      60_000,
 
-/**
- * Merge environment variable overrides onto defaults.
- * Each budget key can be overridden by AIRA_BUDGET_<KEY_UPPER_SNAKE>.
- */
+    maxOutputTokensPerIncident:
+      16_000,
+
+    maxEstimatedCostPerIncident:
+      5,
+
+    maxConcurrentRuns:
+      10,
+
+    orchestratorTimeoutMs:
+      120_000,
+
+    // ------------------------------------------------------------------------
+    // Per agent
+    // ------------------------------------------------------------------------
+
+    agentTimeoutMs:
+      15_000,
+
+    maxAgentRetries:
+      2,
+
+    maxModelCallsPerAgent:
+      3,
+
+    // ------------------------------------------------------------------------
+    // Evidence / context
+    // ------------------------------------------------------------------------
+
+    maxEvidenceItems:
+      50,
+
+    maxEvidenceItemBytes:
+      4096,
+
+    maxLogLines:
+      100,
+
+    maxLogLineChars:
+      512,
+
+    maxContextChars:
+      8000,
+
+    // ------------------------------------------------------------------------
+    // Model
+    // ------------------------------------------------------------------------
+
+    primaryModel:
+      process.env
+        .AIRA_PRIMARY_MODEL ||
+      "gpt-4o-mini",
+
+    fallbackModel:
+      process.env
+        .AIRA_FALLBACK_MODEL ||
+      "gpt-3.5-turbo",
+
+    temperature:
+      0.1,
+
+    maxResponseTokens:
+      1024,
+
+    providerTimeoutMs:
+      10_000,
+
+    providerMaxRetries:
+      2,
+
+    // ------------------------------------------------------------------------
+    // Cache
+    // ------------------------------------------------------------------------
+
+    cacheTtlSeconds:
+      300,
+
+    cacheEnabled:
+      true,
+  });
+
+function _numberEnv(
+  key,
+  fallback,
+  {
+    min = 0,
+  } = {}
+) {
+  const raw =
+    process.env[
+      `AIRA_BUDGET_${key}`
+    ];
+
+  if (
+    raw ===
+    undefined
+  ) {
+    return fallback;
+  }
+
+  const parsed =
+    Number(
+      raw
+    );
+
+  if (
+    !Number.isFinite(
+      parsed
+    ) ||
+    parsed <
+      min
+  ) {
+    console.warn(
+      `[agentBudgets] Invalid AIRA_BUDGET_${key}; using default ${fallback}`
+    );
+
+    return fallback;
+  }
+
+  return parsed;
+}
+
+function _booleanEnv(
+  key,
+  fallback
+) {
+  const raw =
+    process.env[
+      `AIRA_BUDGET_${key}`
+    ];
+
+  if (
+    raw ===
+    undefined
+  ) {
+    return fallback;
+  }
+
+  return String(
+    raw
+  )
+    .trim()
+    .toLowerCase() ===
+    "true";
+}
+
 function loadBudgets() {
-  const env = (key, dflt) => {
-    const v = process.env[`AIRA_BUDGET_${key}`];
-    return v !== undefined ? (typeof dflt === 'number' ? Number(v) : v === 'true') : dflt;
-  };
-
   return Object.freeze({
-    maxModelCallsPerIncident:  env('MAX_MODEL_CALLS_PER_INCIDENT',   DEFAULT_BUDGETS.maxModelCallsPerIncident),
-    maxConcurrentRuns:         env('MAX_CONCURRENT_RUNS',            DEFAULT_BUDGETS.maxConcurrentRuns),
-    orchestratorTimeoutMs:     env('ORCHESTRATOR_TIMEOUT_MS',        DEFAULT_BUDGETS.orchestratorTimeoutMs),
-    agentTimeoutMs:            env('AGENT_TIMEOUT_MS',               DEFAULT_BUDGETS.agentTimeoutMs),
-    maxAgentRetries:           env('MAX_AGENT_RETRIES',              DEFAULT_BUDGETS.maxAgentRetries),
-    maxModelCallsPerAgent:     env('MAX_MODEL_CALLS_PER_AGENT',      DEFAULT_BUDGETS.maxModelCallsPerAgent),
-    maxEvidenceItems:          env('MAX_EVIDENCE_ITEMS',             DEFAULT_BUDGETS.maxEvidenceItems),
-    maxEvidenceItemBytes:      env('MAX_EVIDENCE_ITEM_BYTES',        DEFAULT_BUDGETS.maxEvidenceItemBytes),
-    maxLogLines:               env('MAX_LOG_LINES',                  DEFAULT_BUDGETS.maxLogLines),
-    maxLogLineChars:           env('MAX_LOG_LINE_CHARS',             DEFAULT_BUDGETS.maxLogLineChars),
-    maxContextChars:           env('MAX_CONTEXT_CHARS',              DEFAULT_BUDGETS.maxContextChars),
-    primaryModel:              process.env.AIRA_PRIMARY_MODEL       || DEFAULT_BUDGETS.primaryModel,
-    fallbackModel:             process.env.AIRA_FALLBACK_MODEL      || DEFAULT_BUDGETS.fallbackModel,
-    temperature:               env('TEMPERATURE',                    DEFAULT_BUDGETS.temperature),
-    maxResponseTokens:         env('MAX_RESPONSE_TOKENS',            DEFAULT_BUDGETS.maxResponseTokens),
-    cacheTtlSeconds:           env('CACHE_TTL_SECONDS',              DEFAULT_BUDGETS.cacheTtlSeconds),
-    cacheEnabled:              env('CACHE_ENABLED',                  DEFAULT_BUDGETS.cacheEnabled),
-    providerTimeoutMs:         env('PROVIDER_TIMEOUT_MS',            DEFAULT_BUDGETS.providerTimeoutMs),
-    providerMaxRetries:        env('PROVIDER_MAX_RETRIES',           DEFAULT_BUDGETS.providerMaxRetries),
+    maxStepsPerIncident:
+      _numberEnv(
+        "MAX_STEPS_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxStepsPerIncident,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxToolCallsPerIncident:
+      _numberEnv(
+        "MAX_TOOL_CALLS_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxToolCallsPerIncident,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxModelCallsPerIncident:
+      _numberEnv(
+        "MAX_MODEL_CALLS_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxModelCallsPerIncident,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxRetriesPerIncident:
+      _numberEnv(
+        "MAX_RETRIES_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxRetriesPerIncident
+      ),
+
+    maxInputTokensPerIncident:
+      _numberEnv(
+        "MAX_INPUT_TOKENS_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxInputTokensPerIncident,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxOutputTokensPerIncident:
+      _numberEnv(
+        "MAX_OUTPUT_TOKENS_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxOutputTokensPerIncident,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxEstimatedCostPerIncident:
+      _numberEnv(
+        "MAX_ESTIMATED_COST_PER_INCIDENT",
+        DEFAULT_BUDGETS
+          .maxEstimatedCostPerIncident
+      ),
+
+    maxConcurrentRuns:
+      _numberEnv(
+        "MAX_CONCURRENT_RUNS",
+        DEFAULT_BUDGETS
+          .maxConcurrentRuns,
+        {
+          min:
+            1,
+        }
+      ),
+
+    orchestratorTimeoutMs:
+      _numberEnv(
+        "ORCHESTRATOR_TIMEOUT_MS",
+        DEFAULT_BUDGETS
+          .orchestratorTimeoutMs,
+        {
+          min:
+            1000,
+        }
+      ),
+
+    agentTimeoutMs:
+      _numberEnv(
+        "AGENT_TIMEOUT_MS",
+        DEFAULT_BUDGETS
+          .agentTimeoutMs,
+        {
+          min:
+            100,
+        }
+      ),
+
+    maxAgentRetries:
+      _numberEnv(
+        "MAX_AGENT_RETRIES",
+        DEFAULT_BUDGETS
+          .maxAgentRetries
+      ),
+
+    maxModelCallsPerAgent:
+      _numberEnv(
+        "MAX_MODEL_CALLS_PER_AGENT",
+        DEFAULT_BUDGETS
+          .maxModelCallsPerAgent,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxEvidenceItems:
+      _numberEnv(
+        "MAX_EVIDENCE_ITEMS",
+        DEFAULT_BUDGETS
+          .maxEvidenceItems,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxEvidenceItemBytes:
+      _numberEnv(
+        "MAX_EVIDENCE_ITEM_BYTES",
+        DEFAULT_BUDGETS
+          .maxEvidenceItemBytes,
+        {
+          min:
+            128,
+        }
+      ),
+
+    maxLogLines:
+      _numberEnv(
+        "MAX_LOG_LINES",
+        DEFAULT_BUDGETS
+          .maxLogLines,
+        {
+          min:
+            1,
+        }
+      ),
+
+    maxLogLineChars:
+      _numberEnv(
+        "MAX_LOG_LINE_CHARS",
+        DEFAULT_BUDGETS
+          .maxLogLineChars,
+        {
+          min:
+            32,
+        }
+      ),
+
+    maxContextChars:
+      _numberEnv(
+        "MAX_CONTEXT_CHARS",
+        DEFAULT_BUDGETS
+          .maxContextChars,
+        {
+          min:
+            256,
+        }
+      ),
+
+    primaryModel:
+      process.env
+        .AIRA_PRIMARY_MODEL ||
+      DEFAULT_BUDGETS
+        .primaryModel,
+
+    fallbackModel:
+      process.env
+        .AIRA_FALLBACK_MODEL ||
+      DEFAULT_BUDGETS
+        .fallbackModel,
+
+    temperature:
+      _numberEnv(
+        "TEMPERATURE",
+        DEFAULT_BUDGETS
+          .temperature
+      ),
+
+    maxResponseTokens:
+      _numberEnv(
+        "MAX_RESPONSE_TOKENS",
+        DEFAULT_BUDGETS
+          .maxResponseTokens,
+        {
+          min:
+            1,
+        }
+      ),
+
+    providerTimeoutMs:
+      _numberEnv(
+        "PROVIDER_TIMEOUT_MS",
+        DEFAULT_BUDGETS
+          .providerTimeoutMs,
+        {
+          min:
+            100,
+        }
+      ),
+
+    providerMaxRetries:
+      _numberEnv(
+        "PROVIDER_MAX_RETRIES",
+        DEFAULT_BUDGETS
+          .providerMaxRetries
+      ),
+
+    cacheTtlSeconds:
+      _numberEnv(
+        "CACHE_TTL_SECONDS",
+        DEFAULT_BUDGETS
+          .cacheTtlSeconds
+      ),
+
+    cacheEnabled:
+      _booleanEnv(
+        "CACHE_ENABLED",
+        DEFAULT_BUDGETS
+          .cacheEnabled
+      ),
   });
 }
 
-let _budgets = null;
+let _budgets =
+  null;
 
-/** Returns the singleton budget config (loaded once, then cached). */
 function getAgentBudgets() {
-  if (!_budgets) _budgets = loadBudgets();
+  if (
+    !_budgets
+  ) {
+    _budgets =
+      loadBudgets();
+  }
+
   return _budgets;
 }
 
-/** Reset cached budgets (test helper). */
 function resetAgentBudgets() {
-  _budgets = null;
+  _budgets =
+    null;
 }
 
-module.exports = { getAgentBudgets, resetAgentBudgets, DEFAULT_BUDGETS };
+module.exports = {
+  getAgentBudgets,
+  resetAgentBudgets,
+  DEFAULT_BUDGETS,
+};

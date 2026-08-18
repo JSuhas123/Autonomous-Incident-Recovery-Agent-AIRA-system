@@ -42,6 +42,7 @@ const {
   EVIDENCE_SOURCE_TYPE,
   createEvidenceItem,
   createEvidencePackage,
+  verifyEvidenceIntegrity,
 } =
   require(
     "../contracts/agentContracts"
@@ -614,39 +615,56 @@ if (
         },
 
         {
-          confidence:
-            completeness,
+  confidence:
+    completeness,
 
-          evidenceUsed:
-            reducedEvidence
-              .map(
-                (
-                  evidence
-                ) =>
-                  evidence.id
-              ),
+  evidenceUsed:
+    reducedEvidence
+      .map(
+        (
+          evidence
+        ) =>
+          evidence.id
+      ),
 
-          model:
-            reasoning
-              .modelMetadata
-              ?.model,
+  evidenceMissing:
+    finalMissing,
 
-          provider:
-            reasoning
-              .modelMetadata
-              ?.provider,
+  assumptions:
+    [],
 
-          fallbackUsed:
-            Boolean(
-              reasoning
-                .fallbackUsed
-            ),
+  nextRecommendedStage:
+    finalMissing.length >
+      0
+      ? "COLLECT_MORE_EVIDENCE"
+      : "SYMPTOM_ANALYSIS",
 
-          warnings:
-            reasoning
-              .warnings ||
-            [],
-        }
+  modelMetadata:
+    reasoning
+      .modelMetadata ||
+    null,
+
+  model:
+    reasoning
+      .modelMetadata
+      ?.model,
+
+  provider:
+    reasoning
+      .modelMetadata
+      ?.provider,
+
+  fallbackUsed:
+    Boolean(
+      reasoning
+        .fallbackUsed
+    ),
+
+  warnings:
+    reasoning
+      .warnings ||
+    [],
+}
       );
     } catch (
       error
@@ -2496,30 +2514,107 @@ function deduplicateEvidence(
     of items
   ) {
     if (
-      !item?.id
+      !item
+        ?.id
     ) {
       continue;
     }
 
-    const existing =
-      map.get(
-        item.id
+    /*
+     * Phase 12.4:
+     *
+     * Canonical evidence whose fingerprint no longer matches must not
+     * participate in diagnosis.
+     *
+     * Legacy evidence without a fingerprint remains accepted as UNVERIFIED
+     * during migration.
+     */
+    const integrity =
+      verifyEvidenceIntegrity(
+        item
       );
 
     if (
-      !existing ||
-      (
-        item.confidence ??
-        0
-      ) >
-      (
-        existing
-          .confidence ??
-        0
-      )
+      integrity.valid ===
+      false
+    ) {
+      continue;
+    }
+
+    const id =
+      String(
+        item.id
+      );
+
+    const existing =
+      map.get(
+        id
+      );
+
+    if (
+      !existing
     ) {
       map.set(
-        item.id,
+        id,
+        item
+      );
+
+      continue;
+    }
+
+    const candidateConfidence =
+      item.confidence ??
+      0;
+
+    const existingConfidence =
+      existing.confidence ??
+      0;
+
+    if (
+      candidateConfidence >
+      existingConfidence
+    ) {
+      map.set(
+        id,
+        item
+      );
+
+      continue;
+    }
+
+    if (
+      candidateConfidence <
+      existingConfidence
+    ) {
+      continue;
+    }
+
+    /*
+     * Confidence tie:
+     * prefer the most recently collected canonical observation.
+     */
+    const candidateCollectedAt =
+      item.collectedAt
+        ? new Date(
+            item.collectedAt
+          )
+            .getTime()
+        : 0;
+
+    const existingCollectedAt =
+      existing.collectedAt
+        ? new Date(
+            existing.collectedAt
+          )
+            .getTime()
+        : 0;
+
+    if (
+      candidateCollectedAt >
+      existingCollectedAt
+    ) {
+      map.set(
+        id,
         item
       );
     }

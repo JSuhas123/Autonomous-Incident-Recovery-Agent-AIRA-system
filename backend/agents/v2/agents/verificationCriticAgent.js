@@ -38,6 +38,8 @@ const {
 
 const {
   createAgentFinding,
+  verifyEvidenceIntegrity,
+  EVIDENCE_INTEGRITY_STATUS,
 } =
   require(
     "../contracts/agentContracts"
@@ -158,13 +160,17 @@ class VerificationCriticAgent
       // ======================================================================
 
       const globalIssues = [
-        ...this.detectMissingEvidence(
-          context
-        ),
+  ...this.detectMissingEvidence(
+    context
+  ),
 
-        ...this.detectEvidenceConflicts(
-          context
-        ),
+  ...this.detectEvidenceIntegrityProblems(
+    context
+  ),
+
+  ...this.detectEvidenceConflicts(
+    context
+  ),
 
         ...this.detectConfidenceProblems(
           context,
@@ -539,35 +545,77 @@ class VerificationCriticAgent
         },
 
         {
-          confidence:
-            verificationConfidence,
+  confidence:
+    verificationConfidence,
 
-          evidenceUsed:
-            Array.from(
-              evidenceIndex.keys()
-            ),
+  evidenceUsed:
+    Array.from(
+      evidenceIndex.keys()
+    ),
 
-          model:
-            reasoning
-              .modelMetadata
-              ?.model,
+  evidenceMissing:
+    mergeUnique(
+      context
+        .evidence
+        ?.missingEvidence ||
+      [],
 
-          provider:
-            reasoning
-              .modelMetadata
-              ?.provider,
+      aiOutput
+        .missingEvidence ||
+      []
+    ),
 
-          fallbackUsed:
-            Boolean(
-              reasoning
-                .fallbackUsed
-            ),
+  assumptions:
+    Array.from(
+      new Set(
+        hypotheses
+          .flatMap(
+            (
+              hypothesis
+            ) =>
+              hypothesis
+                .assumptions ||
+              []
+          )
+      )
+    ),
 
-          warnings:
-            reasoning
-              .warnings ||
-            [],
-        }
+  nextRecommendedStage:
+    verificationStatus ===
+      VERIFICATION_STATUS
+        .VERIFIED ||
+    verificationStatus ===
+      VERIFICATION_STATUS
+        .DOWNGRADED
+      ? "RISK_ANALYSIS"
+      : "COLLECT_MORE_EVIDENCE",
+
+  modelMetadata:
+    reasoning
+      .modelMetadata ||
+    null,
+
+  model:
+    reasoning
+      .modelMetadata
+      ?.model,
+
+  provider:
+    reasoning
+      .modelMetadata
+      ?.provider,
+
+  fallbackUsed:
+    Boolean(
+      reasoning
+        .fallbackUsed
+    ),
+
+  warnings:
+    reasoning
+      .warnings ||
+    [],
+}
       );
     } catch (
       error
@@ -632,36 +680,212 @@ class VerificationCriticAgent
   // EVIDENCE INDEX
   // ==========================================================================
 
-  buildEvidenceIndex(
-    context
+ buildEvidenceIndex(
+  context
+) {
+  const map =
+    new Map();
+
+  for (
+    const evidence
+    of normalizeArray(
+      context
+        .evidence
+        ?.items
+    )
   ) {
-    const map =
-      new Map();
-
-    for (
-      const evidence
-      of normalizeArray(
-        context
-          .evidence
-          ?.items
-      )
+    if (
+      !evidence
+        ?.id
     ) {
-      if (
-        !evidence?.id
-      ) {
-        continue;
-      }
-
-      map.set(
-        String(
-          evidence.id
-        ),
-        evidence
-      );
+      continue;
     }
 
-    return map;
+    const integrity =
+      verifyEvidenceIntegrity(
+        evidence
+      );
+
+    /*
+     * Corrupted canonical evidence is never valid support for a hypothesis.
+     *
+     * Legacy/unverified evidence remains available during migration.
+     */
+    if (
+      integrity.status ===
+      EVIDENCE_INTEGRITY_STATUS
+        .INVALID
+    ) {
+      continue;
+    }
+
+    map.set(
+      String(
+        evidence.id
+      ),
+      evidence
+    );
   }
+
+  return map;
+}
+
+// ==========================================================================
+// EVIDENCE INTEGRITY / PROVENANCE
+// ==========================================================================
+
+detectEvidenceIntegrityProblems(
+  context
+) {
+  const issues =
+    [];
+
+  const seenIds =
+    new Set();
+
+  for (
+    const evidence
+    of normalizeArray(
+      context
+        .evidence
+        ?.items
+    )
+  ) {
+    if (
+      !evidence
+        ?.id
+    ) {
+      issues.push({
+        code:
+          "EVIDENCE_ID_MISSING",
+
+        severity:
+          CRITIC_SEVERITY
+            .CRITICAL,
+
+        description:
+          "Evidence item has no canonical identifier.",
+
+        evidenceIds:
+          [],
+      });
+
+      continue;
+    }
+
+    const evidenceId =
+      String(
+        evidence.id
+      );
+
+    if (
+      seenIds.has(
+        evidenceId
+      )
+    ) {
+      issues.push({
+        code:
+          "DUPLICATE_EVIDENCE_ID",
+
+        severity:
+          CRITIC_SEVERITY
+            .WARNING,
+
+        description:
+          `Duplicate evidence identifier detected: ${evidenceId}`,
+
+        evidenceIds: [
+          evidenceId,
+        ],
+      });
+    }
+
+    seenIds.add(
+      evidenceId
+    );
+
+    const integrity =
+      verifyEvidenceIntegrity(
+        evidence
+      );
+
+    if (
+      integrity.status ===
+      EVIDENCE_INTEGRITY_STATUS
+        .INVALID
+    ) {
+      issues.push({
+        code:
+          "EVIDENCE_INTEGRITY_INVALID",
+
+        severity:
+          CRITIC_SEVERITY
+            .CRITICAL,
+
+        description:
+          `Canonical evidence "${evidenceId}" changed after its integrity fingerprint was created.`,
+
+        evidenceIds: [
+          evidenceId,
+        ],
+      });
+
+      continue;
+    }
+
+    /*
+     * Missing fingerprints are tolerated only for migration compatibility.
+     */
+    if (
+      integrity.status ===
+      EVIDENCE_INTEGRITY_STATUS
+        .UNVERIFIED
+    ) {
+      issues.push({
+        code:
+          "EVIDENCE_INTEGRITY_UNVERIFIED",
+
+        severity:
+          CRITIC_SEVERITY
+            .INFO,
+
+        description:
+          `Evidence "${evidenceId}" does not contain a Phase 12.4 integrity fingerprint.`,
+
+        evidenceIds: [
+          evidenceId,
+        ],
+      });
+    }
+
+    if (
+      !evidence
+        ?.provenance
+        ?.collector ||
+      !evidence
+        ?.provenance
+        ?.sourceRef
+    ) {
+      issues.push({
+        code:
+          "EVIDENCE_PROVENANCE_INCOMPLETE",
+
+        severity:
+          CRITIC_SEVERITY
+            .INFO,
+
+        description:
+          `Evidence "${evidenceId}" has incomplete provenance metadata.`,
+
+        evidenceIds: [
+          evidenceId,
+        ],
+      });
+    }
+  }
+
+  return issues;
+}
 
   // ==========================================================================
   // HYPOTHESIS REVIEW

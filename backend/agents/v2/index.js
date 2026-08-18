@@ -3,93 +3,293 @@
 /**
  * Agent Intelligence Factory
  *
- * Assembles the complete 8-agent platform with all dependencies.
- * Returns a ready-to-use AgentOrchestrator.
+ * Phase 12.1 establishes one production runtime owner while keeping the
+ * 15-agent system split into bounded logical stages.
+ *
+ * IMPORTANT:
+ * - buildAgentOrchestrator() builds the compatibility workflow used by current
+ *   manual/machine intelligence entry points.
+ * - DiagnosisLifecycleService / DiagnosisCoordinator remain responsible for
+ *   the richer diagnostic specialist graph.
+ * - Production code must initialize exactly one AgentOrchestrator through
+ *   initializeAgentOrchestrator() during startup and retrieve it through
+ *   getAgentOrchestratorInstance().
+ * - No agent receives direct infrastructure-mutation authority here.
  */
 
 const { AgentOrchestrator } = require('./runtime/agentOrchestrator');
-const { SafeReasoningProvider, MockReasoningProvider, configureReasoningProvider, getReasoningProvider } = require('./runtime/reasoningProvider');
-const { getAgentBudgets } = require('./config/agentBudgets');
 
-const { CorrelationAgent }          = require('./agents/correlationAgent');
-const { InvestigationAgent, reduceEvidencePackage } = require('./agents/investigationAgent');
-const { DiagnosisAgent }            = require('./agents/diagnosisAgent');
-const { PlaybookSelectionAgent }    = require('./agents/playbookSelectionAgent');
-const { ParameterResolutionAgent }  = require('./agents/parameterResolutionAgent');
-const { RecoveryMonitoringAgent }   = require('./agents/recoveryMonitoringAgent');
-const { ExplanationAgent }          = require('./agents/explanationAgent');
-const { LearningAgent }             = require('./agents/learningAgent');
+const {
+  SafeReasoningProvider,
+  MockReasoningProvider,
+  configureReasoningProvider,
+  getReasoningProvider,
+} = require('./runtime/reasoningProvider');
+
+const {
+  getAgentBudgets,
+} = require('./config/agentBudgets');
+
+const {
+  SymptomAnalysisAgent,
+} = require('./agents/symptomAnalysisAgent');
+
+const {
+  CorrelationAgent,
+} = require('./agents/correlationAgent');
+
+const {
+  TopologyAnalysisAgent,
+} = require('./agents/topologyAnalysisAgent');
+
+const {
+  ChangeAnalysisAgent,
+} = require('./agents/changeAnalysisAgent');
+
+const {
+  HistoricalAnalysisAgent,
+} = require('./agents/historicalAnalysisAgent');
+
+const {
+  InvestigationAgent,
+  reduceEvidencePackage,
+} = require('./agents/investigationAgent');
+
+const {
+  RootCauseHypothesisAgent,
+} = require('./agents/rootCauseHypothesisAgent');
+
+const {
+  DiagnosisAgent,
+} = require('./agents/diagnosisAgent');
+
+const {
+  RiskImpactAgent,
+} = require('./agents/riskImpactAgent');
+
+const {
+  PlaybookSelectionAgent,
+} = require('./agents/playbookSelectionAgent');
+
+const {
+  ParameterResolutionAgent,
+} = require('./agents/parameterResolutionAgent');
+
+const {
+  RecoveryMonitoringAgent,
+} = require('./agents/recoveryMonitoringAgent');
+
+const {
+  VerificationCriticAgent,
+} = require('./agents/verificationCriticAgent');
+
+const {
+  LearningAgent,
+} = require('./agents/learningAgent');
+
+const {
+  ExplanationAgent,
+} = require('./agents/explanationAgent');
 
 /**
- * Build the 8-agent orchestrator.
+ * Frozen logical ownership map for all 15 Phase-12 agents.
  *
- * @param {object} services - V1 frozen services (incidentPlaybookService, memoryService, etc.)
- * @param {object} config   - { dryRun, agentTimeoutMs, maxSteps, confidenceOverrides }
- * @returns {AgentOrchestrator}
+ * An agent may appear in more than one logical stage when the same persisted
+ * result is consumed in multiple stages. That does not mean it should be run
+ * twice automatically.
  */
-function buildAgentOrchestrator(services = {}, config = {}) {
-  const budgets = getAgentBudgets();
-  const reasoningProvider = getReasoningProvider();
-  const agentConfig = { reasoningProvider };
+const AGENT_ARCHITECTURE =
+  Object.freeze({
+    signalAndIncidentFormation:
+      Object.freeze([
+        'CorrelationAgent',
+      ]),
 
-  const agents = {
-    correlationAgent:         new CorrelationAgent(agentConfig),
-    investigationAgent:       new InvestigationAgent(agentConfig),
-    diagnosisAgent:           new DiagnosisAgent(agentConfig),
-    playbookSelectionAgent:   new PlaybookSelectionAgent(agentConfig),
-    parameterResolutionAgent: new ParameterResolutionAgent(agentConfig),
-    recoveryMonitoringAgent:  new RecoveryMonitoringAgent(agentConfig),
-    explanationAgent:         new ExplanationAgent(agentConfig),
-    learningAgent:            new LearningAgent(agentConfig),
-  };
+    evidenceAndDiagnosis:
+      Object.freeze([
+        'InvestigationAgent',
+        'SymptomAnalysisAgent',
+        'TopologyAnalysisAgent',
+        'ChangeAnalysisAgent',
+        'HistoricalAnalysisAgent',
+        'RootCauseHypothesisAgent',
+        'DiagnosisAgent',
+        'RiskImpactAgent',
+        'VerificationCriticAgent',
+      ]),
 
-  return new AgentOrchestrator(agents, services, {
-    agentTimeoutMs:    budgets.agentTimeoutMs,
-    orchestratorTimeoutMs: budgets.orchestratorTimeoutMs,
-    ...config,       // caller overrides last
+    recoveryPlanning:
+      Object.freeze([
+        'RiskImpactAgent',
+        'PlaybookSelectionAgent',
+        'ParameterResolutionAgent',
+      ]),
+
+    recoveryAssurance:
+      Object.freeze([
+        'RecoveryMonitoringAgent',
+        'VerificationCriticAgent',
+      ]),
+
+    postOutcome:
+      Object.freeze([
+        'LearningAgent',
+        'ExplanationAgent',
+      ]),
+
+    /*
+     * These are deliberately NOT agents.
+     *
+     * They remain deterministic safety-control boundaries.
+     */
+    deterministicSafetyControl:
+      Object.freeze([
+        'POLICY',
+        'APPROVAL',
+        'AUTHORIZATION',
+        'PLAYBOOK_RUNBOOK',
+        'EXECUTION',
+      ]),
   });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Authoritative Runtime Orchestrator
-// ─────────────────────────────────────────────────────────────────────────────
-//
-// buildAgentOrchestrator() remains available for isolated unit/integration tests.
-//
-// Production code MUST use initializeAgentOrchestrator() once at startup and
-// getAgentOrchestratorInstance() afterwards.
-//
-// This prevents routes/services from silently creating independent agent
-// pipelines with different configuration or dependencies.
-
-let runtimeOrchestrator = null;
 
 /**
- * Initialise the single production AgentOrchestrator instance.
+ * Build the current compatibility orchestrator used by production manual and
+ * machine-intelligence entry points.
  *
- * Safe to call multiple times; only the first call creates the runtime.
+ * This is deliberately NOT a giant 15-agent orchestrator.
+ *
+ * Rich diagnostic specialist orchestration remains bounded in
+ * DiagnosisCoordinator.
  *
  * @param {object} services
  * @param {object} config
  * @returns {AgentOrchestrator}
  */
-function initializeAgentOrchestrator(services = {}, config = {}) {
-  if (runtimeOrchestrator) {
+function buildAgentOrchestrator(
+  services = {},
+  config = {}
+) {
+  const budgets =
+    getAgentBudgets();
+
+  const reasoningProvider =
+    getReasoningProvider();
+
+  const agentConfig = {
+    reasoningProvider,
+  };
+
+  const agents = {
+    correlationAgent:
+      new CorrelationAgent(
+        agentConfig
+      ),
+
+    investigationAgent:
+      new InvestigationAgent(
+        agentConfig
+      ),
+
+    diagnosisAgent:
+      new DiagnosisAgent(
+        agentConfig
+      ),
+
+    playbookSelectionAgent:
+      new PlaybookSelectionAgent(
+        agentConfig
+      ),
+
+    parameterResolutionAgent:
+      new ParameterResolutionAgent(
+        agentConfig
+      ),
+
+    recoveryMonitoringAgent:
+      new RecoveryMonitoringAgent(
+        agentConfig
+      ),
+
+    explanationAgent:
+      new ExplanationAgent(
+        agentConfig
+      ),
+
+    learningAgent:
+      new LearningAgent(
+        agentConfig
+      ),
+  };
+
+  return new AgentOrchestrator(
+    agents,
+    services,
+    {
+      agentTimeoutMs:
+        budgets.agentTimeoutMs,
+
+      orchestratorTimeoutMs:
+        budgets.orchestratorTimeoutMs,
+
+      ...config,
+    }
+  );
+}
+
+// ============================================================================
+// AUTHORITATIVE PRODUCTION RUNTIME OWNERSHIP
+// ============================================================================
+
+/*
+ * There must be exactly one production singleton owner.
+ *
+ * AgentOrchestrator.js exports the runtime class only.
+ *
+ * Production routes/services must never create independent runtimes.
+ */
+
+let runtimeOrchestrator =
+  null;
+
+/**
+ * Initialize the single production AgentOrchestrator.
+ *
+ * Repeated calls return the same instance.
+ *
+ * @param {object} services
+ * @param {object} config
+ * @returns {AgentOrchestrator}
+ */
+function initializeAgentOrchestrator(
+  services = {},
+  config = {}
+) {
+  if (
+    runtimeOrchestrator
+  ) {
     return runtimeOrchestrator;
   }
 
-  runtimeOrchestrator = buildAgentOrchestrator(services, config);
+  runtimeOrchestrator =
+    buildAgentOrchestrator(
+      services,
+      config
+    );
 
   return runtimeOrchestrator;
 }
 
 /**
- * Return the already-initialised production orchestrator.
+ * Retrieve the already initialized production AgentOrchestrator.
  *
- * Production callers should NOT construct their own orchestrator.
+ * Fail closed when startup did not initialize the runtime.
+ *
+ * @returns {AgentOrchestrator}
  */
 function getAgentOrchestratorInstance() {
-  if (!runtimeOrchestrator) {
+  if (
+    !runtimeOrchestrator
+  ) {
     throw new Error(
       'AgentOrchestrator has not been initialized. ' +
       'Call initializeAgentOrchestrator() during application startup.'
@@ -100,31 +300,53 @@ function getAgentOrchestratorInstance() {
 }
 
 /**
- * Test-only helper.
+ * TEST ONLY.
+ *
+ * Production code must never call this.
  */
 function resetAgentOrchestratorInstance() {
-  runtimeOrchestrator = null;
+  runtimeOrchestrator =
+    null;
 }
 
 module.exports = {
+  AGENT_ARCHITECTURE,
+
   buildAgentOrchestrator,
   initializeAgentOrchestrator,
   getAgentOrchestratorInstance,
   resetAgentOrchestratorInstance,
+
   configureReasoningProvider,
   getReasoningProvider,
+
   SafeReasoningProvider,
   MockReasoningProvider,
-  // Re-export agents for direct use / testing
+
+  // --------------------------------------------------------------------------
+  // All 15 Phase-12 agents
+  // --------------------------------------------------------------------------
+
+  SymptomAnalysisAgent,
   CorrelationAgent,
+  TopologyAnalysisAgent,
+  ChangeAnalysisAgent,
+  HistoricalAnalysisAgent,
   InvestigationAgent,
+  RootCauseHypothesisAgent,
   DiagnosisAgent,
+  RiskImpactAgent,
   PlaybookSelectionAgent,
   ParameterResolutionAgent,
   RecoveryMonitoringAgent,
-  ExplanationAgent,
+  VerificationCriticAgent,
   LearningAgent,
+  ExplanationAgent,
+
+  // --------------------------------------------------------------------------
   // Utilities
+  // --------------------------------------------------------------------------
+
   reduceEvidencePackage,
   getAgentBudgets,
 };

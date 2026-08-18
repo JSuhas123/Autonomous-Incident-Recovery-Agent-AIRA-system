@@ -33,6 +33,30 @@ const mongoose =
     "mongoose"
   );
 
+  // ============================================================================
+// PHASE 12.1 — AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
+// ============================================================================
+
+const {
+  initializeAgentOrchestrator,
+} =
+  require(
+    "./agents/v2"
+  );
+
+const {
+  incidentPlaybookService,
+} =
+  require(
+    "./services/incidents"
+  );
+
+const {
+  memoryService,
+} =
+  require(
+    "./services/learning"
+  );
 // CRITICAL: Initialize and validate feature flags before any other system starts
 const featureFlags =
   require(
@@ -3759,8 +3783,55 @@ async function startServer() {
      */
     await startHttpServer();
 
+    /*
+     * Initialize the existing infrastructure, queues, workers,
+     * persistence and Phase 1-11 runtime.
+     */
     await initializeServices();
 
+    // =========================================================================
+    // PHASE 12.1 — AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
+    // =========================================================================
+
+    /*
+     * Production routes must never create their own AgentOrchestrator.
+     *
+     * Initialize the single production runtime here after the core services
+     * have been initialized but before startup recovery marks AIRA READY.
+     *
+     * If this throws, startup fails. We intentionally do NOT swallow the
+     * exception because accepting production intelligence traffic while the
+     * authoritative runtime is unavailable would create an ambiguous state.
+     */
+    initializeAgentOrchestrator(
+      {
+        incidentPlaybookService,
+        memoryService,
+      },
+      {
+        dryRun:
+          String(
+            process.env
+              .AGENT_DRY_RUN ||
+            "false"
+          )
+            .trim()
+            .toLowerCase() ===
+          "true",
+      }
+    );
+
+    console.log(
+      "[server] ✓ Authoritative agent intelligence runtime initialized"
+    );
+
+    /*
+     * Startup recovery stays after runtime initialization.
+     *
+     * AIRA must not transition to operational readiness before both the
+     * existing Phase 1-11 recovery system and the authoritative agent runtime
+     * are available.
+     */
     await runStartupRecovery();
 
     if (
@@ -3790,8 +3861,10 @@ async function startServer() {
     );
 
     /*
-     * Best-effort cleanup. Do not leave partially initialized
-     * resources alive after a hard startup failure.
+     * Best-effort cleanup.
+     *
+     * Do not leave partially initialized resources alive after a hard
+     * startup failure.
      */
     try {
       await shutdown(

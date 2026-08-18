@@ -3,15 +3,16 @@
 /**
  * Agent Intelligence API Routes
  *
- * Endpoints for the V2 8-agent intelligence platform.
- *
+ * Endpoints for the Phase 12 canonical incident-intelligence workflow. *
  * SECURITY:
  * - All routes respect existing auth / tenant / RBAC middleware.
  * - No caller can directly invoke arbitrary agent tools.
  * - No arbitrary playbook execution is exposed through this API.
  * - Tenant isolation is enforced on every incident query.
- * - Production analysis always uses the authoritative runtime orchestrator.
- */
+ * - Production diagnosis always uses DiagnosisLifecycleService /
+ *   DiagnosisCoordinator.
+ * - Post-diagnosis recovery planning uses the authoritative runtime
+ *   orchestrator through continueFromDiagnosis(). */
 
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
@@ -25,196 +26,488 @@ const {
   getAgentOrchestratorInstance,
 } = require('../agents/v2');
 
+const diagnosisLifecycleService =
+  require(
+    '../services/diagnosis/diagnosisLifecycleService'
+  );
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /incidents/:incidentId/analyze
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function analyzeIncident(req, res) {
+async function analyzeIncident(
+  req,
+  res
+) {
   try {
-    const tenantId = req.auth?.tenantId;
-    const incidentId = req.params.incidentId;
+    const tenantId =
+      req.auth
+        ?.tenantId;
 
-    if (!tenantId) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-      });
+    const incidentId =
+      req.params
+        .incidentId;
+
+    if (
+      !tenantId
+    ) {
+      return res
+        .status(
+          401
+        )
+        .json({
+          error:
+            "Unauthorized",
+        });
     }
 
-    const incident = await Incident.findOne({
-      _id: incidentId,
-      organizationId: tenantId,
-    }).lean();
+    /*
+     * Always resolve the canonical persisted incident.
+     *
+     * Caller-provided signals must never replace server-side canonical
+     * investigation evidence.
+     */
+    const incident =
+      await Incident
+        .findOne({
+          _id:
+            incidentId,
 
-    if (!incident) {
-      return res.status(404).json({
-        error: 'Incident not found',
-      });
+          organizationId:
+            tenantId,
+        })
+        .lean();
+
+    if (
+      !incident
+    ) {
+      return res
+        .status(
+          404
+        )
+        .json({
+          error:
+            "Incident not found",
+        });
     }
+
+    if (
+      !incident
+        .environmentId
+    ) {
+      return res
+        .status(
+          409
+        )
+        .json({
+          error:
+            "Incident is missing canonical environment scope",
+
+          code:
+            "INCIDENT_ENVIRONMENT_SCOPE_MISSING",
+
+          manualRequired:
+            true,
+        });
+    }
+
+    const organizationId =
+      String(
+        incident
+          .organizationId ||
+        tenantId
+      );
+
+    const environmentId =
+      String(
+        incident
+          .environmentId
+      );
 
     const correlationId =
-      req.body?.correlationId ||
-      incident.correlationId ||
+      req.body
+        ?.correlationId ||
+      incident
+        .correlationGroupId ||
+      incident
+        .correlationId ||
       uuidv4();
 
-        /**
-     * IMPORTANT:
+    // ========================================================================
+    // 1. CANONICAL DIAGNOSIS
+    // ========================================================================
+
+    /*
+     * Explicit user-requested analysis intentionally calls runDiagnosis()
+     * directly instead of debounce-aware lifecycle callbacks.
      *
-     * Production routes use the authoritative orchestrator
-     * initialized once during application startup.
-     *
-     * Every production consumer retrieves that shared runtime
-     * instance instead of constructing an independent agent pipeline.
+     * POST /analyze and /retry-analysis mean the authorized caller explicitly
+     * requested a new diagnosis revision.
      */
-    const orchestrator = getAgentOrchestratorInstance();
+    const diagnosisResult =
+      await diagnosisLifecycleService
+        .runDiagnosis({
+          organizationId,
 
-    const { runRecord } = await orchestrator.run({
-      incidentId: incident._id.toString(),
+          environmentId,
 
-      correlationId,
+          incidentId:
+            incident
+              ._id
+              .toString(),
 
-      tenantId,
+          reason:
+            req.path
+              ?.includes(
+                "retry-analysis"
+              )
+              ? "manual_retry_analysis"
+              : "manual_analysis",
+        });
 
-      incident: _safeIncidentInput(incident),
-
-      signals: Array.isArray(req.body?.signals)
-        ? req.body.signals
-        : [],
-
-      alerts: Array.isArray(req.body?.alerts)
-        ? req.body.alerts
-        : [],
-
-      service: {
-        id: incident.serviceId || null,
-      },
-
-      resource: {
-        namespace:
-          incident.evidence?.namespace ||
-          incident.signal?.namespace ||
-          null,
-
-        pod:
-          incident.evidence?.pod ||
-          incident.signal?.pod ||
-          null,
-
-        deployment:
-          incident.evidence?.deployment ||
-          incident.signal?.deployment ||
-          null,
-
-        cluster:
-          incident.evidence?.cluster ||
-          incident.signal?.cluster ||
-          null,
-      },
-
-      environment:
-        incident.environment ||
-        incident.signal?.environment ||
-        null,
-    });
-
-    if (!runRecord) {
+    if (
+      !diagnosisResult
+        ?.canonicalResult
+    ) {
       throw new Error(
-        'AgentOrchestrator completed without returning a run record'
+        "Diagnosis lifecycle completed without canonical result"
       );
     }
 
-    // Persist the intelligence run.
-    await AgentIntelligenceRun.create({
-      runId: runRecord.runId,
+    // ========================================================================
+    // 2. RECOVERY PLANNING / ASSURANCE CONTINUATION
+    // ========================================================================
 
-      incidentId: runRecord.incidentId,
+    const orchestrator =
+      getAgentOrchestratorInstance();
 
-      correlationId: runRecord.correlationId,
+    const {
+      runRecord,
+    } =
+      await orchestrator
+        .continueFromDiagnosis({
+          canonicalResult:
+            diagnosisResult
+              .canonicalResult,
 
-      tenantId,
+          tenantId,
 
-      state: runRecord.state,
+          organizationId,
 
-      startedAt: runRecord.startedAt
-        ? new Date(runRecord.startedAt)
-        : new Date(),
+          environmentId,
 
-      completedAt: runRecord.completedAt
-        ? new Date(runRecord.completedAt)
-        : null,
+          correlationId,
 
-      manualRequired: Boolean(runRecord.manualRequired),
+          environment:
+            incident
+              .environment ||
+            null,
 
-      manualReason: runRecord.manualReason || null,
+          resource: {
+            namespace:
+              incident
+                .evidence
+                ?.namespace ||
+              incident
+                .signal
+                ?.namespace ||
+              null,
 
-      error: runRecord.error || null,
+            pod:
+              incident
+                .evidence
+                ?.pod ||
+              incident
+                .signal
+                ?.pod ||
+              null,
 
-      agentTrace: _safeTrace(runRecord.agentTrace),
+            deployment:
+              incident
+                .evidence
+                ?.deployment ||
+              incident
+                .signal
+                ?.deployment ||
+              null,
 
-      playbookExecutionId:
-        runRecord.executionResult?.execution?.executionId ||
-        runRecord.executionResult?.executionId ||
-        null,
+            cluster:
+              incident
+                .evidence
+                ?.cluster ||
+              incident
+                .signal
+                ?.cluster ||
+              null,
+          },
+        });
 
-      explanationTitle:
-        runRecord.explanationResult?.title ||
-        null,
+    if (
+      !runRecord
+    ) {
+      throw new Error(
+        "AgentOrchestrator continuation completed without returning a run record"
+      );
+    }
 
-      finalOutcome:
-        runRecord.executionResult?.outcome ||
-        (runRecord.manualRequired
-          ? 'MANUAL_REQUIRED'
-          : null),
+    // ========================================================================
+    // 3. PERSIST RECOVERY/POST-DIAGNOSIS INTELLIGENCE TRACE
+    // ========================================================================
 
-      learningCount: Array.isArray(
-        runRecord.learningResult?.recommendations
+    await AgentIntelligenceRun
+      .create({
+        runId:
+          runRecord
+            .runId,
+
+        incidentId:
+          runRecord
+            .incidentId,
+
+        correlationId:
+          runRecord
+            .correlationId,
+
+        tenantId,
+
+        organizationId,
+
+        environmentId,
+
+        state:
+          runRecord
+            .state,
+
+        startedAt:
+          runRecord
+            .startedAt
+            ? new Date(
+                runRecord
+                  .startedAt
+              )
+            : new Date(),
+
+        completedAt:
+          runRecord
+            .completedAt
+            ? new Date(
+                runRecord
+                  .completedAt
+              )
+            : null,
+
+        manualRequired:
+          Boolean(
+            runRecord
+              .manualRequired
+          ),
+
+        manualReason:
+          runRecord
+            .manualReason ||
+          null,
+
+        error:
+          runRecord
+            .error ||
+          null,
+
+        agentTrace:
+          _safeTrace(
+            runRecord
+              .agentTrace
+          ),
+
+        // ====================================================================
+        // PHASE 12.12 - 12.14
+        // ====================================================================
+
+        decisionTraceSchemaVersion:
+          "12.14-v1",
+
+        decisionTrace:
+          runRecord
+            .decisionTrace ||
+          null,
+
+        budgetUsage:
+          runRecord
+            .budgetUsage ||
+          null,
+
+        securityFindings:
+          runRecord
+            .securityFindings ||
+          [],
+
+        // ====================================================================
+        // EXISTING EXECUTION / EXPLANATION SUMMARY
+        // ====================================================================
+
+        playbookExecutionId:
+          runRecord
+            .executionResult
+            ?.execution
+            ?.executionId ||
+          runRecord
+            .executionResult
+            ?.executionId ||
+          null,
+
+        explanationTitle:
+          runRecord
+            .explanationResult
+            ?.title ||
+          null,
+
+        finalOutcome:
+          runRecord
+            .executionResult
+            ?.outcome ||
+          (
+            runRecord
+              .manualRequired
+              ? "MANUAL_REQUIRED"
+              : null
+          ),
+
+        learningCount:
+          Array.isArray(
+            runRecord
+              .learningResult
+              ?.recommendations
+          )
+            ? runRecord
+                .learningResult
+                .recommendations
+                .length
+            : 0,
+      });
+
+    // ========================================================================
+    // 4. RESPONSE
+    // ========================================================================
+
+    return res
+      .status(
+        202
       )
-        ? runRecord.learningResult.recommendations.length
-        : 0,
-    });
+      .json({
+        runId:
+          runRecord
+            .runId,
 
-    return res.status(202).json({
-      runId: runRecord.runId,
+        diagnosisRunId:
+          diagnosisResult
+            .runId,
 
-      incidentId: runRecord.incidentId,
+        diagnosisId:
+          diagnosisResult
+            .diagnosisId,
 
-      correlationId: runRecord.correlationId,
+        diagnosisRevision:
+          diagnosisResult
+            .revision,
 
-      state: runRecord.state,
+        diagnosisConfidence:
+          diagnosisResult
+            .confidence,
 
-      manualRequired: Boolean(runRecord.manualRequired),
+        diagnosisDecision:
+          diagnosisResult
+            .decision,
 
-      manualReason: runRecord.manualReason || null,
+        safetyGateDecision:
+          diagnosisResult
+            .safetyGateDecision,
 
-      outcome:
-        runRecord.executionResult?.outcome ||
-        null,
-    });
-  } catch (err) {
+        canEvaluatePlaybook:
+          diagnosisResult
+            .canEvaluatePlaybook,
+
+        incidentId:
+          runRecord
+            .incidentId,
+
+        correlationId:
+          runRecord
+            .correlationId,
+
+        state:
+          runRecord
+            .state,
+
+        manualRequired:
+          Boolean(
+            runRecord
+              .manualRequired
+          ),
+
+        manualReason:
+          runRecord
+            .manualReason ||
+          null,
+
+        outcome:
+          runRecord
+            .executionResult
+            ?.outcome ||
+          null,
+      });
+  } catch (
+    err
+  ) {
     console.error(
-      '[agent-intelligence-routes] analyze error:',
+      "[agent-intelligence-routes] analyze error:",
       err
     );
 
-    /**
-     * If the authoritative runtime was not initialized,
-     * expose this as a server configuration/runtime problem
-     * rather than pretending the agent analysis succeeded.
-     */
     if (
-      err.message?.includes(
-        'AgentOrchestrator has not been initialized'
-      )
+      err.message
+        ?.includes(
+          "AgentOrchestrator has not been initialized"
+        )
     ) {
-      return res.status(503).json({
-        error: 'Agent intelligence runtime unavailable',
-        details: err.message,
-      });
+      return res
+        .status(
+          503
+        )
+        .json({
+          error:
+            "Agent intelligence runtime unavailable",
+
+          details:
+            err.message,
+        });
     }
 
-    return res.status(500).json({
-      error: 'Agent analysis failed',
-      details: err.message,
-    });
+    if (
+      err.code ===
+      "TENANT_BOUNDARY_VIOLATION"
+    ) {
+      return res
+        .status(
+          403
+        )
+        .json({
+          error:
+            "Tenant boundary violation",
+
+          code:
+            err.code,
+        });
+    }
+
+    return res
+      .status(
+        500
+      )
+      .json({
+        error:
+          "Agent analysis failed",
+
+        details:
+          err.message,
+      });
   }
 }
 

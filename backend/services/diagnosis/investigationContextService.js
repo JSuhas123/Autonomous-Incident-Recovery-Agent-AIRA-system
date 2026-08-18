@@ -35,6 +35,7 @@ const {
   createEvidenceItem,
   EVIDENCE_TYPE,
   EVIDENCE_SOURCE_TYPE,
+  EVIDENCE_TRUST_LEVEL,
 } =
   require(
     "../../agents/v2/contracts/agentContracts"
@@ -893,345 +894,527 @@ class InvestigationContextService {
   // ==========================================================================
 
   buildEvidencePackage({
-    incident,
-    signals,
-    incidentEvents,
-    impact,
-    correlationGroup,
-  }) {
-    const items =
-      [];
+  incident,
+  signals,
+  incidentEvents,
+  impact,
+  correlationGroup,
+}) {
+  const items =
+    [];
 
-    // ========================================================================
-    // SIGNAL EVIDENCE
-    // ========================================================================
+  const collectedAt =
+    new Date();
 
-    for (
-      const signal
-      of signals
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `signal:${signal.signalId}`,
+  // ==========================================================================
+  // SIGNAL EVIDENCE
+  // ==========================================================================
 
-          type:
-            this.evidenceTypeForSignal(
-              signal
-            ),
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
 
-          source:
-            signal.provider ||
-            "signal",
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
 
-          sourceType:
-            this.evidenceSourceForProvider(
-              signal.provider
-            ),
-
-          timestamp:
-            signal.observedAt ||
-            signal.receivedAt ||
-            new Date(),
-
-          observedAt:
-            signal.observedAt ||
-            null,
-
-          resource:
-            signal.resource ||
-            {},
-
-          serviceId:
-            signal.serviceId,
-
-          provider:
-            signal.provider,
-
-          signalId:
-            signal.signalId,
-
-          summary:
-            signal.title ||
-            signal.description ||
-            signal.eventType ||
-            "Operational signal",
-
-          structuredData:
-            this.safeSignalEvidenceData(
-              signal
-            ),
-
-          confidence:
+        type:
+          this.evidenceTypeForSignal(
             signal
-              .correlationScore ??
-            null,
+          ),
 
-          correlationId:
-            incident
-              .correlationGroupId ||
-            `incident:${incident._id}`,
+        source:
+          signal.provider ||
+          "signal",
 
-          correlationGroupId:
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+          null,
+
+        collectedAt,
+
+        resource:
+          signal.resource ||
+          {},
+
+        serviceId:
+          signal.serviceId,
+
+        provider:
+          signal.provider,
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
             signal
-              .correlationGroupId ||
-            null,
+          ),
 
-          tags: [
-            signal.signalType,
-            signal.eventType,
-            signal.severity,
-          ]
-            .filter(
-              Boolean
-            ),
-        })
-      );
-    }
+        confidence:
+          signal
+            .correlationScore ??
+          null,
 
-    // ========================================================================
-    // INCIDENT EVENT EVIDENCE
-    // ========================================================================
+        correlationId:
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
 
-    for (
-      const event
-      of incidentEvents ||
-      []
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `incident-event:${
-              event.eventId ||
-              event._id
-            }`,
+        correlationGroupId:
+          signal
+            .correlationGroupId ||
+          null,
 
-          type:
-            EVIDENCE_TYPE
-              .INCIDENT_EVENT,
+        trustLevel:
+          EVIDENCE_TRUST_LEVEL
+            .SOURCE_REPORTED,
 
-          source:
-            "incident_service",
+        provenance: {
+          collector:
+            "InvestigationContextService",
 
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .AIRA_INCIDENT_STORE,
+          retrievalMethod:
+            "tenant_scoped_signal_store_read",
 
-          timestamp:
-            event.occurredAt ||
-            event.createdAt ||
-            new Date(),
+          sourceRef:
+            `Signal:${String(
+              signal._id ||
+              signalId
+            )}`,
 
-          incidentEventId:
-            event.eventId ||
-            String(
-              event._id
-            ),
+          canonicalStore:
+            "Signal",
 
-          serviceId:
-            event.serviceId,
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
 
-          summary:
-            event.issue ||
-            event.changeType ||
-            event.eventType ||
-            "Incident lifecycle event",
+          metadata: {
+            organizationId:
+              String(
+                incident.organizationId
+              ),
 
-          structuredData: {
-            eventType:
-              event.eventType,
-
-            changeType:
-              event.changeType,
-
-            previousStatus:
-              event.previousStatus,
-
-            newStatus:
-              event.newStatus,
-
-            severity:
-              event.severity,
-
-            occurrenceCount:
-              event.occurrenceCount,
-
-            metadata:
-              event.metadata ||
-              {},
+            environmentId:
+              String(
+                incident.environmentId
+              ),
           },
+        },
 
-          correlationId:
-            event.correlationId ||
-            incident
-              .correlationGroupId ||
-            `incident:${incident._id}`,
-
-          correlationGroupId:
-            event.correlationGroupId ||
-            null,
-        })
-      );
-    }
-
-    // ========================================================================
-    // TOPOLOGY EVIDENCE
-    // ========================================================================
-
-    if (
-      impact
-        ?.rootService
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `topology:${incident._id}`,
-
-          type:
-            EVIDENCE_TYPE
-              .TOPOLOGY,
-
-          source:
-            "aira_topology",
-
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .AIRA_TOPOLOGY,
-
-          timestamp:
-            impact.analyzedAt ||
-            new Date(),
-
-          serviceId:
-            incident.serviceId,
-
-          summary:
-            "Service topology and incident blast-radius analysis.",
-
-          structuredData: {
-            rootService:
-              impact.rootService,
-
-            levels:
-              impact.levels ||
-              [],
-
-            affectedServices:
-              impact.affectedServices ||
-              [],
-
-            affectedResources:
-              impact.affectedResources ||
-              [],
-          },
-
-          confidence:
-            1,
-        })
-      );
-    }
-
-    // ========================================================================
-    // BLAST RADIUS EVIDENCE
-    // ========================================================================
-
-    if (
-      impact
-        ?.summary
-    ) {
-      items.push(
-        createEvidenceItem({
-          id:
-            `blast-radius:${incident._id}`,
-
-          type:
-            EVIDENCE_TYPE
-              .BLAST_RADIUS,
-
-          source:
-            "aira_topology",
-
-          sourceType:
-            EVIDENCE_SOURCE_TYPE
-              .AIRA_TOPOLOGY,
-
-          timestamp:
-            impact.analyzedAt ||
-            new Date(),
-
-          serviceId:
-            incident.serviceId,
-
-          summary:
-            `${impact.summary.affectedServiceCount || 0} dependent service(s) and ${impact.summary.affectedResourceCount || 0} infrastructure resource(s) identified in blast radius.`,
-
-          structuredData:
-            impact.summary,
-
-          confidence:
-            1,
-        })
-      );
-    }
-
-    // ========================================================================
-    // PROVIDER COVERAGE
-    // ========================================================================
-
-    const providers =
-      Array.from(
-        new Set(
-          signals
-            .map(
-              (signal) =>
-                signal.provider
-            )
-            .filter(
-              Boolean
-            )
-        )
-      );
-
-    return createEvidencePackage({
-      incidentId:
-        incident._id,
-
-      correlationId:
-        incident
-          .correlationGroupId ||
-        `incident:${incident._id}`,
-
-      correlationGroupId:
-        incident
-          .correlationGroupId ||
-        null,
-
-      items,
-
-      completeness:
-        0,
-
-      missingEvidence:
-        [],
-
-      staleEvidence:
-        [],
-
-      conflicts:
-        correlationGroup
-          ?.conflicts ||
-        [],
-
-      recommendedNextEvidence:
-        [],
-
-      providerCoverage:
-        providers,
-
-      signalCount:
-        signals.length,
-    });
+        tags: [
+          signal.signalType,
+          signal.eventType,
+          signal.severity,
+        ]
+          .filter(
+            Boolean
+          ),
+      })
+    );
   }
+
+  // ==========================================================================
+  // INCIDENT EVENT EVIDENCE
+  // ==========================================================================
+
+  for (
+    const event
+    of incidentEvents ||
+    []
+  ) {
+    const eventId =
+      event.eventId ||
+      event._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `incident-event:${eventId}`,
+
+        type:
+          EVIDENCE_TYPE
+            .INCIDENT_EVENT,
+
+        source:
+          "incident_service",
+
+        sourceType:
+          EVIDENCE_SOURCE_TYPE
+            .AIRA_INCIDENT_STORE,
+
+        timestamp:
+          event.occurredAt ||
+          event.createdAt ||
+          collectedAt,
+
+        observedAt:
+          event.occurredAt ||
+          event.createdAt ||
+          null,
+
+        collectedAt,
+
+        incidentEventId:
+          eventId
+            ? String(
+                eventId
+              )
+            : null,
+
+        serviceId:
+          event.serviceId ||
+          incident.serviceId,
+
+        summary:
+          event.issue ||
+          event.changeType ||
+          event.eventType ||
+          "Incident lifecycle event",
+
+        structuredData: {
+          eventType:
+            event.eventType,
+
+          changeType:
+            event.changeType,
+
+          previousStatus:
+            event.previousStatus,
+
+          newStatus:
+            event.newStatus,
+
+          severity:
+            event.severity,
+
+          occurrenceCount:
+            event.occurrenceCount,
+
+          metadata:
+            event.metadata ||
+            {},
+        },
+
+        correlationId:
+          event.correlationId ||
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
+
+        correlationGroupId:
+          event.correlationGroupId ||
+          null,
+
+        trustLevel:
+          EVIDENCE_TRUST_LEVEL
+            .CANONICAL,
+
+        provenance: {
+          collector:
+            "InvestigationContextService",
+
+          retrievalMethod:
+            "canonical_incident_detail_read",
+
+          sourceRef:
+            `IncidentEvent:${String(
+              eventId
+            )}`,
+
+          canonicalStore:
+            "Incident",
+
+          trustReason:
+            "Event came from AIRA canonical incident lifecycle state.",
+
+          metadata: {
+            incidentId:
+              String(
+                incident._id
+              ),
+          },
+        },
+      })
+    );
+  }
+
+  // ==========================================================================
+  // TOPOLOGY EVIDENCE
+  // ==========================================================================
+
+  if (
+    impact
+      ?.rootService
+  ) {
+    items.push(
+      createEvidenceItem({
+        id:
+          `topology:${incident._id}`,
+
+        type:
+          EVIDENCE_TYPE
+            .TOPOLOGY,
+
+        source:
+          "aira_topology",
+
+        sourceType:
+          EVIDENCE_SOURCE_TYPE
+            .AIRA_TOPOLOGY,
+
+        timestamp:
+          impact.analyzedAt ||
+          collectedAt,
+
+        observedAt:
+          impact.analyzedAt ||
+          collectedAt,
+
+        collectedAt,
+
+        serviceId:
+          incident.serviceId,
+
+        summary:
+          "Service topology and incident blast-radius analysis.",
+
+        structuredData: {
+          rootService:
+            impact.rootService,
+
+          levels:
+            impact.levels ||
+            [],
+
+          affectedServices:
+            impact.affectedServices ||
+            [],
+
+          affectedResources:
+            impact.affectedResources ||
+            [],
+        },
+
+        confidence:
+          1,
+
+        correlationId:
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
+
+        correlationGroupId:
+          incident
+            .correlationGroupId ||
+          null,
+
+        trustLevel:
+          EVIDENCE_TRUST_LEVEL
+            .CANONICAL,
+
+        provenance: {
+          collector:
+            "InvestigationContextService",
+
+          retrievalMethod:
+            "canonical_topology_analysis_read",
+
+          sourceRef:
+            `Topology:${String(
+              incident._id
+            )}`,
+
+          canonicalStore:
+            "AIRA_TOPOLOGY",
+
+          trustReason:
+            "Topology was calculated by AIRA from canonical tenant-scoped service relationships.",
+        },
+      })
+    );
+  }
+
+  // ==========================================================================
+  // BLAST RADIUS EVIDENCE
+  // ==========================================================================
+
+  if (
+    impact
+      ?.summary
+  ) {
+    items.push(
+      createEvidenceItem({
+        id:
+          `blast-radius:${incident._id}`,
+
+        type:
+          EVIDENCE_TYPE
+            .BLAST_RADIUS,
+
+        source:
+          "aira_topology",
+
+        sourceType:
+          EVIDENCE_SOURCE_TYPE
+            .AIRA_TOPOLOGY,
+
+        timestamp:
+          impact.analyzedAt ||
+          collectedAt,
+
+        observedAt:
+          impact.analyzedAt ||
+          collectedAt,
+
+        collectedAt,
+
+        serviceId:
+          incident.serviceId,
+
+        summary:
+          `${impact.summary.affectedServiceCount || 0} dependent service(s) and ${impact.summary.affectedResourceCount || 0} infrastructure resource(s) identified in blast radius.`,
+
+        structuredData:
+          impact.summary,
+
+        confidence:
+          1,
+
+        correlationId:
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
+
+        correlationGroupId:
+          incident
+            .correlationGroupId ||
+          null,
+
+        trustLevel:
+          EVIDENCE_TRUST_LEVEL
+            .CANONICAL,
+
+        provenance: {
+          collector:
+            "InvestigationContextService",
+
+          retrievalMethod:
+            "canonical_blast_radius_analysis_read",
+
+          sourceRef:
+            `BlastRadius:${String(
+              incident._id
+            )}`,
+
+          canonicalStore:
+            "AIRA_TOPOLOGY",
+
+          trustReason:
+            "Blast radius was calculated by AIRA from canonical topology state.",
+        },
+      })
+    );
+  }
+
+  // ==========================================================================
+  // PROVIDER COVERAGE
+  // ==========================================================================
+
+  const providers =
+    Array.from(
+      new Set(
+        signals
+          .map(
+            (
+              signal
+            ) =>
+              signal.provider
+          )
+          .filter(
+            Boolean
+          )
+      )
+    );
+
+  return createEvidencePackage({
+    incidentId:
+      incident._id,
+
+    correlationId:
+      incident
+        .correlationGroupId ||
+      `incident:${incident._id}`,
+
+    correlationGroupId:
+      incident
+        .correlationGroupId ||
+      null,
+
+    items,
+
+    completeness:
+      0,
+
+    missingEvidence:
+      [],
+
+    staleEvidence:
+      [],
+
+    conflicts:
+      correlationGroup
+        ?.conflicts ||
+      [],
+
+    recommendedNextEvidence:
+      [],
+
+    providerCoverage:
+      providers,
+
+    signalCount:
+      signals.length,
+
+    collectedAt,
+
+    metadata: {
+      collector:
+        "InvestigationContextService",
+
+      organizationId:
+        String(
+          incident.organizationId
+        ),
+
+      environmentId:
+        String(
+          incident.environmentId
+        ),
+    },
+  });
+}
 
   // ==========================================================================
   // SIGNAL -> EVIDENCE TYPE

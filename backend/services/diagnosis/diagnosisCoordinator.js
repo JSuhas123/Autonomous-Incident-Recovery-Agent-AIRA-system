@@ -79,6 +79,22 @@ const {
     "../../agents/v2/agents/topologyAnalysisAgent"
   );
 
+  const {
+  assertAgentPermissions,
+} =
+  require(
+    "../../agents/v2/config/agentPermissions"
+  );
+
+  const {
+  createBudgetRun,
+  withBudgetRun,
+  wrapToolDependencies,
+} =
+  require(
+    "../../agents/v2/runtime/agentBudgetRuntime"
+  );
+
 const {
   ChangeAnalysisAgent,
 } =
@@ -220,6 +236,12 @@ class DiagnosisCoordinator {
       this.createRunId(
         incidentId
       );
+
+    createBudgetRun({
+  runId,
+
+  incidentId,
+});
 
     const agentTrace =
       [];
@@ -914,80 +936,51 @@ class DiagnosisCoordinator {
   // ==========================================================================
 
   async runAgent({
-    name,
-    agent,
-    context,
-    dependencies,
-    critical,
-    trace,
-  }) {
-    const agentStartedAt =
-      new Date();
+  name,
+  agent,
+  context,
+  dependencies,
+  critical,
+  trace,
+}) {
+  const agentStartedAt =
+    new Date();
 
-    let record;
+  let record;
 
-    try {
-      record =
-        await agent.execute(
-          context,
-          dependencies
-        );
-    } catch (
-      error
-    ) {
-      record = {
-        status:
-          AGENT_STATUS
-            .FAILED,
+  /*
+ * Phase 12.11:
+ * all diagnosis agents pass the same central permission boundary.
+ */
+assertAgentPermissions(
+  agent
+);
 
-        result:
-          null,
+  try {
+    const budgetedDependencies =
+  wrapToolDependencies(
+    context.runId,
+    dependencies ||
+    {}
+  );
 
-        startedAt:
-          agentStartedAt,
+record =
+  await withBudgetRun(
+    context.runId,
 
-        completedAt:
-          new Date(),
+    () =>
+      agent.execute(
+        context,
+        budgetedDependencies
+      )
+  );
+  } catch (
+    error
+  ) {
+    record = {
+      schemaVersion:
+        "12.3-v1",
 
-        durationMs:
-          Math.max(
-            0,
-            Date.now() -
-            agentStartedAt
-              .getTime()
-          ),
-
-        confidence:
-          null,
-
-        evidenceUsed:
-          [],
-
-        warnings:
-          [],
-
-        error: {
-          code:
-            error.code ||
-            "AGENT_EXECUTION_FAILED",
-
-          message:
-            error.message ||
-            "Agent execution failed",
-        },
-
-        fallbackUsed:
-          false,
-      };
-    }
-
-    const normalizedStatus =
-      record
-        ?.status ||
-      AGENT_STATUS
-        .FAILED;
-
-    trace.push({
       agent:
         name,
 
@@ -995,294 +988,628 @@ class DiagnosisCoordinator {
         agent.version ||
         agent
           ._version ||
-        null,
+        "unknown",
 
       status:
-        normalizedStatus,
+        AGENT_STATUS
+          .FAILED,
+
+      result:
+        null,
 
       startedAt:
-        record
-          ?.startedAt ||
-        agentStartedAt,
+        agentStartedAt
+          .toISOString(),
 
       completedAt:
-        record
-          ?.completedAt ||
-        new Date(),
+        new Date()
+          .toISOString(),
 
       durationMs:
-        record
-          ?.durationMs ??
-        null,
+        Math.max(
+          0,
+          Date.now() -
+          agentStartedAt
+            .getTime()
+        ),
 
       confidence:
-        record
-          ?.confidence ??
-        record
-          ?.result
-          ?.confidence ??
-        null,
+        0,
 
       evidenceUsed:
-        record
-          ?.evidenceUsed ||
-        record
-          ?.metadata
-          ?.evidenceUsed ||
+        [],
+
+      evidenceMissing:
+        [],
+
+      assumptions:
         [],
 
       warnings:
-        record
-          ?.warnings ||
-        record
-          ?.metadata
-          ?.warnings ||
         [],
 
-      error:
-        record
-          ?.error ||
+      nextRecommendedStage:
         null,
 
+      modelMetadata: {
+        provider:
+          null,
+
+        model:
+          null,
+
+        inputTokens:
+          null,
+
+        outputTokens:
+          null,
+
+        totalTokens:
+          null,
+
+        latencyMs:
+          null,
+
+        estimatedCost:
+          null,
+      },
+
       provider:
-        record
-          ?.provider ||
-        record
-          ?.metadata
-          ?.provider ||
         null,
 
       model:
-        record
-          ?.model ||
-        record
-          ?.metadata
-          ?.model ||
+        null,
+
+      tokenEstimate:
         null,
 
       fallbackUsed:
-        Boolean(
-          record
-            ?.fallbackUsed ||
-          record
-            ?.metadata
-            ?.fallbackUsed
-        ),
-    });
+        false,
 
-    if (
-      normalizedStatus ===
-        AGENT_STATUS
-          .FAILED &&
-      critical
-    ) {
-      throw Object.assign(
-        new Error(
-          `${name} failed during diagnosis`
-        ),
-        {
-          code:
-            "DIAGNOSIS_CRITICAL_AGENT_FAILED",
+      error:
+        error
+          ?.message ||
+        "Agent execution failed",
 
-          agent:
-            name,
-
-          agentRecord:
-            record,
-        }
-      );
-    }
-
-    return record;
+      metadata: {
+        errorCode:
+          error
+            ?.code ||
+          "AGENT_EXECUTION_FAILED",
+      },
+    };
   }
+
+  const normalizedStatus =
+    record
+      ?.status ||
+    AGENT_STATUS
+      .FAILED;
+
+  /*
+   * Phase 12.3:
+   *
+   * Preserve the complete canonical AgentResult envelope in the decision
+   * trace instead of projecting away typed result data.
+   */
+  trace.push({
+    schemaVersion:
+      record
+        ?.schemaVersion ||
+      "12.3-v1",
+
+    agent:
+      record
+        ?.agent ||
+      name,
+
+    version:
+      record
+        ?.version ||
+      agent.version ||
+      agent
+        ._version ||
+      null,
+
+    status:
+      normalizedStatus,
+
+    startedAt:
+      record
+        ?.startedAt ||
+      agentStartedAt
+        .toISOString(),
+
+    completedAt:
+      record
+        ?.completedAt ||
+      new Date()
+        .toISOString(),
+
+    durationMs:
+      record
+        ?.durationMs ??
+      null,
+
+    confidence:
+      record
+        ?.confidence ??
+      record
+        ?.result
+        ?.confidence ??
+      null,
+
+    result:
+      record
+        ?.result ??
+      null,
+
+    evidenceUsed:
+      Array.isArray(
+        record
+          ?.evidenceUsed
+      )
+        ? record
+            .evidenceUsed
+        : [],
+
+    evidenceMissing:
+      Array.isArray(
+        record
+          ?.evidenceMissing
+      )
+        ? record
+            .evidenceMissing
+        : [],
+
+    assumptions:
+      Array.isArray(
+        record
+          ?.assumptions
+      )
+        ? record
+            .assumptions
+        : [],
+
+    warnings:
+      Array.isArray(
+        record
+          ?.warnings
+      )
+        ? record
+            .warnings
+        : [],
+
+    nextRecommendedStage:
+      record
+        ?.nextRecommendedStage ||
+      null,
+
+    modelMetadata:
+      record
+        ?.modelMetadata ||
+      {
+        provider:
+          record
+            ?.provider ||
+          null,
+
+        model:
+          record
+            ?.model ||
+          null,
+
+        inputTokens:
+          null,
+
+        outputTokens:
+          null,
+
+        totalTokens:
+          record
+            ?.tokenEstimate ??
+          null,
+
+        latencyMs:
+          null,
+
+        estimatedCost:
+          null,
+      },
+
+    /*
+     * Compatibility aliases.
+     */
+    provider:
+      record
+        ?.provider ||
+      record
+        ?.modelMetadata
+        ?.provider ||
+      null,
+
+    model:
+      record
+        ?.model ||
+      record
+        ?.modelMetadata
+        ?.model ||
+      null,
+
+    tokenEstimate:
+      record
+        ?.tokenEstimate ??
+      record
+        ?.modelMetadata
+        ?.totalTokens ??
+      null,
+
+    fallbackUsed:
+      Boolean(
+        record
+          ?.fallbackUsed
+      ),
+
+    error:
+      record
+        ?.error ||
+      null,
+
+    metadata:
+      (
+        record
+          ?.metadata &&
+        typeof record
+          .metadata ===
+          "object"
+      )
+        ? record
+            .metadata
+        : {},
+  });
+
+  /*
+   * Critical agents that fail remain fail-closed.
+   */
+  if (
+    normalizedStatus ===
+      AGENT_STATUS
+        .FAILED &&
+    critical
+  ) {
+    throw Object.assign(
+      new Error(
+        `${name} failed during diagnosis`
+      ),
+      {
+        code:
+          "DIAGNOSIS_CRITICAL_AGENT_FAILED",
+
+        agent:
+          name,
+
+        agentRecord:
+          record,
+      }
+    );
+  }
+
+  return record;
+}
 
   // ==========================================================================
   // BUILD CANONICAL DIAGNOSIS
   // ==========================================================================
 
   buildDiagnosisResult({
-    context,
-    confidence,
-    safetyGate,
-    agentTrace,
-    startedAt,
-    falsePositiveSuspected,
-  }) {
-    const rootCause =
-      context
-        .rootCauseAnalysis ||
-      {};
+  context,
+  confidence,
+  safetyGate,
+  agentTrace,
+  startedAt,
+  falsePositiveSuspected,
+}) {
+  const rootCause =
+    context
+      .rootCauseAnalysis ||
+    {};
 
-    const verification =
-      context
-        .verification ||
-      {};
+  const verification =
+    context
+      .verification ||
+    {};
 
-    const primaryHypothesis =
-      this.resolvePrimaryHypothesis(
-        rootCause,
-        verification
+  const hypotheses =
+    rootCause
+      .hypotheses ||
+    [];
+
+  const primaryHypothesis =
+    this.resolvePrimaryHypothesis(
+      rootCause,
+      verification
+    );
+
+  const primaryHypothesisId =
+    typeof primaryHypothesis ===
+      "string"
+      ? primaryHypothesis
+      : primaryHypothesis?.id ||
+        null;
+
+  const primaryHypothesisObject =
+    hypotheses.find(
+      (hypothesis) =>
+        String(
+          hypothesis?.id
+        ) ===
+        String(
+          primaryHypothesisId
+        )
+    ) ||
+    (
+      typeof primaryHypothesis ===
+        "object"
+        ? primaryHypothesis
+        : null
+    );
+
+  const alternateHypothesisIds =
+    hypotheses
+      .map(
+        (hypothesis) =>
+          hypothesis?.id
+      )
+      .filter(
+        (id) =>
+          Boolean(
+            id
+          ) &&
+          String(
+            id
+          ) !==
+            String(
+              primaryHypothesisId
+            )
       );
 
-    const outcome =
-      this.resolveOutcome({
-        rootCause,
-
-        verification,
-
-        confidence,
-
-        safetyGate,
-
-        falsePositiveSuspected,
-      });
-
-    const recommendedNextStep =
-      this.resolveNextStep({
-        verification,
-
-        rootCause,
-
-        context,
-
-        safetyGate,
-      });
-
-    const summary =
-      this.buildSummary({
-        primaryHypothesis,
-
-        outcome,
-
-        confidence,
-
-        verification,
-
-        safetyGate,
-      });
-
-    return createDiagnosisResult({
-      hypotheses:
+  const ambiguity =
+    rootCause
+      .ambiguity ||
+    {
+      ambiguous:
         rootCause
-          .hypotheses ||
-        [],
+          .outcome ===
+        DIAGNOSIS_OUTCOME
+          .MULTIPLE_PLAUSIBLE_CAUSES,
 
-      primaryHypothesis,
-
-      diagnosisConfidence:
-        confidence
-          .confidence,
-
-      evidenceCompleteness:
-        context
-          .evidence
-          ?.completeness ||
-        0,
-
-      unresolvedQuestions:
-        uniqueStrings([
-          ...(
-            rootCause
-              .unresolvedQuestions ||
-            []
-          ),
-
-          ...(
-            context
-              .unknowns ||
-            []
-          ),
-        ]),
-
-      symptoms:
-        context.symptoms ||
-        [],
-
-      contradictions:
-        context
-          .contradictions ||
-        [],
-
-      risk:
-        context
-          .riskAnalysis ||
+      confidenceGap:
         null,
+
+      plausibleHypothesisIds:
+        rootCause
+          .plausibleHypothesisIds ||
+        [],
+
+      topHypothesisId:
+        primaryHypothesisId,
+
+      secondHypothesisId:
+        alternateHypothesisIds[0] ||
+        null,
+    };
+
+  const supportingEvidenceIds =
+    uniqueStrings(
+      primaryHypothesisObject
+        ?.validEvidenceSupporting ||
+      primaryHypothesisObject
+        ?.evidenceSupporting ||
+      []
+    );
+
+  const contradictingEvidenceIds =
+    uniqueStrings(
+      primaryHypothesisObject
+        ?.validEvidenceAgainst ||
+      primaryHypothesisObject
+        ?.evidenceAgainst ||
+      []
+    );
+
+  const assumptions =
+    uniqueStrings(
+      primaryHypothesisObject
+        ?.assumptions ||
+      []
+    );
+
+  const outcome =
+    this.resolveOutcome({
+      rootCause,
+
+      verification,
+
+      confidence,
+
+      safetyGate,
+
+      falsePositiveSuspected,
+    });
+
+  const recommendedNextStep =
+    this.resolveNextStep({
+      verification,
+
+      rootCause,
+
+      context,
+
+      safetyGate,
+    });
+
+  const summary =
+    this.buildSummary({
+      primaryHypothesis,
 
       outcome,
 
-      summary,
+      confidence,
 
-      unknowns:
-        context
-          .unknowns ||
-        [],
+      verification,
 
-      recommendedNextStep,
+      safetyGate,
+    });
 
-      falsePositiveSuspected:
-        Boolean(
-          falsePositiveSuspected
+  /*
+   * Prefer the Phase-12 canonical assessment while preserving compatibility
+   * with older RiskImpactAgent output.
+   */
+  const canonicalRisk =
+    context
+      .riskAnalysis
+      ?.riskAssessment ||
+    context
+      .riskAnalysis ||
+    null;
+
+  return createDiagnosisResult({
+    hypotheses,
+
+    primaryHypothesis,
+
+    primaryHypothesisId,
+
+    alternateHypothesisIds,
+
+    plausibleHypothesisIds:
+      rootCause
+        .plausibleHypothesisIds ||
+      ambiguity
+        .plausibleHypothesisIds ||
+      [],
+
+    ambiguity,
+
+    diagnosisConfidence:
+      confidence
+        .confidence,
+
+    evidenceCompleteness:
+      context
+        .evidence
+        ?.completeness ||
+      0,
+
+    supportingEvidenceIds,
+
+    contradictingEvidenceIds,
+
+    assumptions,
+
+    unresolvedQuestions:
+      uniqueStrings([
+        ...(
+          rootCause
+            .unresolvedQuestions ||
+          []
         ),
 
-      analyzedAt:
-        new Date(),
+        ...(
+          context
+            .unknowns ||
+          []
+        ),
+      ]),
 
-      executionAuthorized:
-        false,
+    symptoms:
+      context.symptoms ||
+      [],
 
-      metadata: {
-        runId:
-          context.runId,
+    contradictions:
+      context
+        .contradictions ||
+      [],
 
-        coordinatorVersion:
-          COORDINATOR_VERSION,
+    risk:
+      canonicalRisk,
 
-        agentCount:
-          agentTrace.length,
+    verificationStatus:
+      verification
+        .verificationStatus ||
+      null,
 
-        analysisStartedAt:
-          startedAt,
+    acceptedHypothesisId:
+      verification
+        .acceptedHypothesisId ||
+      null,
 
-        confidenceBand:
-          confidence
-            ?.band ||
-          null,
+    outcome,
 
-        confidenceDecision:
-          confidence
-            ?.decision ||
-          null,
+    summary,
 
-        verificationStatus:
-          verification
-            ?.verificationStatus ||
-          null,
+    unknowns:
+      context
+        .unknowns ||
+      [],
 
-        safetyGateDecision:
+    recommendedNextStep,
+
+    falsePositiveSuspected:
+      Boolean(
+        falsePositiveSuspected
+      ),
+
+    analyzedAt:
+      new Date(),
+
+    metadata: {
+      runId:
+        context.runId,
+
+      coordinatorVersion:
+        COORDINATOR_VERSION,
+
+      agentCount:
+        agentTrace.length,
+
+      analysisStartedAt:
+        startedAt,
+
+      confidenceBand:
+        confidence
+          ?.band ||
+        null,
+
+      confidenceDecision:
+        confidence
+          ?.decision ||
+        null,
+
+      verificationStatus:
+        verification
+          ?.verificationStatus ||
+        null,
+
+      safetyGateDecision:
+        safetyGate
+          ?.decision ||
+        null,
+
+      canEvaluatePlaybook:
+        Boolean(
           safetyGate
-            ?.decision ||
-          null,
+            ?.canEvaluatePlaybook
+        ),
 
-        canEvaluatePlaybook:
-          Boolean(
-            safetyGate
-              ?.canEvaluatePlaybook
-          ),
-
-        requiresHuman:
-          Boolean(
-            safetyGate
-              ?.requiresHuman
-          ),
-
-        shouldCollectMoreEvidence:
-          Boolean(
-            safetyGate
-              ?.shouldCollectMoreEvidence
-          ),
-      },
-    });
-  }
+      requiresHuman:
+        Boolean(
+          safetyGate
+            ?.requiresHuman
+        ),
+    },
+  });
+}
 
   // ==========================================================================
   // PRIMARY HYPOTHESIS

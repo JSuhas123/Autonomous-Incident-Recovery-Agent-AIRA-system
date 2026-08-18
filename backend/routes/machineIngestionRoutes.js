@@ -10,14 +10,19 @@
  * - Tenant isolation is enforced by upstream middleware.
  * - Incoming signals cannot directly trigger arbitrary actions.
  * - Every production signal must flow through:
- *
- *     Signal
- *       ↓
- *     Incident
- *       ↓
- *     Authoritative V2 AgentOrchestrator
- *       ↓
- *     Playbook / Policy / Execution pipeline
+Signal
+  ↓
+Canonical Incident
+  ↓
+DiagnosisLifecycleService
+  ↓
+DiagnosisCoordinator
+  ↓
+Diagnosis Safety Gate
+  ↓
+AgentOrchestrator.continueFromDiagnosis()
+  ↓
+Playbook / Policy / Authorization / Execution
  *
  * Mounted in server.js as:
  *
@@ -40,6 +45,11 @@ const { Incident } = require("../models/Incident");
 const AgentIntelligenceRun = require("../models/AgentIntelligenceRun");
 
 const { getAgentOrchestratorInstance } = require("../agents/v2");
+
+const diagnosisLifecycleService =
+  require(
+    "../services/diagnosis/diagnosisLifecycleService"
+  );
 
 const {
   getQueueService,
@@ -81,330 +91,626 @@ const MAX_SIGNAL_DESCRIPTION_LENGTH = 1800;
 // POST /signals
 // ─────────────────────────────────────────────────────────────────────────────
 
-router.post("/signals", async (req, res, next) => {
-  try {
-    const tenantId = req.tenant?.id;
-    const signal = req.body || {};
-
-    if (!tenantId) {
-      return res.status(400).json({
-        error: "tenantId not set by authentication middleware",
-        code: "TENANT_CONTEXT_MISSING",
-      });
-    }
-
-    if (!signal || typeof signal !== "object" || Array.isArray(signal)) {
-      return res.status(400).json({
-        error: "Signal body must be a JSON object",
-        code: "INVALID_SIGNAL",
-      });
-    }
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 1. Resolve signal → known AIRA Service
-    // ───────────────────────────────────────────────────────────────────────
-
-    const service = await _resolveServiceForSignal(
-      tenantId,
-      signal
-    );
-
-    /**
-     * IMPORTANT:
-     *
-     * We must never guess which production service an alert belongs to.
-     *
-     * If the external integration cannot identify a tenant-owned service,
-     * AIRA refuses autonomous analysis/execution.
-     */
-    if (!service) {
-      loggingService.warn(
-        "[machineIngestion] Signal could not be mapped to a tenant service",
-        {
-          tenantId,
-          suppliedServiceId: signal.serviceId || null,
-          suppliedService:
-            signal.service ||
-            signal.serviceName ||
-            null,
-          affectedServices:
-            signal.affectedServices ||
-            [],
-        }
-      );
-
-      return res.status(422).json({
-        error:
-          "Signal could not be mapped to a known tenant service",
-        code: "SERVICE_RESOLUTION_REQUIRED",
-        manualRequired: true,
-        hint:
-          "Include serviceId, service/serviceName, or a resolvable affectedServices entry.",
-      });
-    }
-
-    const correlationId =
-      signal.correlationId ||
-      req.headers["x-correlation-id"] ||
-      crypto.randomUUID();
-
-    decisionPipelineObservability.recordSignalInjected(
-      signal,
-      tenantId
-    );
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 2. Publish raw signal event
-    // ───────────────────────────────────────────────────────────────────────
-
-    const queue = await getQueueService();
-
+router.post(
+  "/signals",
+  async (
+    req,
+    res,
+    next
+  ) => {
     try {
-      await queue.publishEvent(
-        queue.topics.SIGNAL_RECEIVED,
-        {
-          eventId: crypto.randomUUID(),
-          correlationId,
-          tenantId,
-          payload: _stripSensitive(signal),
-          timestamp: new Date(),
-        }
-      );
-    } catch (backpressureError) {
+      const tenantId =
+        req.tenant
+          ?.id;
+
+      const signal =
+        req.body ||
+        {};
+
       if (
-        backpressureError.message?.includes(
-          "BACKPRESSURE"
-        ) ||
-        backpressureError.message?.includes(
-          "buffer"
-        )
+        !tenantId
       ) {
-        return res.status(503).json({
-          error:
-            "System overloaded — queue depth exceeded",
-          code: "QUEUE_BACKPRESSURE",
-          retryAfter: "PT10S",
-          correlationId,
-        });
+        return res
+          .status(
+            400
+          )
+          .json({
+            error:
+              "tenantId not set by authentication middleware",
+
+            code:
+              "TENANT_CONTEXT_MISSING",
+          });
       }
 
-      throw backpressureError;
-    }
+      if (
+        !signal ||
+        typeof signal !==
+          "object" ||
+        Array.isArray(
+          signal
+        )
+      ) {
+        return res
+          .status(
+            400
+          )
+          .json({
+            error:
+              "Signal body must be a JSON object",
 
-    // ───────────────────────────────────────────────────────────────────────
-    // 3. Create or update canonical Incident
-    // ───────────────────────────────────────────────────────────────────────
+            code:
+              "INVALID_SIGNAL",
+          });
+      }
 
-    const {
-      incident,
-      created,
-    } = await _openOrUpdateMachineIncident({
-      tenantId,
-      service,
-      signal,
-      correlationId,
-    });
+      // ======================================================================
+      // 1. RESOLVE SIGNAL → TENANT-OWNED SERVICE
+      // ======================================================================
 
-    // ───────────────────────────────────────────────────────────────────────
-    // 4. Execute authoritative V2 agent runtime
-    // ───────────────────────────────────────────────────────────────────────
+      const service =
+        await _resolveServiceForSignal(
+          tenantId,
+          signal
+        );
 
-    const orchestrator =
-      getAgentOrchestratorInstance();
+      /*
+       * Never guess which service an external alert belongs to.
+       */
+      if (
+        !service
+      ) {
+        loggingService
+          .warn(
+            "[machineIngestion] Signal could not be mapped to a tenant service",
+            {
+              tenantId,
 
-    const {
-      runRecord,
-    } = await orchestrator.run({
-      incidentId:
-        incident._id.toString(),
+              suppliedServiceId:
+                signal
+                  .serviceId ||
+                null,
 
-      correlationId,
+              suppliedService:
+                signal
+                  .service ||
+                signal
+                  .serviceName ||
+                null,
 
-      tenantId,
+              affectedServices:
+                signal
+                  .affectedServices ||
+                [],
+            }
+          );
 
-      incident:
-        _buildOrchestratorIncident(
-          incident,
-          signal,
+        return res
+          .status(
+            422
+          )
+          .json({
+            error:
+              "Signal could not be mapped to a known tenant service",
+
+            code:
+              "SERVICE_RESOLUTION_REQUIRED",
+
+            manualRequired:
+              true,
+
+            hint:
+              "Include serviceId, service/serviceName, or a resolvable affectedServices entry.",
+          });
+      }
+
+      /*
+       * Phase 12.1:
+       *
+       * Canonical diagnosis requires an explicit environment boundary.
+       *
+       * Never derive this from arbitrary external signal text when the
+       * tenant-owned Service already defines the environment.
+       */
+      if (
+        !service
+          .environmentId
+      ) {
+        loggingService
+          .warn(
+            "[machineIngestion] Resolved service has no canonical environmentId",
+            {
+              tenantId,
+
+              serviceId:
+                service
+                  ._id
+                  .toString(),
+            }
+          );
+
+        return res
+          .status(
+            422
+          )
+          .json({
+            error:
+              "Resolved service is missing canonical environment scope",
+
+            code:
+              "SERVICE_ENVIRONMENT_REQUIRED",
+
+            manualRequired:
+              true,
+          });
+      }
+
+      const organizationId =
+        String(
           service
-        ),
+            .organizationId ||
+          tenantId
+        );
 
-      signals: [
-        _stripSensitive(signal),
-      ],
-
-      alerts:
-        Array.isArray(signal.alerts)
-          ? _stripSensitive(signal.alerts)
-          : [],
-
-      metrics:
-        _buildMetricContext(signal),
-
-      logs:
-        Array.isArray(signal.logSample)
-          ? signal.logSample
-          : Array.isArray(signal.logs)
-            ? signal.logs
-            : [],
-
-      traces:
-        Array.isArray(signal.traces)
-          ? signal.traces
-          : [],
-
-      events:
-        Array.isArray(signal.events)
-          ? signal.events
-          : [],
-
-      service: {
-        id:
-          service._id.toString(),
-
-        name:
-          service.name,
-
-        slug:
-          service.slug,
-
-        type:
-          service.type,
-
-        environment:
-          service.environment,
-      },
-
-      environment:
-        signal.environment ||
-        service.environment ||
-        null,
-
-      provider:
-        signal.provider ||
-        _inferProvider(
-          signal,
+      const environmentId =
+        String(
           service
-        ),
+            .environmentId
+        );
 
-      resource:
-        _extractResourceContext(
+      const correlationId =
+        signal
+          .correlationId ||
+        req.headers[
+          "x-correlation-id"
+        ] ||
+        crypto
+          .randomUUID();
+
+      decisionPipelineObservability
+        .recordSignalInjected(
           signal,
-          service
-        ),
-    });
+          tenantId
+        );
 
-    if (!runRecord) {
-      throw new Error(
-        "AgentOrchestrator completed without returning a run record"
+      // ======================================================================
+      // 2. PUBLISH RAW SIGNAL EVENT
+      // ======================================================================
+
+      const queue =
+        await getQueueService();
+
+      try {
+        await queue
+          .publishEvent(
+            queue
+              .topics
+              .SIGNAL_RECEIVED,
+
+            {
+              eventId:
+                crypto
+                  .randomUUID(),
+
+              correlationId,
+
+              tenantId,
+
+              organizationId,
+
+              environmentId,
+
+              payload:
+                _stripSensitive(
+                  signal
+                ),
+
+              timestamp:
+                new Date(),
+            }
+          );
+      } catch (
+        backpressureError
+      ) {
+        if (
+          backpressureError
+            .message
+            ?.includes(
+              "BACKPRESSURE"
+            ) ||
+          backpressureError
+            .message
+            ?.includes(
+              "buffer"
+            )
+        ) {
+          return res
+            .status(
+              503
+            )
+            .json({
+              error:
+                "System overloaded — queue depth exceeded",
+
+              code:
+                "QUEUE_BACKPRESSURE",
+
+              retryAfter:
+                "PT10S",
+
+              correlationId,
+            });
+        }
+
+        throw backpressureError;
+      }
+
+      // ======================================================================
+      // 3. CREATE OR UPDATE CANONICAL INCIDENT
+      // ======================================================================
+
+      const {
+        incident,
+        created,
+      } =
+        await _openOrUpdateMachineIncident({
+          tenantId,
+
+          service,
+
+          signal,
+
+          correlationId,
+        });
+
+      // ======================================================================
+      // 4. CANONICAL DIAGNOSIS LIFECYCLE
+      // ======================================================================
+
+      const lifecyclePayload = {
+        organizationId,
+
+        environmentId,
+
+        incidentId:
+          incident
+            ._id
+            .toString(),
+      };
+
+      const diagnosisResult =
+        created
+          ? await diagnosisLifecycleService
+              .onIncidentDetected(
+                lifecyclePayload
+              )
+
+          : await diagnosisLifecycleService
+              .onSignalAttached(
+                lifecyclePayload
+              );
+
+      /*
+       * A repeated signal may intentionally be diagnosis-debounced.
+       *
+       * In that case we accept the machine event but do NOT bypass the
+       * lifecycle by invoking another diagnosis pipeline.
+       */
+      if (
+        !diagnosisResult
+          .triggered
+      ) {
+        return res
+          .status(
+            created
+              ? 202
+              : 200
+          )
+          .json({
+            accepted:
+              true,
+
+            incident: {
+              id:
+                incident
+                  ._id
+                  .toString(),
+
+              created,
+
+              status:
+                incident
+                  .status,
+
+              severity:
+                incident
+                  .severity,
+
+              serviceId:
+                service
+                  ._id
+                  .toString(),
+
+              service:
+                service
+                  .name,
+
+              environmentId,
+            },
+
+            diagnosis: {
+              triggered:
+                false,
+
+              reason:
+                diagnosisResult
+                  .reason,
+            },
+
+            intelligence: {
+              state:
+                "DIAGNOSIS_DEBOUNCED",
+
+              manualRequired:
+                false,
+            },
+
+            message:
+              "Signal accepted; duplicate diagnosis suppressed by lifecycle debounce",
+          });
+      }
+
+      if (
+        !diagnosisResult
+          .canonicalResult
+      ) {
+        throw new Error(
+          "Diagnosis lifecycle completed without canonical result"
+        );
+      }
+
+      // ======================================================================
+      // 5. CONTINUE FROM CANONICAL DIAGNOSIS
+      // ======================================================================
+
+      const orchestrator =
+        getAgentOrchestratorInstance();
+
+      const {
+        runRecord,
+      } =
+        await orchestrator
+          .continueFromDiagnosis({
+            canonicalResult:
+              diagnosisResult
+                .canonicalResult,
+
+            tenantId,
+
+            organizationId,
+
+            environmentId,
+
+            correlationId,
+
+            environment:
+              service
+                .environment ||
+              null,
+
+            provider:
+              signal
+                .provider ||
+              _inferProvider(
+                signal,
+                service
+              ),
+
+            resource:
+              _extractResourceContext(
+                signal,
+                service
+              ),
+          });
+
+      if (
+        !runRecord
+      ) {
+        throw new Error(
+          "AgentOrchestrator continuation completed without returning a run record"
+        );
+      }
+
+      // ======================================================================
+      // 6. PERSIST POST-DIAGNOSIS INTELLIGENCE RUN
+      // ======================================================================
+
+      await _persistAgentRun(
+        runRecord,
+        tenantId
+      );
+
+      // ======================================================================
+      // 7. INCIDENT TIMELINE
+      // ======================================================================
+
+      await _appendIntelligenceTimeline(
+        incident,
+        runRecord
+      );
+
+      // ======================================================================
+      // 8. RESPONSE
+      // ======================================================================
+
+      return res
+        .status(
+          created
+            ? 202
+            : 200
+        )
+        .json({
+          accepted:
+            true,
+
+          incident: {
+            id:
+              incident
+                ._id
+                .toString(),
+
+            created,
+
+            status:
+              incident
+                .status,
+
+            severity:
+              incident
+                .severity,
+
+            serviceId:
+              service
+                ._id
+                .toString(),
+
+            service:
+              service
+                .name,
+
+            environmentId,
+          },
+
+          diagnosis: {
+            runId:
+              diagnosisResult
+                .runId,
+
+            diagnosisId:
+              diagnosisResult
+                .diagnosisId,
+
+            revision:
+              diagnosisResult
+                .revision,
+
+            confidence:
+              diagnosisResult
+                .confidence,
+
+            decision:
+              diagnosisResult
+                .decision,
+
+            safetyGateDecision:
+              diagnosisResult
+                .safetyGateDecision,
+
+            canEvaluatePlaybook:
+              diagnosisResult
+                .canEvaluatePlaybook,
+          },
+
+          intelligence: {
+            runId:
+              runRecord
+                .runId,
+
+            sourceDiagnosisRunId:
+              runRecord
+                .sourceDiagnosisRunId ||
+              diagnosisResult
+                .runId,
+
+            correlationId:
+              runRecord
+                .correlationId,
+
+            state:
+              runRecord
+                .state,
+
+            manualRequired:
+              Boolean(
+                runRecord
+                  .manualRequired
+              ),
+
+            manualReason:
+              runRecord
+                .manualReason ||
+              null,
+
+            outcome:
+              runRecord
+                .executionResult
+                ?.outcome ||
+              null,
+
+            playbookExecutionId:
+              runRecord
+                .executionResult
+                ?.execution
+                ?.executionId ||
+              null,
+          },
+
+          message:
+            runRecord
+              .manualRequired
+              ? "Signal diagnosed canonically; manual intervention required"
+              : "Signal processed through canonical diagnosis and recovery workflow",
+        });
+    } catch (
+      error
+    ) {
+      if (
+        error
+          .message
+          ?.includes(
+            "AgentOrchestrator has not been initialized"
+          )
+      ) {
+        return res
+          .status(
+            503
+          )
+          .json({
+            error:
+              "Agent intelligence runtime unavailable",
+
+            code:
+              "AGENT_RUNTIME_UNAVAILABLE",
+
+            details:
+              error
+                .message,
+          });
+      }
+
+      if (
+        error.code ===
+        "TENANT_BOUNDARY_VIOLATION"
+      ) {
+        return res
+          .status(
+            403
+          )
+          .json({
+            error:
+              "Tenant boundary violation",
+
+            code:
+              error.code,
+          });
+      }
+
+      return next(
+        error
       );
     }
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 5. Persist intelligence run
-    // ───────────────────────────────────────────────────────────────────────
-
-    await _persistAgentRun(
-      runRecord,
-      tenantId
-    );
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 6. Update incident timeline
-    // ───────────────────────────────────────────────────────────────────────
-
-    await _appendIntelligenceTimeline(
-      incident,
-      runRecord
-    );
-
-    // ───────────────────────────────────────────────────────────────────────
-    // 7. Response
-    // ───────────────────────────────────────────────────────────────────────
-
-    return res.status(
-      created ? 202 : 200
-    ).json({
-      accepted: true,
-
-      incident: {
-        id:
-          incident._id.toString(),
-
-        created,
-
-        status:
-          incident.status,
-
-        severity:
-          incident.severity,
-
-        serviceId:
-          service._id.toString(),
-
-        service:
-          service.name,
-      },
-
-      intelligence: {
-        runId:
-          runRecord.runId,
-
-        correlationId:
-          runRecord.correlationId,
-
-        state:
-          runRecord.state,
-
-        manualRequired:
-          Boolean(
-            runRecord.manualRequired
-          ),
-
-        manualReason:
-          runRecord.manualReason ||
-          null,
-
-        outcome:
-          runRecord.executionResult
-            ?.outcome ||
-          null,
-
-        playbookExecutionId:
-          runRecord.executionResult
-            ?.execution
-            ?.executionId ||
-          null,
-      },
-
-      message:
-        runRecord.manualRequired
-          ? "Signal analyzed by V2 runtime; manual intervention required"
-          : "Signal analyzed through authoritative V2 runtime",
-    });
-  } catch (error) {
-    /**
-     * Do not silently construct another orchestrator if the production
-     * runtime failed to initialize.
-     */
-    if (
-      error.message?.includes(
-        "AgentOrchestrator has not been initialized"
-      )
-    ) {
-      return res.status(503).json({
-        error:
-          "Agent intelligence runtime unavailable",
-        code:
-          "AGENT_RUNTIME_UNAVAILABLE",
-        details:
-          error.message,
-      });
-    }
-
-    return next(error);
   }
-});
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /actions/:id/dry-run
@@ -555,71 +861,141 @@ async function _openOrUpdateMachineIncident({
   const now =
     new Date();
 
+  if (
+    !service
+      ?.environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Machine incident creation requires service.environmentId"
+      ),
+      {
+        code:
+          "SERVICE_ENVIRONMENT_REQUIRED",
+      }
+    );
+  }
+
+  const organizationId =
+    service
+      .organizationId;
+
+  const environmentId =
+    service
+      .environmentId;
+
   const fingerprint =
     _buildSignalFingerprint({
       tenantId,
+
       serviceId:
-        service._id.toString(),
+        service
+          ._id
+          .toString(),
+
       signal,
     });
 
+  /*
+   * Incident deduplication is scoped to organization + environment + tenant.
+   *
+   * The previous implementation omitted environmentId here, which could cause
+   * incidents from different environments to collide if their fingerprint
+   * matched.
+   */
   const existing =
-    await Incident.findOne({
-      organizationId:
-        service.organizationId,
+    await Incident
+      .findOne({
+        organizationId,
 
-      tenantId,
+        environmentId,
 
-      fingerprint,
+        tenantId,
 
-      status: {
-        $in:
-          OPEN_INCIDENT_STATUSES,
-      },
-    });
+        fingerprint,
 
-  if (existing) {
-    existing.lastObservedAt =
+        status: {
+          $in:
+            OPEN_INCIDENT_STATUSES,
+        },
+      });
+
+  if (
+    existing
+  ) {
+    existing
+      .lastObservedAt =
       now;
 
-    existing.occurrenceCount =
-      (existing.occurrenceCount || 0) +
+    existing
+      .occurrenceCount =
+      (
+        existing
+          .occurrenceCount ||
+        0
+      ) +
       1;
 
-    existing.severity =
+    existing
+      .severity =
       _normaliseIncidentSeverity(
-        signal.severity
+        signal
+          .severity
       );
 
-    existing.timeline.push({
-      occurredAt:
-        now,
+    /*
+     * Preserve canonical correlation information where the model supports it.
+     */
+    if (
+      !existing
+        .correlationId
+    ) {
+      existing
+        .correlationId =
+        correlationId;
+    }
 
-      eventType:
-        "observed_failure",
+    existing
+      .timeline
+      .push({
+        occurredAt:
+          now,
 
-      actor:
-        "system",
+        eventType:
+          "observed_failure",
 
-      description:
-        "External machine signal observed again.",
+        actor:
+          "system",
 
-      metadata: {
-        correlationId,
+        description:
+          "External machine signal observed again.",
 
-        source:
-          signal.source ||
-          signal.provider ||
-          "machine",
+        metadata: {
+          correlationId,
 
-        alert:
-          signal.alert ||
-          signal.alertName ||
-          null,
-      },
-    });
+          source:
+            signal
+              .source ||
+            signal
+              .provider ||
+            "machine",
 
-    await existing.save();
+          alert:
+            signal
+              .alert ||
+            signal
+              .alertName ||
+            null,
+
+          environmentId:
+            String(
+              environmentId
+            ),
+        },
+      });
+
+    await existing
+      .save();
 
     return {
       incident:
@@ -631,103 +1007,122 @@ async function _openOrUpdateMachineIncident({
   }
 
   const incident =
-    await Incident.create({
-      organizationId:
-        service.organizationId,
+    await Incident
+      .create({
+        organizationId,
 
-      tenantId,
+        environmentId,
 
-      serviceId:
-        service._id,
+        tenantId,
 
-      source:
-        "integration",
+        serviceId:
+          service
+            ._id,
 
-      sourceEventId:
-        signal.eventId ||
-        signal.alertId ||
+        source:
+          "integration",
+
+        sourceEventId:
+          signal
+            .eventId ||
+          signal
+            .alertId ||
+          correlationId,
+
         correlationId,
 
-      fingerprint,
+        fingerprint,
 
-      title:
-        _buildIncidentTitle(
-          signal,
-          service
-        ),
+        title:
+          _buildIncidentTitle(
+            signal,
+            service
+          ),
 
-      description:
-        _buildIncidentDescription(
-          signal,
-          service
-        ),
+        description:
+          _buildIncidentDescription(
+            signal,
+            service
+          ),
 
-      severity:
-        _normaliseIncidentSeverity(
-          signal.severity
-        ),
+        severity:
+          _normaliseIncidentSeverity(
+            signal
+              .severity
+          ),
 
-      status:
-        "open",
+        status:
+          "open",
 
-      impact:
-        _buildImpact(
-          signal,
-          service
-        ),
+        impact:
+          _buildImpact(
+            signal,
+            service
+          ),
 
-      startedAt:
-        _extractSignalTime(
-          signal
-        ),
+        startedAt:
+          _extractSignalTime(
+            signal
+          ),
 
-      detectedAt:
-        now,
+        detectedAt:
+          now,
 
-      lastObservedAt:
-        now,
+        lastObservedAt:
+          now,
 
-      occurrenceCount:
-        1,
+        occurrenceCount:
+          1,
 
-      tags:
-        _buildIncidentTags(
-          signal,
-          service
-        ),
+        tags:
+          _buildIncidentTags(
+            signal,
+            service
+          ),
 
-      timeline: [
-        {
-          occurredAt:
-            now,
+        timeline: [
+          {
+            occurredAt:
+              now,
 
-          eventType:
-            "opened",
+            eventType:
+              "opened",
 
-          actor:
-            "system",
+            actor:
+              "system",
 
-          description:
-            "Incident created from authenticated machine signal.",
+            description:
+              "Incident created from authenticated machine signal.",
 
-          metadata: {
-            correlationId,
+            metadata: {
+              correlationId,
 
-            source:
-              signal.source ||
-              signal.provider ||
-              "machine",
+              source:
+                signal
+                  .source ||
+                signal
+                  .provider ||
+                "machine",
 
-            serviceId:
-              service._id.toString(),
+              serviceId:
+                service
+                  ._id
+                  .toString(),
+
+              environmentId:
+                String(
+                  environmentId
+                ),
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
 
   return {
     incident,
-    created: true,
+
+    created:
+      true,
   };
 }
 
@@ -979,87 +1374,155 @@ async function _persistAgentRun(
   runRecord,
   tenantId
 ) {
-  await AgentIntelligenceRun.create({
-    runId:
-      runRecord.runId,
+  await AgentIntelligenceRun
+    .create({
+      runId:
+        runRecord
+          .runId,
 
-    incidentId:
-      runRecord.incidentId,
+      incidentId:
+        runRecord
+          .incidentId,
 
-    correlationId:
-      runRecord.correlationId,
+      correlationId:
+        runRecord
+          .correlationId,
 
-    tenantId,
+      tenantId,
 
-    state:
-      runRecord.state,
+      /*
+       * Phase 12 canonical ownership scope.
+       */
+      organizationId:
+        runRecord
+          .organizationId ||
+        null,
 
-    startedAt:
-      runRecord.startedAt
-        ? new Date(
-            runRecord.startedAt
-          )
-        : new Date(),
+      environmentId:
+        runRecord
+          .environmentId ||
+        null,
 
-    completedAt:
-      runRecord.completedAt
-        ? new Date(
-            runRecord.completedAt
-          )
-        : null,
+      state:
+        runRecord
+          .state,
 
-    manualRequired:
-      Boolean(
-        runRecord.manualRequired
-      ),
-
-    manualReason:
-      runRecord.manualReason ||
-      null,
-
-    error:
-      runRecord.error ||
-      null,
-
-    agentTrace:
-      _safeTrace(
-        runRecord.agentTrace
-      ),
-
-    playbookExecutionId:
-      runRecord.executionResult
-        ?.execution
-        ?.executionId ||
-      null,
-
-    explanationTitle:
-      runRecord.explanationResult
-        ?.title ||
-      null,
-
-    finalOutcome:
-      runRecord.executionResult
-        ?.outcome ||
-      (
-        runRecord.manualRequired
-          ? "MANUAL_REQUIRED"
-          : null
-      ),
-
-    learningCount:
-      Array.isArray(
-        runRecord.learningResult
-          ?.recommendations
-      )
-        ? runRecord.learningResult
-            .recommendations.length
-        : Array.isArray(
-              runRecord.learningResult
+      startedAt:
+        runRecord
+          .startedAt
+          ? new Date(
+              runRecord
+                .startedAt
             )
-          ? runRecord.learningResult
+          : new Date(),
+
+      completedAt:
+        runRecord
+          .completedAt
+          ? new Date(
+              runRecord
+                .completedAt
+            )
+          : null,
+
+      manualRequired:
+        Boolean(
+          runRecord
+            .manualRequired
+        ),
+
+      manualReason:
+        runRecord
+          .manualReason ||
+        null,
+
+      error:
+        runRecord
+          .error ||
+        null,
+
+      agentTrace:
+        _safeTrace(
+          runRecord
+            .agentTrace
+        ),
+
+      // ======================================================================
+      // PHASE 12.12 — BUDGET AUDIT
+      // PHASE 12.13 — SECURITY FINDINGS
+      // PHASE 12.14 — CANONICAL DECISION TRACE
+      // ======================================================================
+
+      decisionTraceSchemaVersion:
+        "12.14-v1",
+
+      decisionTrace:
+        runRecord
+          .decisionTrace ||
+        null,
+
+      budgetUsage:
+        runRecord
+          .budgetUsage ||
+        null,
+
+      securityFindings:
+        runRecord
+          .securityFindings ||
+        [],
+
+      // ======================================================================
+      // EXISTING EXECUTION SUMMARY
+      // ======================================================================
+
+      playbookExecutionId:
+        runRecord
+          .executionResult
+          ?.execution
+          ?.executionId ||
+        runRecord
+          .executionResult
+          ?.executionId ||
+        null,
+
+      explanationTitle:
+        runRecord
+          .explanationResult
+          ?.title ||
+        null,
+
+      finalOutcome:
+        runRecord
+          .executionResult
+          ?.outcome ||
+        (
+          runRecord
+            .manualRequired
+            ? "MANUAL_REQUIRED"
+            : null
+        ),
+
+      learningCount:
+        Array.isArray(
+          runRecord
+            .learningResult
+            ?.recommendations
+        )
+          ? runRecord
+              .learningResult
+              .recommendations
               .length
-          : 0,
-  });
+
+          : Array.isArray(
+              runRecord
+                .learningResult
+            )
+            ? runRecord
+                .learningResult
+                .length
+
+            : 0,
+    });
 }
 
 async function _appendIntelligenceTimeline(

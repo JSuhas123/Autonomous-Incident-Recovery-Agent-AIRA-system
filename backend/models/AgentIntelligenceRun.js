@@ -35,8 +35,9 @@ const RUN_PHASES = [
 const AGENT_RESULT_STATUSES = [
   "SUCCESS",
   "PARTIAL",
-  "FAILED",
+  "INSUFFICIENT_EVIDENCE",
   "MANUAL_REQUIRED",
+  "FAILED",
   "SKIPPED",
 ];
 
@@ -47,6 +48,14 @@ const AGENT_RESULT_STATUSES = [
 const agentTraceEntrySchema =
   new mongoose.Schema(
     {
+            schemaVersion: {
+        type:
+          String,
+
+        default:
+          "12.3-v1",
+      },
+
       agent: {
         type:
           String,
@@ -126,6 +135,20 @@ const agentTraceEntrySchema =
           null,
       },
 
+            /**
+       * Agent-specific typed payload.
+       *
+       * AgentResult outer structure is canonical; the inner result remains
+       * agent-specific.
+       */
+      result: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          null,
+      },
+
       evidenceUsed: {
         type:
           [String],
@@ -142,6 +165,22 @@ const agentTraceEntrySchema =
           [],
       },
 
+            evidenceMissing: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
+      assumptions: {
+        type:
+          [String],
+
+        default:
+          [],
+      },
+
       warnings: {
         type:
           [String],
@@ -149,6 +188,15 @@ const agentTraceEntrySchema =
         default:
           [],
       },
+
+            nextRecommendedStage: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
 
       error: {
         type:
@@ -159,6 +207,79 @@ const agentTraceEntrySchema =
 
         default:
           null,
+      },
+
+            modelMetadata: {
+        provider: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        model: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        inputTokens: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            null,
+        },
+
+        outputTokens: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            null,
+        },
+
+        totalTokens: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            null,
+        },
+
+        latencyMs: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            null,
+        },
+
+        estimatedCost: {
+          type:
+            Number,
+
+          min:
+            0,
+
+          default:
+            null,
+        },
       },
 
       model: {
@@ -658,7 +779,47 @@ const agentIntelligenceRunSchema =
         default:
           [],
       },
+      
+            // ======================================================================
+      // PHASE 12.14 — CANONICAL DECISION TRACE
+      // ======================================================================
 
+      decisionTraceSchemaVersion: {
+        type:
+          String,
+
+        default:
+          "12.14-v1",
+
+        index:
+          true,
+      },
+
+      decisionTrace: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          null,
+      },
+
+      budgetUsage: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          null,
+      },
+
+      securityFindings: {
+        type:
+          [
+            mongoose.Schema.Types.Mixed,
+          ],
+
+        default:
+          [],
+      },
       // ======================================================================
       // FINDINGS
       // ======================================================================
@@ -782,6 +943,24 @@ const agentIntelligenceRunSchema =
 
         default:
           "phase6-v1",
+      },
+
+            /**
+       * Canonical AgentContext contract version used by this intelligence run.
+       *
+       * Phase 12.2 introduces this independently of coordinatorVersion because
+       * orchestration implementation versions and domain-contract versions are
+       * different concepts.
+       */
+      contextSchemaVersion: {
+        type:
+          String,
+
+        default:
+          "12.2-v1",
+
+        index:
+          true,
       },
 
       reasoningProvider: {

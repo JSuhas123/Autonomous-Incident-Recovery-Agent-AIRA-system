@@ -1,173 +1,813 @@
-'use strict';
+"use strict";
 
 /**
  * Recovery Monitoring Agent
  *
- * Observes deterministic execution progress and determines recovery trajectory.
+ * Phase 12.10
  *
- * SAFETY INVARIANTS:
- * - Does NOT replace RunbookVerificationService
- * - Cannot declare AUTO_RESOLVED by itself
- * - Cannot mutate infrastructure
- * - If it believes things are worsening: recommends ESCALATE through safe path only
+ * Observes execution trajectory AFTER deterministic execution.
+ *
+ * SAFETY:
+ *
+ * Recovery observation != recovery verification.
+ *
+ * This agent:
+ * - does not execute infrastructure
+ * - does not rollback infrastructure
+ * - does not approve execution
+ * - does not close incidents
+ * - does not declare AUTO_RESOLVED
+ * - does not replace RunbookVerificationService
+ *
+ * It may only describe trajectory and recommend CONTINUE / WAIT / ESCALATE.
  */
 
-const { BaseAgent } = require('../runtime/baseAgent');
+const {
+  BaseAgent,
+} =
+  require(
+    "../runtime/baseAgent"
+  );
+
 const {
   AGENT_STATUS,
   EVIDENCE_TYPE,
   EVIDENCE_SOURCE_TYPE,
   AGENT_MANUAL_REASON,
   RECOVERY_STATE,
+  RECOVERY_VERIFICATION_STATE,
   MONITORING_RECOMMENDATION,
   createEvidenceItem,
   createRecoveryObservation,
-} = require('../contracts/agentContracts');
-const { getReasoningProvider } = require('../runtime/reasoningProvider');
+} =
+  require(
+    "../contracts/agentContracts"
+  );
 
-const AGENT_NAME    = 'RecoveryMonitoringAgent';
-const AGENT_VERSION = '1.0.0';
+const {
+  getReasoningProvider,
+} =
+  require(
+    "../runtime/reasoningProvider"
+  );
+
+const AGENT_NAME =
+  "RecoveryMonitoringAgent";
+
+const AGENT_VERSION =
+  "2.0.0";
 
 const OUTPUT_SCHEMA = {
-  required: ['state', 'confidence', 'recommendation'],
+  required: [
+    "state",
+    "confidence",
+    "recommendation",
+  ],
+
   properties: {
-    state:          { type: 'string' },
-    confidence:     { type: 'number' },
-    evidenceIds:    { type: 'array' },
-    observations:   { type: 'array' },
-    concerns:       { type: 'array' },
-    recommendation: { type: 'string' },
+    state: {
+      type:
+        "string",
+    },
+
+    confidence: {
+      type:
+        "number",
+    },
+
+    evidenceIds: {
+      type:
+        "array",
+    },
+
+    observations: {
+      type:
+        "array",
+    },
+
+    concerns: {
+      type:
+        "array",
+    },
+
+    recommendation: {
+      type:
+        "string",
+    },
   },
 };
 
-class RecoveryMonitoringAgent extends BaseAgent {
-  constructor(config = {}) {
-    super(AGENT_NAME, AGENT_VERSION);
-    this._config    = config;
-    this._reasoning = config.reasoningProvider || null;
+class RecoveryMonitoringAgent
+  extends BaseAgent {
+
+  constructor(
+    config = {}
+  ) {
+    super(
+      AGENT_NAME,
+      AGENT_VERSION
+    );
+
+    this._config =
+      config;
+
+    this._reasoning =
+      config.reasoningProvider ||
+      null;
   }
 
-  async execute(context, dependencies = {}) {
-    const startedAt = new Date();
-    const provider  = this._reasoning || getReasoningProvider();
+  validateInput(
+    context
+  ) {
+    const base =
+      super.validateInput(
+        context
+      );
+
+    if (
+      !base.valid
+    ) {
+      return base;
+    }
+
+    const errors =
+      [];
+
+    if (
+      !context
+        .playbookExecutionId &&
+      !context
+        .verificationResults
+        ?.length &&
+      !context
+        .rollbackResults
+        ?.length
+    ) {
+      errors.push(
+        "Recovery monitoring requires execution or verification context"
+      );
+    }
+
+    return {
+      valid:
+        errors.length ===
+        0,
+
+      errors,
+    };
+  }
+
+  async execute(
+    context
+  ) {
+    const startedAt =
+      new Date();
+
+    const provider =
+      this._reasoning ||
+      getReasoningProvider();
 
     try {
       const {
-        incidentId, correlationId, tenantId,
-        playbookExecutionId, verificationResults, rollbackResults,
-        service, resource, incident,
-      } = context;
+        incidentId,
+        correlationId,
+        playbookExecutionId,
+        verificationResults,
+        rollbackResults,
+        service,
+        resource,
+        incident,
+      } =
+        context;
 
-      const evidenceItems = [];
+      const evidenceItems =
+        [];
 
-      // ── Collect execution evidence ────────────────────────────────────
-      if (verificationResults?.length > 0) {
-        evidenceItems.push(createEvidenceItem({
-          id:            `ev-verify-${incidentId}`,
-          type:          EVIDENCE_TYPE.VERIFICATION_RESULT,
-          source:        'runbook-verification-service',
-          sourceType:    EVIDENCE_SOURCE_TYPE.KUBERNETES_API,
-          resource:      resource || {},
-          service:       service?.id,
-          summary:       `${verificationResults.length} verification result(s)`,
-          structuredData:{ results: verificationResults },
-          correlationId,
-        }));
+      // ======================================================================
+      // 1. DETERMINISTIC VERIFICATION EVIDENCE
+      // ======================================================================
+
+      if (
+        verificationResults
+          ?.length >
+        0
+      ) {
+        evidenceItems.push(
+          createEvidenceItem({
+            id:
+              `ev-verify-${incidentId}`,
+
+            type:
+              EVIDENCE_TYPE
+                .VERIFICATION_RESULT,
+
+            source:
+              "runbook-verification-service",
+
+            sourceType:
+              EVIDENCE_SOURCE_TYPE
+                .KUBERNETES_API,
+
+            resource:
+              resource ||
+              {},
+
+            serviceId:
+              service
+                ?.id ||
+              null,
+
+            summary:
+              `${verificationResults.length} deterministic verification result(s)`,
+
+            structuredData: {
+              results:
+                verificationResults,
+            },
+
+            correlationId,
+
+            trustLevel:
+              "CANONICAL",
+
+            provenance: {
+              collector:
+                "RecoveryMonitoringAgent",
+
+              retrievalMethod:
+                "deterministic_verification_result_read",
+
+              sourceRef:
+                playbookExecutionId
+                  ? `PlaybookExecution:${playbookExecutionId}`
+                  : `Incident:${incidentId}`,
+
+              canonicalStore:
+                "RunbookVerificationService",
+            },
+          })
+        );
       }
 
-      if (rollbackResults?.length > 0) {
-        evidenceItems.push(createEvidenceItem({
-          id:            `ev-rollback-${incidentId}`,
-          type:          EVIDENCE_TYPE.EXECUTION_RESULT,
-          source:        'runbook-rollback-engine',
-          sourceType:    EVIDENCE_SOURCE_TYPE.KUBERNETES_API,
-          resource:      resource || {},
-          service:       service?.id,
-          summary:       `${rollbackResults.length} rollback result(s)`,
-          structuredData:{ results: rollbackResults },
-          correlationId,
-        }));
+      // ======================================================================
+      // 2. ROLLBACK EVIDENCE
+      // ======================================================================
+
+      if (
+        rollbackResults
+          ?.length >
+        0
+      ) {
+        evidenceItems.push(
+          createEvidenceItem({
+            id:
+              `ev-rollback-${incidentId}`,
+
+            type:
+              EVIDENCE_TYPE
+                .EXECUTION_RESULT,
+
+            source:
+              "runbook-rollback-engine",
+
+            sourceType:
+              EVIDENCE_SOURCE_TYPE
+                .KUBERNETES_API,
+
+            resource:
+              resource ||
+              {},
+
+            serviceId:
+              service
+                ?.id ||
+              null,
+
+            summary:
+              `${rollbackResults.length} rollback result(s)`,
+
+            structuredData: {
+              results:
+                rollbackResults,
+            },
+
+            correlationId,
+
+            trustLevel:
+              "CANONICAL",
+
+            provenance: {
+              collector:
+                "RecoveryMonitoringAgent",
+
+              retrievalMethod:
+                "rollback_result_read",
+
+              sourceRef:
+                playbookExecutionId
+                  ? `PlaybookExecution:${playbookExecutionId}`
+                  : `Incident:${incidentId}`,
+
+              canonicalStore:
+                "RunbookRollbackEngine",
+            },
+          })
+        );
       }
 
-      // ── AI observation ────────────────────────────────────────────────
-      const reasoning = await provider.reason({
-        task: 'recoveryMonitoring',
-        systemInstructions: MONITORING_SYSTEM_PROMPT,
-        structuredInput: {
-          incidentId,
+      // ======================================================================
+      // 3. AI OBSERVATION — READ ONLY
+      // ======================================================================
+
+      const reasoning =
+        await provider
+          .reason({
+            task:
+              "recoveryMonitoring",
+
+            systemInstructions:
+              MONITORING_SYSTEM_PROMPT,
+
+            structuredInput: {
+              incidentId,
+
+              playbookExecutionId,
+
+              /*
+               * These are deterministic observations.
+               */
+              verificationResults:
+                verificationResults ||
+                [],
+
+              rollbackResults:
+                rollbackResults ||
+                [],
+
+              service,
+
+              resource,
+
+              incident,
+            },
+
+            outputSchema:
+              OUTPUT_SCHEMA,
+
+            metadata: {
+              incidentId,
+
+              correlationId,
+            },
+          });
+
+      if (
+        reasoning
+          .manualRequired
+      ) {
+        return this._manual(
+          startedAt,
+
+          reasoning
+            .manualReason ||
+            AGENT_MANUAL_REASON
+              .REASONING_FAILED,
+
+          {
+            evidenceUsed:
+              evidenceItems
+                .map(
+                  (
+                    evidence
+                  ) =>
+                    evidence.id
+                ),
+
+            nextRecommendedStage:
+              "DETERMINISTIC_VERIFICATION",
+          }
+        );
+      }
+
+      const output =
+        reasoning.output ||
+        {};
+
+      const rawState =
+        String(
+          output.state ||
+          RECOVERY_STATE.STABLE
+        )
+          .toUpperCase()
+          .replace(
+            /\s+/g,
+            "_"
+          );
+
+      const state =
+        RECOVERY_STATE[
+          rawState
+        ] ||
+        RECOVERY_STATE.STABLE;
+
+      const rawRecommendation =
+        String(
+          output.recommendation ||
+          MONITORING_RECOMMENDATION.WAIT
+        )
+          .toUpperCase()
+          .replace(
+            /\s+/g,
+            "_"
+          );
+
+      let recommendation =
+        MONITORING_RECOMMENDATION[
+          rawRecommendation
+        ] ||
+        MONITORING_RECOMMENDATION.WAIT;
+
+      if (
+        state ===
+          RECOVERY_STATE.WORSENING ||
+        state ===
+          RECOVERY_STATE.MANUAL_REQUIRED
+      ) {
+        recommendation =
+          MONITORING_RECOMMENDATION
+            .ESCALATE;
+      }
+
+      const deterministicVerificationIds =
+        (
+          verificationResults ||
+          []
+        )
+          .map(
+            (
+              result
+            ) =>
+              result
+                ?.verificationId ||
+              result
+                ?.id ||
+              null
+          )
+          .filter(
+            Boolean
+          );
+
+      const verificationState =
+        _deriveVerificationState(
+          verificationResults
+        );
+
+      const observation =
+        createRecoveryObservation({
+          state,
+
+          confidence:
+            typeof output
+              .confidence ===
+              "number"
+              ? Math.min(
+                  1,
+                  Math.max(
+                    0,
+                    output
+                      .confidence
+                  )
+                )
+              : 0.5,
+
+          evidenceIds:
+            evidenceItems
+              .map(
+                (
+                  evidence
+                ) =>
+                  evidence.id
+              ),
+
+          observations:
+            Array.isArray(
+              output
+                .observations
+            )
+              ? output
+                  .observations
+              : [],
+
+          concerns:
+            Array.isArray(
+              output
+                .concerns
+            )
+              ? output
+                  .concerns
+              : [],
+
+          recommendation,
+
           playbookExecutionId,
-          verificationResults: verificationResults || [],
-          rollbackResults:     rollbackResults     || [],
-          service,
-          resource,
-          incident,
+
+          verificationState,
+
+          deterministicVerificationIds,
+
+          rollbackObserved:
+            Boolean(
+              rollbackResults
+                ?.length
+            ),
+
+          worsening:
+            state ===
+              RECOVERY_STATE.WORSENING ||
+            state ===
+              RECOVERY_STATE.MANUAL_REQUIRED,
+        });
+
+      return this._success(
+        startedAt,
+
+        {
+          observation,
         },
-        outputSchema: OUTPUT_SCHEMA,
-        metadata: { incidentId, correlationId },
-      });
 
-      const output = reasoning.output || {};
+        {
+          confidence:
+            observation
+              .confidence,
 
-      const rawState = String(output.state || RECOVERY_STATE.STABLE).toUpperCase().replace(/\s+/g, '_');
-      const state    = RECOVERY_STATE[rawState] || RECOVERY_STATE.STABLE;
+          evidenceUsed:
+            evidenceItems
+              .map(
+                (
+                  evidence
+                ) =>
+                  evidence.id
+              ),
 
-      const rawRec   = String(output.recommendation || MONITORING_RECOMMENDATION.WAIT).toUpperCase().replace(/\s+/g, '_');
-      const rec      = MONITORING_RECOMMENDATION[rawRec] || MONITORING_RECOMMENDATION.WAIT;
+          nextRecommendedStage:
+            recommendation ===
+              MONITORING_RECOMMENDATION
+                .ESCALATE
+              ? "HUMAN_ESCALATION"
+              : "DETERMINISTIC_VERIFICATION",
 
-      const observation = createRecoveryObservation({
-        state,
-        confidence:   typeof output.confidence === 'number' ? Math.min(1, Math.max(0, output.confidence)) : 0.5,
-        evidenceIds:  evidenceItems.map(e => e.id),
-        observations: Array.isArray(output.observations) ? output.observations : [],
-        concerns:     Array.isArray(output.concerns)     ? output.concerns     : [],
-        recommendation: rec,
-      });
+          modelMetadata:
+            reasoning
+              .modelMetadata ||
+            null,
 
-      // Safety: MANUAL_REQUIRED if worsening
-      if (state === RECOVERY_STATE.WORSENING || state === RECOVERY_STATE.MANUAL_REQUIRED) {
-        observation.recommendation = MONITORING_RECOMMENDATION.ESCALATE;
-      }
+          model:
+            reasoning
+              .modelMetadata
+              ?.model,
 
-      return this._success(startedAt, { observation }, {
-        confidence:   observation.confidence,
-        evidenceUsed: evidenceItems.map(e => e.id),
-        model:        reasoning.modelMetadata?.model,
-        provider:     reasoning.modelMetadata?.provider,
-        fallbackUsed: reasoning.fallbackUsed,
-        warnings:     reasoning.warnings || [],
-      });
+          provider:
+            reasoning
+              .modelMetadata
+              ?.provider,
 
-    } catch (err) {
-      return this._fail(startedAt, err);
+          fallbackUsed:
+            Boolean(
+              reasoning
+                .fallbackUsed
+            ),
+
+          warnings:
+            reasoning
+              .warnings ||
+            [],
+        }
+      );
+    } catch (
+      error
+    ) {
+      return this._fail(
+        startedAt,
+        error
+      );
     }
   }
 
-  validateOutput(record) {
-    const base = super.validateOutput(record);
-    if (!base.valid) return base;
-    return { valid: true, errors: [] };
+  validateOutput(
+    record
+  ) {
+    const base =
+      super.validateOutput(
+        record
+      );
+
+    if (
+      !base.valid
+    ) {
+      return base;
+    }
+
+    if (
+      record.status ===
+        AGENT_STATUS.SUCCESS
+    ) {
+      const observation =
+        record
+          .result
+          ?.observation;
+
+      if (
+        !observation
+      ) {
+        return {
+          valid:
+            false,
+
+          errors: [
+            "Recovery observation is required",
+          ],
+        };
+      }
+
+      if (
+        observation
+          .finalRecoveryDeclared ===
+        true
+      ) {
+        return {
+          valid:
+            false,
+
+          errors: [
+            "RecoveryMonitoringAgent cannot declare final recovery",
+          ],
+        };
+      }
+
+      if (
+        observation
+          .executionAuthorized ===
+        true ||
+        observation
+          .incidentResolutionAuthorized ===
+        true
+      ) {
+        return {
+          valid:
+            false,
+
+          errors: [
+            "RecoveryMonitoringAgent cannot authorize execution or incident resolution",
+          ],
+        };
+      }
+    }
+
+    return {
+      valid:
+        true,
+
+      errors:
+        [],
+    };
   }
 
   getCapabilities() {
     return {
       ...super.getCapabilities(),
-      reads:       ['context.verificationResults', 'context.rollbackResults', 'context.playbookExecutionId'],
-      writes:      [],
-      requiresLLM: true,
+
+      reads: [
+        "context.verificationResults",
+        "context.rollbackResults",
+        "context.playbookExecutionId",
+        "context.incident",
+        "context.service",
+        "context.resource",
+      ],
+
+      writes: [
+        "context.recoveryObservation",
+      ],
+
+      requiresLLM:
+        true,
+
+      infrastructureMutation:
+        false,
+
+      executionAuthorization:
+        false,
+
+      incidentResolution:
+        false,
     };
   }
 }
 
-const MONITORING_SYSTEM_PROMPT = `
-You are the AIRA Recovery Monitoring Agent. Observe deterministic execution results.
+function _deriveVerificationState(
+  verificationResults
+) {
+  if (
+    !Array.isArray(
+      verificationResults
+    ) ||
+    verificationResults.length ===
+      0
+  ) {
+    return RECOVERY_VERIFICATION_STATE
+      .NOT_STARTED;
+  }
+
+  const states =
+    verificationResults
+      .map(
+        (
+          result
+        ) =>
+          String(
+            result
+              ?.status ||
+            result
+              ?.outcome ||
+            result
+              ?.result ||
+            ""
+          )
+            .trim()
+            .toUpperCase()
+      );
+
+  if (
+    states.some(
+      (
+        value
+      ) =>
+        [
+          "FAILED",
+          "FAILURE",
+          "UNHEALTHY",
+          "REGRESSION",
+        ].includes(
+          value
+        )
+    )
+  ) {
+    return RECOVERY_VERIFICATION_STATE
+      .FAILED;
+  }
+
+  if (
+    states.length >
+      0 &&
+    states.every(
+      (
+        value
+      ) =>
+        [
+          "SUCCESS",
+          "PASSED",
+          "PASS",
+          "VERIFIED",
+          "HEALTHY",
+        ].includes(
+          value
+        )
+    )
+  ) {
+    return RECOVERY_VERIFICATION_STATE
+      .VERIFIED;
+  }
+
+  return RECOVERY_VERIFICATION_STATE
+    .INCONCLUSIVE;
+}
+
+const MONITORING_SYSTEM_PROMPT =
+  `
+You are the AIRA Recovery Monitoring Agent.
+
+You observe deterministic recovery/execution results.
+
+You are NOT the recovery verifier.
 
 Rules:
-1. You CANNOT declare final AUTO_RESOLVED — that is determined by RunbookVerificationService.
-2. Report the recovery trajectory: IMPROVING, STABLE, RECOVERED, DEGRADED, WORSENING, STALLED, ROLLBACK_IN_PROGRESS, MANUAL_REQUIRED.
-3. If worsening, set recommendation to ESCALATE.
-4. Do NOT cancel executions directly — only recommend via the safe control path.
-5. Do NOT mutate infrastructure.
-6. Return ONLY valid JSON.
-`.trim();
 
-module.exports = { RecoveryMonitoringAgent };
+1. Never declare AUTO_RESOLVED.
+2. Never state that the incident is finally resolved.
+3. Never authorize infrastructure execution.
+4. Never approve or bypass policy.
+5. Never trigger rollback directly.
+6. Never mutate infrastructure.
+7. Report only trajectory:
+   IMPROVING, STABLE, RECOVERED, DEGRADED, WORSENING,
+   STALLED, ROLLBACK_IN_PROGRESS, MANUAL_REQUIRED.
+8. RECOVERED means "appears recovered from observed evidence" only.
+   Final recovery still requires deterministic verification.
+9. If worsening, recommendation MUST be ESCALATE.
+10. Return ONLY valid JSON.
+`
+    .trim();
+
+module.exports = {
+  RecoveryMonitoringAgent,
+};

@@ -35,6 +35,7 @@ const {
 
 const {
   HYPOTHESIS_STATUS,
+  HYPOTHESIS_ORIGIN,
   DIAGNOSIS_OUTCOME,
   createHypothesis,
   createAgentFinding,
@@ -114,9 +115,20 @@ class RootCauseHypothesisAgent
       // ======================================================================
 
       const deterministicCandidates =
-        this.generateDeterministicCandidates(
-          context
-        );
+  this.generateDeterministicCandidates(
+    context
+  )
+    .map(
+      (
+        hypothesis
+      ) => ({
+        ...hypothesis,
+
+        origin:
+          HYPOTHESIS_ORIGIN
+            .DETERMINISTIC,
+      })
+    );
 
       // ======================================================================
       // 2. AI HYPOTHESIS GENERATION
@@ -340,14 +352,19 @@ class RootCauseHypothesisAgent
       // ======================================================================
 
       const outcome =
-        this.determineOutcome(
-          scored,
-          context
-        );
+  this.determineOutcome(
+    scored,
+    context
+  );
 
-      const primaryHypothesis =
-        scored[0] ||
-        null;
+const ambiguity =
+  this.buildAmbiguitySummary(
+    scored
+  );
+
+const primaryHypothesis =
+  scored[0] ||
+  null;
 
       // ======================================================================
       // 7. FINDINGS
@@ -418,13 +435,21 @@ class RootCauseHypothesisAgent
         startedAt,
 
         {
-          hypotheses:
-            scored,
+  hypotheses:
+    scored,
 
-          primaryHypothesis,
+  /*
+   * "primary" means highest ranked, not automatically verified.
+   */
+  primaryHypothesis,
 
-          outcome,
+  outcome,
 
+  ambiguity,
+
+  plausibleHypothesisIds:
+    ambiguity
+      .plausibleHypothesisIds,
           diagnosisConfidence,
 
           unknowns:
@@ -446,54 +471,86 @@ class RootCauseHypothesisAgent
         },
 
         {
-          confidence:
-            diagnosisConfidence,
+  confidence:
+    diagnosisConfidence,
 
-          evidenceUsed:
-            Array.from(
-              new Set(
-                scored
-                  .flatMap(
-                    (
-                      hypothesis
-                    ) => [
-                      ...(
-                        hypothesis
-                          .evidenceSupporting ||
-                        []
-                      ),
+  evidenceUsed:
+    Array.from(
+      new Set(
+        scored
+          .flatMap(
+            (
+              hypothesis
+            ) => [
+              ...(
+                hypothesis
+                  .evidenceSupporting ||
+                []
+              ),
 
-                      ...(
-                        hypothesis
-                          .evidenceAgainst ||
-                        []
-                      ),
-                    ]
-                  )
-              )
-            ),
+              ...(
+                hypothesis
+                  .evidenceAgainst ||
+                []
+              ),
+            ]
+          )
+      )
+    ),
 
-          model:
-            reasoning
-              .modelMetadata
-              ?.model,
+  evidenceMissing:
+    context
+      .evidence
+      ?.missingEvidence ||
+    [],
 
-          provider:
-            reasoning
-              .modelMetadata
-              ?.provider,
+  assumptions:
+    Array.from(
+      new Set(
+        scored
+          .flatMap(
+            (
+              hypothesis
+            ) =>
+              hypothesis
+                .assumptions ||
+              []
+          )
+      )
+    ),
 
-          fallbackUsed:
-            Boolean(
-              reasoning
-                .fallbackUsed
-            ),
+  nextRecommendedStage:
+    scored.length >
+      0
+      ? "VERIFICATION_CRITIC"
+      : "COLLECT_MORE_EVIDENCE",
 
-          warnings:
-            reasoning
-              .warnings ||
-            [],
-        }
+  modelMetadata:
+    reasoning
+      .modelMetadata ||
+    null,
+
+  model:
+    reasoning
+      .modelMetadata
+      ?.model,
+
+  provider:
+    reasoning
+      .modelMetadata
+      ?.provider,
+
+  fallbackUsed:
+    Boolean(
+      reasoning
+        .fallbackUsed
+    ),
+
+  warnings:
+    reasoning
+      .warnings ||
+    [],
+}
       );
     } catch (
       error
@@ -972,6 +1029,10 @@ class RootCauseHypothesisAgent
               ),
 
             rootCause,
+             
+            origin:
+  HYPOTHESIS_ORIGIN
+    .AI,
 
             title:
               hypothesis.title ||
@@ -1051,323 +1112,767 @@ class RootCauseHypothesisAgent
   // MERGE
   // ==========================================================================
 
-  mergeHypotheses(
-    deterministic,
-    ai
+ mergeHypotheses(
+  deterministic,
+  ai
+) {
+  const map =
+    new Map();
+
+  for (
+    const hypothesis
+    of [
+      ...deterministic,
+      ...ai,
+    ]
   ) {
-    const map =
-      new Map();
+    const key =
+      normalizeCause(
+        hypothesis
+          .rootCause
+      );
 
-    for (
-      const hypothesis
-      of [
-        ...deterministic,
-        ...ai,
-      ]
+    if (
+      !key
     ) {
-      const key =
-        normalizeCause(
-          hypothesis
-            .rootCause
-        );
-
-      if (
-        !map.has(
-          key
-        )
-      ) {
-        map.set(
-          key,
-          {
-            ...hypothesis,
-          }
-        );
-
-        continue;
-      }
-
-      const existing =
-        map.get(
-          key
-        );
-
-      existing.confidence =
-        Math.max(
-          existing.confidence ||
-            0,
-          hypothesis.confidence ||
-            0
-        );
-
-      existing.evidenceSupporting =
-        uniqueStrings([
-          ...(
-            existing
-              .evidenceSupporting ||
-            []
-          ),
-
-          ...(
-            hypothesis
-              .evidenceSupporting ||
-            []
-          ),
-        ]);
-
-      existing.evidenceAgainst =
-        uniqueStrings([
-          ...(
-            existing
-              .evidenceAgainst ||
-            []
-          ),
-
-          ...(
-            hypothesis
-              .evidenceAgainst ||
-            []
-          ),
-        ]);
-
-      existing.contradictions =
-        mergeUnique(
-          existing
-            .contradictions ||
-            [],
-          hypothesis
-            .contradictions ||
-            []
-        );
-
-      existing.assumptions =
-        uniqueStrings([
-          ...(
-            existing
-              .assumptions ||
-            []
-          ),
-
-          ...(
-            hypothesis
-              .assumptions ||
-            []
-          ),
-        ]);
-
-      existing.unknowns =
-        uniqueStrings([
-          ...(
-            existing
-              .unknowns ||
-            []
-          ),
-
-          ...(
-            hypothesis
-              .unknowns ||
-            []
-          ),
-        ]);
+      continue;
     }
 
-    return [
-      ...map.values(),
-    ];
+    if (
+      !map.has(
+        key
+      )
+    ) {
+      map.set(
+        key,
+        {
+          ...hypothesis,
+        }
+      );
+
+      continue;
+    }
+
+    const existing =
+      map.get(
+        key
+      );
+
+    /*
+     * The same causal hypothesis was independently produced by deterministic
+     * and AI reasoning.
+     *
+     * Preserve that fact instead of pretending one source created it.
+     */
+    if (
+      existing.origin &&
+      hypothesis.origin &&
+      existing.origin !==
+        hypothesis.origin
+    ) {
+      existing.origin =
+        HYPOTHESIS_ORIGIN
+          .HYBRID;
+    }
+
+    existing.confidence =
+      Math.max(
+        existing.confidence ||
+          0,
+        hypothesis.confidence ||
+          0
+      );
+
+    existing.evidenceSupporting =
+      uniqueStrings([
+        ...(
+          existing
+            .evidenceSupporting ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .evidenceSupporting ||
+          []
+        ),
+      ]);
+
+    existing.evidenceAgainst =
+      uniqueStrings([
+        ...(
+          existing
+            .evidenceAgainst ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .evidenceAgainst ||
+          []
+        ),
+      ]);
+
+    existing.contradictions =
+      mergeUnique(
+        existing
+          .contradictions ||
+          [],
+
+        hypothesis
+          .contradictions ||
+          []
+      );
+
+    existing.assumptions =
+      uniqueStrings([
+        ...(
+          existing
+            .assumptions ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .assumptions ||
+          []
+        ),
+      ]);
+
+    existing.unknowns =
+      uniqueStrings([
+        ...(
+          existing
+            .unknowns ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .unknowns ||
+          []
+        ),
+      ]);
+
+    existing.affectedResources =
+      uniqueStrings([
+        ...(
+          existing
+            .affectedResources ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .affectedResources ||
+          []
+        ),
+      ]);
+
+    existing.affectedServices =
+      uniqueStrings([
+        ...(
+          existing
+            .affectedServices ||
+          []
+        ),
+
+        ...(
+          hypothesis
+            .affectedServices ||
+          []
+        ),
+      ]);
+
+    existing.causalChain =
+      mergeUnique(
+        existing
+          .causalChain ||
+          [],
+
+        hypothesis
+          .causalChain ||
+          []
+      );
+
+    /*
+     * Prefer a richer explanation, but do not concatenate arbitrary model
+     * prose into an ever-growing blob.
+     */
+    if (
+      String(
+        hypothesis
+          .explanation ||
+        ""
+      ).length >
+      String(
+        existing
+          .explanation ||
+        ""
+      ).length
+    ) {
+      existing.explanation =
+        hypothesis
+          .explanation;
+    }
   }
+
+  return [
+    ...map.values(),
+  ];
+}
 
   // ==========================================================================
   // SCORING
   // ==========================================================================
 
   scoreHypothesis(
-    hypothesis,
-    context
-  ) {
-    const supportCount =
-      hypothesis
-        .evidenceSupporting
-        ?.length ||
-      0;
-
-    const againstCount =
-      hypothesis
-        .evidenceAgainst
-        ?.length ||
-      0;
-
-    const evidenceCompleteness =
-      clamp01(
+  hypothesis,
+  context
+) {
+  const availableEvidence =
+    new Set(
+      (
         context
           .evidence
-          ?.completeness ||
-        0
+          ?.items ||
+        []
+      )
+        .map(
+          (
+            evidence
+          ) =>
+            evidence
+              ?.id
+        )
+        .filter(
+          Boolean
+        )
+        .map(
+          String
+        )
+    );
+
+  const declaredSupporting =
+    uniqueStrings(
+      hypothesis
+        .evidenceSupporting ||
+      []
+    );
+
+  const declaredAgainst =
+    uniqueStrings(
+      hypothesis
+        .evidenceAgainst ||
+      []
+    );
+
+  /*
+   * Never reward evidence references that do not exist.
+   *
+   * Keep invalid references on the hypothesis so VerificationCritic can still
+   * independently detect and report them.
+   */
+  const validSupporting =
+    declaredSupporting
+      .filter(
+        (
+          id
+        ) =>
+          availableEvidence
+            .has(
+              String(
+                id
+              )
+            )
       );
 
-    const supportStrength =
-      Math.min(
-        1,
-        supportCount /
-          4
+  const invalidSupporting =
+    declaredSupporting
+      .filter(
+        (
+          id
+        ) =>
+          !availableEvidence
+            .has(
+              String(
+                id
+              )
+            )
       );
 
-    const contradictionPenalty =
-      Math.min(
-        0.5,
-        againstCount *
-          0.12
+  const validAgainst =
+    declaredAgainst
+      .filter(
+        (
+          id
+        ) =>
+          availableEvidence
+            .has(
+              String(
+                id
+              )
+            )
       );
 
-    let confidence =
-      (
-        hypothesis.confidence ||
-        0
-      ) *
-        0.45 +
-      supportStrength *
-        0.3 +
-      evidenceCompleteness *
-        0.25 -
-      contradictionPenalty;
-
-    confidence =
-      clamp01(
-        confidence
+  const invalidAgainst =
+    declaredAgainst
+      .filter(
+        (
+          id
+        ) =>
+          !availableEvidence
+            .has(
+              String(
+                id
+              )
+            )
       );
 
-    let status =
-      HYPOTHESIS_STATUS
-        .PROPOSED;
+  const supportCount =
+    validSupporting
+      .length;
 
-    if (
-      againstCount >
-      supportCount &&
-      againstCount >
+  const againstCount =
+    validAgainst
+      .length;
+
+  const evidenceCompleteness =
+    clamp01(
+      context
+        .evidence
+        ?.completeness ||
       0
-    ) {
-      status =
-        HYPOTHESIS_STATUS
-          .CONTRADICTED;
-    } else if (
-      confidence >=
+    );
+
+  const supportStrength =
+    Math.min(
+      1,
+      supportCount /
+        4
+    );
+
+  const contradictionPenalty =
+    Math.min(
+      0.5,
+      againstCount *
+        0.12
+    );
+
+  /*
+   * Invalid evidence references are a reasoning-quality defect.
+   *
+   * Do not make this an automatic rejection here because VerificationCritic
+   * remains the independent adversarial authority.
+   */
+  const invalidReferencePenalty =
+    Math.min(
+      0.3,
+      (
+        invalidSupporting.length +
+        invalidAgainst.length
+      ) *
+        0.08
+    );
+
+  const assumptionCount =
+    hypothesis
+      .assumptions
+      ?.length ||
+    0;
+
+  const unknownCount =
+    hypothesis
+      .unknowns
+      ?.length ||
+    0;
+
+  const uncertaintyPenalty =
+    Math.min(
+      0.2,
+      assumptionCount *
+        0.02 +
+      unknownCount *
+        0.015
+    );
+
+  const priorConfidence =
+    clamp01(
+      hypothesis
+        .confidence ||
+      0
+    );
+
+  let confidence =
+    priorConfidence *
+      0.4 +
+    supportStrength *
+      0.3 +
+    evidenceCompleteness *
+      0.3 -
+    contradictionPenalty -
+    invalidReferencePenalty -
+    uncertaintyPenalty;
+
+  confidence =
+    clamp01(
+      confidence
+    );
+
+  let status =
+    HYPOTHESIS_STATUS
+      .PROPOSED;
+
+  if (
+    againstCount >
+      supportCount &&
+    againstCount >
+      0
+  ) {
+    status =
+      HYPOTHESIS_STATUS
+        .CONTRADICTED;
+  } else if (
+    confidence >=
       0.8 &&
-      supportCount >=
-      2
-    ) {
-      status =
-        HYPOTHESIS_STATUS
-          .SUPPORTED;
-    } else if (
-      confidence >=
+    supportCount >=
+      2 &&
+    invalidSupporting.length ===
+      0
+  ) {
+    status =
+      HYPOTHESIS_STATUS
+        .SUPPORTED;
+  } else if (
+    confidence >=
       0.5
-    ) {
-      status =
-        HYPOTHESIS_STATUS
-          .WEAKLY_SUPPORTED;
-    }
+  ) {
+    status =
+      HYPOTHESIS_STATUS
+        .WEAKLY_SUPPORTED;
+  }
 
-    return {
-      ...hypothesis,
+  return {
+    ...hypothesis,
 
-      confidence:
+    confidence:
+      Number(
+        confidence
+          .toFixed(
+            4
+          )
+      ),
+
+    status,
+
+    /*
+     * Preserve raw evidence references for the independent critic.
+     */
+    evidenceSupporting:
+      declaredSupporting,
+
+    evidenceAgainst:
+      declaredAgainst,
+
+    validEvidenceSupporting:
+      validSupporting,
+
+    invalidEvidenceSupporting:
+      invalidSupporting,
+
+    validEvidenceAgainst:
+      validAgainst,
+
+    invalidEvidenceAgainst:
+      invalidAgainst,
+
+    scoreBreakdown: {
+      priorConfidence,
+
+      evidenceCompleteness,
+
+      validSupportingEvidenceCount:
+        supportCount,
+
+      invalidSupportingEvidenceCount:
+        invalidSupporting
+          .length,
+
+      validContradictingEvidenceCount:
+        againstCount,
+
+      invalidContradictingEvidenceCount:
+        invalidAgainst
+          .length,
+
+      supportStrength,
+
+      contradictionPenalty,
+
+      invalidReferencePenalty,
+
+      uncertaintyPenalty,
+
+      assumptionCount,
+
+      unknownCount,
+
+      finalConfidence:
         Number(
           confidence
             .toFixed(
               4
             )
         ),
-
-      status,
-    };
-  }
+    },
+  };
+}
 
   // ==========================================================================
   // OUTCOME
   // ==========================================================================
 
-  determineOutcome(
-    hypotheses,
-    context
-  ) {
-    const completeness =
-      clamp01(
-        context
-          .evidence
-          ?.completeness ||
-        0
-      );
-
-    if (
-      hypotheses.length ===
+ determineOutcome(
+  hypotheses,
+  context
+) {
+  const completeness =
+    clamp01(
+      context
+        .evidence
+        ?.completeness ||
       0
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .INSUFFICIENT_EVIDENCE;
-    }
+    );
 
-    const first =
-      hypotheses[0];
-
-    const second =
-      hypotheses[1] ||
-      null;
-
-    if (
-      completeness <
-      0.25 &&
-      first.confidence <
-      0.65
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .INSUFFICIENT_EVIDENCE;
-    }
-
-    if (
-      first.status ===
-      HYPOTHESIS_STATUS
-        .CONTRADICTED
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .CONTRADICTORY_EVIDENCE;
-    }
-
-    if (
-      first.confidence >=
-        0.9 &&
-      (
-        first
-          .evidenceSupporting
-          ?.length ||
-        0
-      ) >=
-        3
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .ROOT_CAUSE_IDENTIFIED;
-    }
-
-    if (
-      first.confidence >=
-      0.65
-    ) {
-      if (
-        second &&
-        Math.abs(
-          first.confidence -
-          second.confidence
-        ) <
-        0.12
-      ) {
-        return DIAGNOSIS_OUTCOME
-          .MULTIPLE_PLAUSIBLE_CAUSES;
-      }
-
-      return DIAGNOSIS_OUTCOME
-        .PROBABLE_CAUSE_IDENTIFIED;
-    }
-
+  if (
+    hypotheses.length ===
+    0
+  ) {
     return DIAGNOSIS_OUTCOME
       .INSUFFICIENT_EVIDENCE;
   }
+
+  /*
+   * Contradicted/rejected candidates must not become the winning root cause.
+   */
+  const plausible =
+    hypotheses
+      .filter(
+        (
+          hypothesis
+        ) =>
+          hypothesis.status !==
+            HYPOTHESIS_STATUS
+              .CONTRADICTED &&
+          hypothesis.status !==
+            HYPOTHESIS_STATUS
+              .REJECTED
+      );
+
+  if (
+    plausible.length ===
+    0
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .CONTRADICTORY_EVIDENCE;
+  }
+
+  const first =
+    plausible[0];
+
+  const second =
+    plausible[1] ||
+    null;
+
+  const firstValidSupportCount =
+    first
+      .validEvidenceSupporting
+      ?.length ??
+    first
+      .evidenceSupporting
+      ?.length ??
+    0;
+
+  if (
+    completeness <
+      0.25 &&
+    first.confidence <
+      0.65
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .INSUFFICIENT_EVIDENCE;
+  }
+
+  /*
+   * Preserve ambiguity before attempting to claim a root cause.
+   */
+  if (
+    second
+  ) {
+    const confidenceGap =
+      Math.abs(
+        first.confidence -
+        second.confidence
+      );
+
+    const bothPlausible =
+      first.confidence >=
+        0.5 &&
+      second.confidence >=
+        0.5;
+
+    if (
+      bothPlausible &&
+      confidenceGap <
+        0.12
+    ) {
+      return DIAGNOSIS_OUTCOME
+        .MULTIPLE_PLAUSIBLE_CAUSES;
+    }
+  }
+
+  /*
+   * ROOT_CAUSE_IDENTIFIED requires:
+   *
+   * - very high confidence
+   * - actual canonical supporting evidence
+   * - reasonable evidence completeness
+   * - no close competing hypothesis
+   */
+  if (
+    first.confidence >=
+      0.9 &&
+    firstValidSupportCount >=
+      3 &&
+    completeness >=
+      0.6
+  ) {
+    if (
+      second &&
+      (
+        first.confidence -
+        second.confidence
+      ) <
+        0.18
+    ) {
+      return DIAGNOSIS_OUTCOME
+        .MULTIPLE_PLAUSIBLE_CAUSES;
+    }
+
+    return DIAGNOSIS_OUTCOME
+      .ROOT_CAUSE_IDENTIFIED;
+  }
+
+  if (
+    first.confidence >=
+    0.65
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .PROBABLE_CAUSE_IDENTIFIED;
+  }
+
+  return DIAGNOSIS_OUTCOME
+    .INSUFFICIENT_EVIDENCE;
+}
+
+  buildAmbiguitySummary(
+  hypotheses
+) {
+  const plausible =
+    hypotheses
+      .filter(
+        (
+          hypothesis
+        ) =>
+          hypothesis.status !==
+            HYPOTHESIS_STATUS
+              .CONTRADICTED &&
+          hypothesis.status !==
+            HYPOTHESIS_STATUS
+              .REJECTED
+      );
+
+  if (
+    plausible.length ===
+    0
+  ) {
+    return {
+      ambiguous:
+        false,
+
+      confidenceGap:
+        null,
+
+      plausibleHypothesisIds:
+        [],
+
+      topHypothesisId:
+        null,
+
+      secondHypothesisId:
+        null,
+    };
+  }
+
+  const first =
+    plausible[0];
+
+  const second =
+    plausible[1] ||
+    null;
+
+  const confidenceGap =
+    second
+      ? Number(
+          Math.abs(
+            first.confidence -
+            second.confidence
+          )
+            .toFixed(
+              4
+            )
+        )
+      : null;
+
+  const plausibleHypothesisIds =
+    plausible
+      .filter(
+        (
+          hypothesis
+        ) =>
+          hypothesis.confidence >=
+          Math.max(
+            0.5,
+            first.confidence -
+              0.12
+          )
+      )
+      .map(
+        (
+          hypothesis
+        ) =>
+          hypothesis.id
+      );
+
+  return {
+    ambiguous:
+      plausibleHypothesisIds
+        .length >
+      1,
+
+    confidenceGap,
+
+    plausibleHypothesisIds,
+
+    topHypothesisId:
+      first.id,
+
+    secondHypothesisId:
+      second
+        ?.id ||
+      null,
+  };
+}
 
   // ==========================================================================
   // CONFIDENCE

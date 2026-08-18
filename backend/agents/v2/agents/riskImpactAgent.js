@@ -41,6 +41,9 @@ const {
 
 const {
   createAgentFinding,
+  createRiskAssessment,
+  RISK_LEVEL:
+    CONTRACT_RISK_LEVEL,
 } =
   require(
     "../contracts/agentContracts"
@@ -415,6 +418,30 @@ class RiskImpactAgent
           }
         );
 
+        const canonicalRiskAssessment =
+  this.buildCanonicalRiskAssessment({
+    deterministicAssessment,
+
+    availability,
+
+    blastRadius,
+
+    customerImpact,
+
+    serviceCriticality,
+
+    dataRisk,
+
+    securityRisk,
+
+    cascadingRisk,
+
+    recurrenceRisk,
+
+    riskConfidence,
+
+    aiOutput,
+  });
       // ======================================================================
       // 6. RESULT
       // ======================================================================
@@ -423,6 +450,9 @@ class RiskImpactAgent
         startedAt,
 
         {
+          riskAssessment:
+          canonicalRiskAssessment,
+
           riskScore:
             deterministicAssessment
               .riskScore,
@@ -1608,6 +1638,230 @@ class RiskImpactAgent
     };
   }
 
+  buildCanonicalRiskAssessment({
+  deterministicAssessment,
+  availability,
+  blastRadius,
+  customerImpact,
+  serviceCriticality,
+  dataRisk,
+  securityRisk,
+  cascadingRisk,
+  recurrenceRisk,
+  riskConfidence,
+  aiOutput,
+}) {
+  const legacyLevel =
+    deterministicAssessment
+      .riskLevel;
+
+  /*
+   * Canonical contract uses MEDIUM.
+   * Existing RiskImpactAgent historically uses MODERATE.
+   */
+  const canonicalLevel =
+    legacyLevel ===
+      RISK_LEVEL.MODERATE
+      ? CONTRACT_RISK_LEVEL
+          .MEDIUM
+      : CONTRACT_RISK_LEVEL[
+          legacyLevel
+        ] ||
+        CONTRACT_RISK_LEVEL
+          .MEDIUM;
+
+  const affectedServices =
+    uniqueStrings([
+      ...normalizeArray(
+        blastRadius
+          ?.affectedServices
+      ),
+
+      ...normalizeArray(
+        blastRadius
+          ?.dependentServices
+      ),
+    ]);
+
+  const affectedResources =
+    uniqueStrings(
+      normalizeArray(
+        blastRadius
+          ?.affectedResources
+      )
+    );
+
+  const highRisk =
+    canonicalLevel ===
+      CONTRACT_RISK_LEVEL.HIGH ||
+    canonicalLevel ===
+      CONTRACT_RISK_LEVEL.CRITICAL;
+
+  const sensitiveRisk =
+    dataRisk.score >=
+      0.5 ||
+    securityRisk.score >=
+      0.5;
+
+  const broadBlastRadius =
+    blastRadius.score >=
+      0.6;
+
+  const criticalService =
+    serviceCriticality.score >=
+      0.8;
+
+  const approvalRequired =
+    highRisk ||
+    sensitiveRisk ||
+    (
+      broadBlastRadius &&
+      criticalService
+    );
+
+  /*
+   * This is eligibility only.
+   *
+   * It is NOT authorization.
+   * DiagnosisSafetyGate remains authoritative.
+   */
+  const autonomousRecoveryEligible =
+    !approvalRequired &&
+    canonicalLevel !==
+      CONTRACT_RISK_LEVEL.CRITICAL &&
+    dataRisk.score <
+      0.5 &&
+    securityRisk.score <
+      0.5;
+
+  const reasons =
+    uniqueStrings([
+      ...normalizeArray(
+        availability.reasons
+      ),
+
+      ...normalizeArray(
+        blastRadius.reasons
+      ),
+
+      ...normalizeArray(
+        customerImpact.reasons
+      ),
+
+      ...normalizeArray(
+        serviceCriticality.reasons
+      ),
+
+      ...normalizeArray(
+        dataRisk.reasons
+      ),
+
+      ...normalizeArray(
+        securityRisk.reasons
+      ),
+
+      ...(
+        cascadingRisk.score >
+          0
+          ? [
+              "Cascading failure potential detected.",
+            ]
+          : []
+      ),
+
+      ...(
+        recurrenceRisk.recurring
+          ? [
+              recurrenceRisk.reason ||
+              "Incident recurrence detected.",
+            ]
+          : []
+      ),
+    ]);
+
+  return createRiskAssessment({
+    level:
+      canonicalLevel,
+
+    score:
+      deterministicAssessment
+        .riskScore,
+
+    confidence:
+      riskConfidence,
+
+    impactLevel:
+      deterministicAssessment
+        .impactLevel,
+
+    urgency:
+      deterministicAssessment
+        .urgency,
+
+    userFacing:
+      customerImpact.score >
+        0,
+
+    blastRadiusServiceCount:
+      affectedServices.length,
+
+    blastRadiusResourceCount:
+      affectedResources.length,
+
+    affectedServices,
+
+    affectedResources,
+
+    criticality:
+      serviceCriticality.score,
+
+    availabilityRisk:
+      availability.score >=
+      0.5,
+
+    dataRisk:
+      dataRisk.score >=
+      0.5,
+
+    securityRisk:
+      securityRisk.score >=
+      0.5,
+
+    financialRisk:
+      Boolean(
+        aiOutput
+          ?.financialRisk
+      ),
+
+    cascadingRisk:
+      cascadingRisk.score >=
+      0.5,
+
+    recurrenceRisk:
+      Boolean(
+        recurrenceRisk.recurring
+      ),
+
+    reversibility:
+      "UNKNOWN",
+
+    approvalRequired,
+
+    autonomousRecoveryEligible,
+
+    reasons,
+
+    riskFactors:
+      deterministicAssessment
+        .riskFactors,
+
+    unknowns:
+      normalizeArray(
+        aiOutput
+          ?.unknowns
+      ),
+  });
+}
   // ==========================================================================
   // CONFIDENCE
   // ==========================================================================

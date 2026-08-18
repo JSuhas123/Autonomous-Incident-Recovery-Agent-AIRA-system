@@ -30,6 +30,7 @@ const {
   AGENT_STATUS,
   AGENT_MANUAL_REASON,
   PLAYBOOK_RECOMMENDATION,
+  PLAYBOOK_SELECTION_SOURCE,
   createPlaybookRecommendation,
 } = require("../contracts/agentContracts");
 
@@ -306,6 +307,37 @@ class PlaybookSelectionAgent extends BaseAgent {
             recommendation:
               PLAYBOOK_RECOMMENDATION
                 .MANUAL_REQUIRED,
+
+                selectedCandidate:
+  preferredCandidate,
+
+eligiblePlaybookIds:
+  allowedCandidates
+    .map(
+      (candidate) =>
+        candidate.playbookId
+    ),
+
+selectionSource:
+  PLAYBOOK_SELECTION_SOURCE
+    .DETERMINISTIC_MAPPING,
+
+matcherAuthoritative:
+  true,
+
+approvalRequired:
+  _candidateRequiresApproval(
+    preferredCandidate
+  ) ||
+  Boolean(
+    deterministicMapping
+      ?.requiresApproval
+  ) ||
+  Boolean(
+    diagnosis
+      ?.risk
+      ?.approvalRequired
+  ),
           }),
 
           {
@@ -746,24 +778,99 @@ class PlaybookSelectionAgent extends BaseAgent {
       // Only matcher-approved IDs survive.
       // ───────────────────────────────────────────────────────────────────────
 
-      const candidateRankings =
-        (
-          Array.isArray(
-            output
-              .candidateRankings
-          )
-            ? output
-                .candidateRankings
-            : rankedInputCandidates
+      /*
+ * AI controls ordering only.
+ *
+ * Candidate metadata itself always comes from deterministic matcher output.
+ * This prevents model output from fabricating riskLevel, approvalMode,
+ * versions or parameter definitions.
+ */
+const aiRankingIds =
+  (
+    Array.isArray(
+      output.candidateRankings
+    )
+      ? output.candidateRankings
+      : []
+  )
+    .map(
+      (candidate) =>
+        typeof candidate ===
+          "string"
+          ? candidate
+          : candidate
+              ?.playbookId
+    )
+    .filter(
+      (playbookId) =>
+        playbookId &&
+        eligibleIds.has(
+          playbookId
         )
-          .filter(
-            (candidate) =>
-              candidate &&
-              eligibleIds.has(
-                candidate
-                  .playbookId
+    );
+
+const rankingOrder =
+  new Map(
+    aiRankingIds.map(
+      (
+        id,
+        index
+      ) => [
+        id,
+        index,
+      ]
+    )
+  );
+
+const candidateRankings =
+  [
+    ...allowedCandidates,
+  ]
+    .sort(
+      (
+        first,
+        second
+      ) => {
+        const firstRank =
+          rankingOrder.has(
+            first.playbookId
+          )
+            ? rankingOrder.get(
+                first.playbookId
               )
+            : Number.MAX_SAFE_INTEGER;
+
+        const secondRank =
+          rankingOrder.has(
+            second.playbookId
+          )
+            ? rankingOrder.get(
+                second.playbookId
+              )
+            : Number.MAX_SAFE_INTEGER;
+
+        if (
+          firstRank !==
+          secondRank
+        ) {
+          return (
+            firstRank -
+            secondRank
           );
+        }
+
+        return (
+          Number(
+            second.score ||
+            0
+          ) -
+          Number(
+            first.score ||
+            0
+          )
+        );
+      }
+    );
 
       // ───────────────────────────────────────────────────────────────────────
       // Step 7 — Resolve final candidate
@@ -916,50 +1023,121 @@ class PlaybookSelectionAgent extends BaseAgent {
         );
       }
 
-      const recommendationRecord =
-        createPlaybookRecommendation({
-          recommendedPlaybookId:
-            bestCandidate
-              .playbookId,
+      const riskRequiresApproval =
+  Boolean(
+    diagnosis
+      ?.risk
+      ?.approvalRequired
+  );
 
-          version:
-            bestCandidate
-              .semver ||
-            null,
+const candidateRequiresApproval =
+  _candidateRequiresApproval(
+    bestCandidate
+  );
 
-          candidateRankings,
+const mappingRequiresApproval =
+  Boolean(
+    mappedToBest &&
+    deterministicMapping
+      ?.requiresApproval
+  );
 
-          matcherScore:
-            bestCandidate
-              .score ||
-            0,
+const approvalRequired =
+  riskRequiresApproval ||
+  candidateRequiresApproval ||
+  mappingRequiresApproval;
 
-          reasoningConfidence,
+if (
+  approvalRequired
+) {
+  recommendation =
+    PLAYBOOK_RECOMMENDATION
+      .REQUIRE_APPROVAL;
+}
 
-          evidenceIds,
+const selectionSource =
+  mappedToBest
+    ? (
+        proposedId ===
+          bestCandidate.playbookId
+          ? PLAYBOOK_SELECTION_SOURCE
+              .HYBRID
+          : PLAYBOOK_SELECTION_SOURCE
+              .DETERMINISTIC_MAPPING
+      )
+    : (
+        proposedId ===
+          bestCandidate.playbookId
+          ? PLAYBOOK_SELECTION_SOURCE
+              .AI_RANKED
+          : PLAYBOOK_SELECTION_SOURCE
+              .DETERMINISTIC_MATCHER
+      );
 
-          reasons,
+const recommendationRecord =
+  createPlaybookRecommendation({
+    recommendedPlaybookId:
+      bestCandidate
+        .playbookId,
 
-          disqualifications:
+    version:
+      bestCandidate
+        .semver ||
+      null,
+
+    /*
+     * This snapshot comes only from deterministic matcher output.
+     */
+    selectedCandidate:
+      bestCandidate,
+
+    candidateRankings,
+
+    eligiblePlaybookIds:
+      allowedCandidates
+        .map(
+          (candidate) =>
+            candidate.playbookId
+        ),
+
+    matcherScore:
+      bestCandidate
+        .score ||
+      0,
+
+    reasoningConfidence,
+
+    evidenceIds,
+
+    reasons,
+
+    disqualifications:
+      matcherAnalysis
+        ?.disqualifications ||
+      [],
+
+    requiredAdditionalEvidence:
+      Array.isArray(
+        output
+          .requiredAdditionalEvidence
+      )
+        ? output
+            .requiredAdditionalEvidence
+        : (
             matcherAnalysis
-              ?.disqualifications ||
-            [],
+              ?.missingEvidence ||
+            []
+          ),
 
-          requiredAdditionalEvidence:
-            Array.isArray(
-              output
-                .requiredAdditionalEvidence
-            )
-              ? output
-                  .requiredAdditionalEvidence
-              : (
-                  matcherAnalysis
-                    ?.missingEvidence ||
-                  []
-                ),
+    selectionSource,
 
-          recommendation,
-        });
+    matcherAuthoritative:
+      true,
+
+    approvalRequired,
+
+    recommendation,
+  });
 
       return this._success(
         startedAt,

@@ -416,4 +416,126 @@ describe('AIRA V2 runtime architecture guardrails', () => {
 
     expect(first).toBe(second);
   });
+  test(
+  'AgentOrchestrator runtime class does not own a second production singleton',
+  () => {
+    const source =
+      readFile(
+        'agents/v2/runtime/agentOrchestrator.js'
+      );
+
+    expect(
+      source
+    ).not.toContain(
+      'function getAgentOrchestrator('
+    );
+
+    expect(
+      source
+    ).not.toContain(
+      'let _instance = null'
+    );
+
+    expect(
+      source
+    ).not.toContain(
+      'resetAgentOrchestrator()'
+    );
+
+    expect(
+      source
+    ).toContain(
+      'module.exports = {'
+    );
+
+    expect(
+      source
+    ).toContain(
+      'AgentOrchestrator'
+    );
+  }
+);
+
+test(
+  'server initializes agent runtime after core services and before startup recovery',
+  () => {
+    const source =
+      readFile(
+        'server.js'
+      );
+
+    const initializeServicesPosition =
+      source.indexOf(
+        'await initializeServices();'
+      );
+
+    const agentRuntimePosition =
+      source.indexOf(
+        'initializeAgentOrchestrator('
+      );
+
+    const startupRecoveryPosition =
+      source.indexOf(
+        'await runStartupRecovery();'
+      );
+
+    expect(
+      initializeServicesPosition
+    ).toBeGreaterThan(
+      -1
+    );
+
+    expect(
+      agentRuntimePosition
+    ).toBeGreaterThan(
+      initializeServicesPosition
+    );
+
+    expect(
+      startupRecoveryPosition
+    ).toBeGreaterThan(
+      agentRuntimePosition
+    );
+  }
+);
+
+test(
+  'production intelligence routes use canonical diagnosis before recovery continuation',
+  () => {
+    const manualRoute =
+      readFile(
+        'routes/agentIntelligenceRoutes.js'
+      );
+
+    const machineRoute =
+      readFile(
+        'routes/machineIngestionRoutes.js'
+      );
+
+    expect(
+      manualRoute
+    ).toContain(
+      'diagnosisLifecycleService'
+    );
+
+    expect(
+      manualRoute
+    ).toContain(
+      '.continueFromDiagnosis('
+    );
+
+    expect(
+      machineRoute
+    ).toContain(
+      'diagnosisLifecycleService'
+    );
+
+    expect(
+      machineRoute
+    ).toContain(
+      '.continueFromDiagnosis('
+    );
+  }
+);
+
 });

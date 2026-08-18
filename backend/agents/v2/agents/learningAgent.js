@@ -58,6 +58,23 @@ class LearningAgent extends BaseAgent {
     const provider  = this._reasoning || getReasoningProvider();
 
     try {
+      const decisionTrace =
+  context
+    .decisionTrace ||
+  null;
+
+if (
+  !decisionTrace
+) {
+  return this._manual(
+    startedAt,
+    "DECISION_TRACE_REQUIRED",
+    {
+      nextRecommendedStage:
+        "HUMAN_REVIEW",
+    }
+  );
+}
       const {
         incidentId, correlationId, tenantId,
         incident, evidence, diagnosis,
@@ -81,18 +98,72 @@ class LearningAgent extends BaseAgent {
         task: 'learning',
         systemInstructions: LEARNING_SYSTEM_PROMPT,
         structuredInput: {
-          incidentId,
-          incident: { type: incident?.type, severity: incident?.severity },
-          selectedPlaybookId: selectedPlaybook?.playbookId || null,
-          executionSucceeded: !!(playbookExecutionId && !rollbackResults?.length),
-          verificationPassed: verificationResults?.every(v => v.status === 'PASSED') || false,
-          rollbackOccurred:   (rollbackResults || []).length > 0,
-          manualOutcome:      manualOutcome || null,
-          diagnosisConfidence: diagnosis?.diagnosisConfidence || 0,
-          historicalOccurrences: historicalStats?.stats?.totalOccurrences || 0,
-          playbookSuccessRate: historicalStats?.recommendedAction?.successRate || null,
-          agentWarnings: (agentTrace || []).flatMap(r => r.warnings || []),
-        },
+  decisionTrace: {
+    traceId:
+      decisionTrace
+        .traceId,
+
+    incident:
+      decisionTrace
+        .incident,
+
+    diagnosis:
+      decisionTrace
+        .diagnosis,
+
+    risk:
+      decisionTrace
+        .risk,
+
+    playbookRecommendation:
+      decisionTrace
+        .playbookRecommendation,
+
+    parameterResolution:
+      decisionTrace
+        .parameterResolution,
+
+    policyDecision:
+      decisionTrace
+        .policyDecision,
+
+    approvalState:
+      decisionTrace
+        .approvalState,
+
+    execution:
+      decisionTrace
+        .execution,
+
+    recoveryObservation:
+      decisionTrace
+        .recoveryObservation,
+
+    manualRequired:
+      decisionTrace
+        .manualRequired,
+
+    manualReason:
+      decisionTrace
+        .manualReason,
+
+    finalOutcome:
+      decisionTrace
+        .finalOutcome,
+  },
+
+  historicalOccurrences:
+    historicalStats
+      ?.stats
+      ?.totalOccurrences ||
+    0,
+
+  playbookSuccessRate:
+    historicalStats
+      ?.recommendedAction
+      ?.successRate ||
+    null,
+},
         outputSchema: OUTPUT_SCHEMA,
         metadata: { incidentId, correlationId },
       });
@@ -150,8 +221,10 @@ class LearningAgent extends BaseAgent {
   getCapabilities() {
     return {
       ...super.getCapabilities(),
-      reads:       ['incidentMemory', 'context.agentTrace', 'context.verificationResults'],
-      writes:      ['draft-proposals-only'],
+reads: [
+  "context.decisionTrace",
+  "incidentMemory",],
+  writes:      ['draft-proposals-only'],
       requiresLLM: true,
     };
   }

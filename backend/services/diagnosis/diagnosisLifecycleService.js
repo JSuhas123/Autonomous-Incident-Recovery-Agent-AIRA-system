@@ -265,82 +265,184 @@ class DiagnosisLifecycleService {
   // RUN DIAGNOSIS
   // ==========================================================================
 
-  async runDiagnosis({
-    organizationId,
-    environmentId,
-    incidentId,
-    reason,
-    dependencies = {},
-  }) {
-    const coordinatorResult =
-      await this.coordinator
-        .diagnose(
-          {
-            organizationId,
-            environmentId,
-          },
+ async runDiagnosis({
+  organizationId,
+  environmentId,
+  incidentId,
+  reason,
+  dependencies = {},
+}) {
+  const coordinatorResult =
+    await this.coordinator
+      .diagnose(
+        {
+          organizationId,
+          environmentId,
+        },
 
-          incidentId,
+        incidentId,
 
-          dependencies
-        );
+        dependencies
+      );
 
-    coordinatorResult
-      .context
-      .metadata = {
-        ...(
-          coordinatorResult
-            .context
-            .metadata ||
-          {}
-        ),
-
-        lifecycleTrigger:
-          reason,
-      };
-
-    const persisted =
-      await this.persistence
-        .persist(
-          coordinatorResult
-        );
-
-    return {
-      triggered:
-        true,
-
-      reason,
-
-      incidentId,
-
-      runId:
+  /*
+   * Preserve the lifecycle trigger inside the canonical diagnostic context.
+   *
+   * The diagnostic pipeline remains read-only and this metadata is useful for
+   * audit, replay and downstream recovery-planning decisions.
+   */
+  coordinatorResult
+    .context
+    .metadata = {
+      ...(
         coordinatorResult
-          .runId,
+          .context
+          .metadata ||
+        {}
+      ),
 
-      diagnosisId:
-        persisted
-          .diagnosis
-          ._id,
-
-      revision:
-        persisted.revision,
-
-      decision:
-        coordinatorResult
-          .confidence
-          ?.decision ||
-        null,
-
-      confidence:
-        coordinatorResult
-          .confidence
-          ?.confidence ??
-        null,
-
-      executionAuthorized:
-        false,
+      lifecycleTrigger:
+        reason,
     };
-  }
+
+  const persisted =
+    await this.persistence
+      .persist(
+        coordinatorResult
+      );
+
+  /*
+   * Phase 12.1:
+   *
+   * Return the canonical diagnostic result to trusted in-process callers.
+   *
+   * This allows recovery planning to continue FROM the already completed
+   * diagnosis instead of independently re-running InvestigationAgent and
+   * DiagnosisAgent through the legacy compatibility orchestrator.
+   *
+   * Nothing returned here grants execution authority.
+   */
+  const canonicalResult = {
+    runId:
+      coordinatorResult
+        .runId,
+
+    coordinatorVersion:
+      coordinatorResult
+        .coordinatorVersion,
+
+    incidentId:
+      coordinatorResult
+        .incidentId,
+
+    organizationId:
+      coordinatorResult
+        .organizationId,
+
+    environmentId:
+      coordinatorResult
+        .environmentId,
+
+    tenantId:
+      coordinatorResult
+        .context
+        ?.tenantId ||
+      null,
+
+    diagnosis:
+      coordinatorResult
+        .diagnosis,
+
+    context:
+      coordinatorResult
+        .context,
+
+    agentTrace:
+      coordinatorResult
+        .agentTrace ||
+      [],
+
+    confidence:
+      coordinatorResult
+        .confidence,
+
+    safetyGate:
+      coordinatorResult
+        .safetyGate,
+
+    startedAt:
+      coordinatorResult
+        .startedAt,
+
+    completedAt:
+      coordinatorResult
+        .completedAt,
+
+    durationMs:
+      coordinatorResult
+        .durationMs,
+
+    executionAuthorized:
+      false,
+  };
+
+  return {
+    triggered:
+      true,
+
+    reason,
+
+    incidentId,
+
+    runId:
+      coordinatorResult
+        .runId,
+
+    diagnosisId:
+      persisted
+        .diagnosis
+        ._id,
+
+    revision:
+      persisted
+        .revision,
+
+    decision:
+      coordinatorResult
+        .confidence
+        ?.decision ||
+      null,
+
+    confidence:
+      coordinatorResult
+        .confidence
+        ?.confidence ??
+      null,
+
+    safetyGateDecision:
+      coordinatorResult
+        .safetyGate
+        ?.decision ||
+      null,
+
+    canEvaluatePlaybook:
+      Boolean(
+        coordinatorResult
+          .safetyGate
+          ?.canEvaluatePlaybook
+      ),
+
+    /*
+     * Trusted internal handoff object.
+     *
+     * HTTP routes must choose explicitly what they expose to clients.
+     */
+    canonicalResult,
+
+    executionAuthorized:
+      false,
+  };
+}
 
   // ==========================================================================
   // SHOULD RUN?
