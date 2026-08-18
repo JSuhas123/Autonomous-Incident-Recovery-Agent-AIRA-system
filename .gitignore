@@ -84,13 +84,9 @@ backend/jest-config-out.txt
 backend/jest-full-config.txt
 
 # Junk / corrupted files
-backend/{
 backend/console.error*
-frontend/{
 frontend/console.error*
 frontend/test-lines.txt
-frontend/src/pages/({
-frontend/src/pages/s.login)
 
 # One-off audit/summary docs that shouldn't be in root
 AIRA-*.md
