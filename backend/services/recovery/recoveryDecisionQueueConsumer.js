@@ -1,6 +1,8 @@
 "use strict";
 
-const queueService =
+const {
+  getQueueService,
+} =
   require(
     "../infrastructure/queueService"
   );
@@ -26,9 +28,17 @@ class RecoveryDecisionQueueConsumer {
   constructor(
     options = {}
   ) {
+    /*
+     * A concrete QueueService instance may be injected by tests / dedicated
+     * worker processes. Otherwise start() resolves the application singleton
+     * through getQueueService().
+     *
+     * Do not store the queueService module exports object here because that
+     * object does not expose connect() / consumeEvents().
+     */
     this.queueService =
       options.queueService ||
-      queueService;
+      null;
 
     this.worker =
       options.worker ||
@@ -71,12 +81,49 @@ class RecoveryDecisionQueueConsumer {
       };
     }
 
+    /*
+     * Resolve the actual QueueService singleton.
+     *
+     * When server.js has already initialized RabbitMQ this returns the same
+     * connected instance rather than creating a second queue connection.
+     */
     if (
       !this.queueService
-        .connected
+    ) {
+      this.queueService =
+        await getQueueService();
+    }
+
+    /*
+     * Defensive support for an explicitly injected queue instance.
+     */
+    if (
+      !this.queueService
+        ?.connected &&
+      typeof this.queueService
+        ?.connect ===
+        "function"
     ) {
       await this.queueService
         .connect();
+    }
+
+    if (
+      !this.queueService
+        ?.connected ||
+      typeof this.queueService
+        ?.consumeEvents !==
+        "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Recovery decision queue consumer cannot start because RabbitMQ is unavailable"
+        ),
+        {
+          code:
+            "RECOVERY_QUEUE_NOT_CONNECTED",
+        }
+      );
     }
 
     await this.queueService

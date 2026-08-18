@@ -3019,6 +3019,38 @@ async function initializeServices() {
   }
 
   // ==========================================================================
+  // DISTRIBUTED LOCK REDIS
+  // ==========================================================================
+
+  try {
+    if (
+      distributedLockService &&
+      typeof distributedLockService
+        .connect ===
+      "function" &&
+      !distributedLockService
+        .connected
+    ) {
+      await distributedLockService
+        .connect();
+    }
+
+    console.log(
+      distributedLockService
+        ?.connected
+        ? "[server] ✓ Distributed lock Redis connected"
+        : "[server] ⚠ Distributed lock Redis unavailable"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Distributed lock Redis initialization warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
   // PHASE 11.3 — DURABLE WORKFLOW OUTBOX
   // ==========================================================================
 
@@ -3037,13 +3069,25 @@ async function initializeServices() {
           workflowOutboxComposition,
       });
 
+    /*
+     * WorkflowOutboxRuntimeController does NOT consume a composition object
+     * directly.
+     *
+     * Its contract requires:
+     *
+     *   worker
+     *   queueService
+     *
+     * createWorkflowOutboxComposition() already builds the canonical
+     * WorkflowOutboxWorker and exposes it as composition.worker.
+     */
     workflowOutboxRuntime =
       new WorkflowOutboxRuntimeController({
-        composition:
-          workflowOutboxComposition,
+        worker:
+          workflowOutboxComposition
+            .worker,
 
-        consumers:
-          workflowOutboxConsumers,
+        queueService,
       });
 
     if (
@@ -3208,24 +3252,77 @@ async function initializeServices() {
   // ==========================================================================
 
   try {
-    global
-      .multiInstanceCoordinator =
-      new MultiInstanceCoordinator();
-
+    /*
+     * NODE_INSTANCE_ID is the systemHealthService contract that marks the
+     * deployment as genuinely multi-instance.
+     *
+     * Do not run Redis heartbeat/leader coordination in SINGLE_INSTANCE mode.
+     */
     if (
-      typeof global
-        .multiInstanceCoordinator
-        .start ===
-      "function"
+      systemHealthService
+        .isMultiInstance
     ) {
-      await global
-        .multiInstanceCoordinator
-        .start();
-    }
+      /*
+       * MultiInstanceCoordinator expects a raw node-redis client exposing
+       * hSet(), hGetAll(), hDel(), expire(), etc.
+       *
+       * distributedLockService already owns exactly such a client, so use
+       * that canonical Redis connection instead of creating another client
+       * or constructing the coordinator with undefined.
+       */
+      const coordinatorRedisClient =
+        distributedLockService
+          ?.getRedisClient?.();
 
-    console.log(
-      "[server] ✓ Multi-instance coordinator started"
-    );
+      if (
+        !coordinatorRedisClient ||
+        !distributedLockService
+          ?.connected
+      ) {
+        throw Object.assign(
+          new Error(
+            "Multi-instance coordination requires a connected Redis client"
+          ),
+          {
+            code:
+              "MULTI_INSTANCE_REDIS_REQUIRED",
+          }
+        );
+      }
+
+      global
+        .multiInstanceCoordinator =
+        new MultiInstanceCoordinator(
+          coordinatorRedisClient
+        );
+
+      if (
+        typeof global
+          .multiInstanceCoordinator
+          .start ===
+        "function"
+      ) {
+        await global
+          .multiInstanceCoordinator
+          .start();
+      }
+
+      console.log(
+        "[server] ✓ Multi-instance coordinator started"
+      );
+    } else {
+      /*
+       * Local development / one-replica deployments do not need heartbeat,
+       * leader election or a Redis instance registry.
+       */
+      global
+        .multiInstanceCoordinator =
+        null;
+
+      console.log(
+        "[server] Multi-instance coordinator skipped (SINGLE_INSTANCE mode)"
+      );
+    }
   } catch (
     error
   ) {

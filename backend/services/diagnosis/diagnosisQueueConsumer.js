@@ -28,7 +28,9 @@
  * - no execution authorization
  */
 
-const queueService =
+const {
+  getQueueService,
+} =
   require(
     "../infrastructure/queueService"
   );
@@ -64,9 +66,33 @@ class DiagnosisQueueConsumer {
   constructor(
     options = {}
   ) {
+    /*
+     * A concrete QueueService instance may be injected by tests
+     * or a dedicated worker process.
+     *
+     * Otherwise start() resolves the application's singleton
+     * QueueService through getQueueService().
+     *
+     * IMPORTANT:
+     *
+     * Do NOT assign require("../infrastructure/queueService")
+     * directly here.
+     *
+     * That module exports:
+     *
+     * {
+     *   QueueService,
+     *   getQueueService,
+     *   setMockFallback,
+     *   clearMockFallback
+     * }
+     *
+     * It is not itself the QueueService instance and therefore
+     * does not expose connect() / consumeEvents().
+     */
     this.queueService =
       options.queueService ||
-      queueService;
+      null;
 
     this.worker =
       options.worker ||
@@ -116,14 +142,31 @@ class DiagnosisQueueConsumer {
     }
 
     /*
-     * queueService normally connects during application startup.
+     * Resolve the real queue singleton lazily.
      *
-     * But keeping this defensive check means the consumer can also
-     * operate from a dedicated worker process later.
+     * Application startup normally connects RabbitMQ before consumers
+     * start, so this should return that same already-connected instance.
+     *
+     * It also keeps the consumer usable from a dedicated worker
+     * process where the queue may not yet have been initialized.
      */
     if (
       !this.queueService
-        .connected
+    ) {
+      this.queueService =
+        await getQueueService();
+    }
+
+    /*
+     * Defensive compatibility for explicitly injected QueueService
+     * instances.
+     */
+    if (
+      !this.queueService
+        ?.connected &&
+      typeof this.queueService
+        ?.connect ===
+        "function"
     ) {
       await this.queueService
         .connect();
@@ -131,7 +174,10 @@ class DiagnosisQueueConsumer {
 
     if (
       !this.queueService
-        .connected
+        ?.connected ||
+      typeof this.queueService
+        ?.consumeEvents !==
+        "function"
     ) {
       throw Object.assign(
         new Error(
@@ -334,7 +380,7 @@ class DiagnosisQueueConsumer {
       connected:
         Boolean(
           this.queueService
-            .connected
+            ?.connected
         ),
 
       topic:
