@@ -1,0 +1,50 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-INVESTIGATE-DNS
+name: Kubernetes Cluster DNS Investigation
+description: Read-only investigation of Kubernetes cluster DNS health using DNS Service and endpoint evidence.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: namespace
+    type: string
+    required: false
+    description: Namespace containing the cluster DNS Service. Defaults to kube-system.
+steps:
+  - id: step-01
+    name: Check Kubernetes DNS health
+    order: 1
+    type: kubernetes
+    action: check_dns
+    params:
+      namespace: ${namespace}
+    failurePolicy: STOP
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: dns_healthy
+      description: Cluster DNS Service must expose the DNS port and have ready backing endpoints.
+      params:
+        namespace: ${namespace}
+      timeoutSeconds: 30
+auditConfig:
+  redactSensitiveValues: false

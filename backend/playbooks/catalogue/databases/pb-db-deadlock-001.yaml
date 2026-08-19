@@ -1,0 +1,80 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-DEADLOCK-001
+semver: 1.0.0
+name: Database Deadlock Investigation
+description: Investigates database deadlock conditions and supporting lock evidence without terminating transactions.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - DatabaseDeadlock
+    - database.deadlock
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-deadlock
+    order: 1
+    name: Investigate Deadlock
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-DEADLOCKS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-health
+    order: 2
+    name: Verify Database Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-CHECK-HEALTH
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

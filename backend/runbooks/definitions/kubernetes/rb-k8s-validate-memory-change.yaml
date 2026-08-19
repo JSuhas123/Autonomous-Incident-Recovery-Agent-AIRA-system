@@ -1,0 +1,91 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-VALIDATE-MEMORY-CHANGE
+name: Validate Kubernetes Deployment Memory Change
+
+description: >
+  Read-only validation of the current Deployment resource configuration before
+  any memory request or limit adjustment. This runbook does not modify
+  Kubernetes resources.
+
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: pod
+    type: string
+    required: false
+    description: Pod associated with the OOMKilled event.
+
+  - name: deployment
+    type: string
+    required: true
+    description: Owning Deployment whose resources may be changed.
+
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Deployment.
+
+steps:
+  - id: step-01
+    name: Read deployment resource configuration
+    order: 1
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Read affected pod configuration
+    order: 2
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment exists and its resource configuration is readable.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: false

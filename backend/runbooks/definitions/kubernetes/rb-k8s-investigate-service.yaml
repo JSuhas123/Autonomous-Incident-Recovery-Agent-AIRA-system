@@ -1,0 +1,77 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-INVESTIGATE-SERVICE
+name: Kubernetes Service Endpoint Investigation
+description: >-
+  Read-only investigation of Kubernetes Service configuration and its ready or not-ready backing
+  endpoints.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: service
+    type: string
+    required: true
+    description: Name of the affected Kubernetes Service.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Service.
+steps:
+  - id: step-01
+    name: Get Service configuration
+    order: 1
+    type: kubernetes
+    action: get_service
+    params:
+      resource: ${service}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Get Service endpoints
+    order: 2
+    type: kubernetes
+    action: get_endpoints
+    params:
+      resource: ${service}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+  - id: step-03
+    name: Evaluate ready Service endpoints
+    order: 3
+    type: kubernetes
+    action: check_service_endpoints
+    params:
+      resource: ${service}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: service_endpoints_ready
+      description: Capture whether the Service currently has usable ready endpoints.
+      params:
+        service: ${service}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+auditConfig:
+  redactSensitiveValues: false

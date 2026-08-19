@@ -1,0 +1,80 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-CERTIFICATE-CHAIN-FAILURE-001
+semver: 1.0.0
+name: TLS Certificate Chain Failure Investigation
+description: Investigates certificate-chain and TLS handshake failures without modifying certificates.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - TLSCertificateChainFailure
+    - CertificateValidationFailure
+    - network.tls.chain_failure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - tls
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-tls
+    order: 1
+    name: Investigate TLS
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-TLS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-tls
+    order: 2
+    name: Verify TLS
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-TLS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

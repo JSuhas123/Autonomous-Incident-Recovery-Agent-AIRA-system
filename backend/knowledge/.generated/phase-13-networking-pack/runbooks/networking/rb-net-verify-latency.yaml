@@ -1,0 +1,54 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-NET-VERIFY-LATENCY
+semver: 1.0.0
+name: Network Latency Verification
+description: Verifies whether network latency has returned to acceptable conditions.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external network diagnostic target.
+steps:
+  - id: step-01
+    name: Verify network latency
+    order: 1
+    type: networking
+    action: check_latency
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: Network Latency Verification completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - networking
+  - diagnostic
+  - read-only
+  - phase-13

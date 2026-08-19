@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-PVC-PENDING-001
+name: Kubernetes PersistentVolumeClaim Pending Investigation
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates an unbound or unhealthy PersistentVolumeClaim and verifies whether storage binding
+  becomes healthy.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - PersistentVolumeClaimPending
+    - PVCPending
+    - PVCUnbound
+    - kubernetes.pvc.pending
+    - kubernetes.storage.pvc.unbound
+  severities:
+    - P1
+    - P2
+    - P3
+    - critical
+    - high
+    - medium
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.pvc
+  - resource.namespace
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: LOW
+  blastRadius: persistent-volume-claim
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-pvc
+    order: 1
+    name: Investigate PersistentVolumeClaim
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-PVC
+        required: true
+        parameterMappings:
+          pvc: ${incident.resource.pvc}
+          namespace: ${incident.resource.namespace}
+  - id: verify-pvc
+    order: 2
+    name: Verify PersistentVolumeClaim State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-PVC
+        required: true
+        parameterMappings:
+          pvc: ${incident.resource.pvc}
+          namespace: ${incident.resource.namespace}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true

@@ -1,0 +1,101 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MSG-CONSUMER-FAILURE-001
+semver: "1.0.0"
+
+name: Message Consumer Failure Investigation
+
+description: >
+  Investigates unhealthy or stalled message consumers and correlates consumer
+  state with delivery and queue backlog evidence without restarting or scaling
+  consumer workloads.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+incident:
+  types:
+    - messaging.consumer_failure
+  severities:
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.65
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-consumer
+    order: 1
+    name: Inspect Consumer Health
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONSUMER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-delivery
+    order: 2
+    name: Inspect Delivery and Backlog
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-DELIVERY-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-MSG-CHECK-QUEUE-DEPTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-lag
+    order: 3
+    name: Verify Consumer Lag
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONSUMER-LAG
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: messaging-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - consumer
+  - delivery

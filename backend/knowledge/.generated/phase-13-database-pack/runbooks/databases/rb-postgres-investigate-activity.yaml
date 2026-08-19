@@ -1,0 +1,70 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-POSTGRES-INVESTIGATE-ACTIVITY
+semver: 1.0.0
+name: PostgreSQL Activity Investigation
+description: Inspects PostgreSQL activity and supporting generic database evidence without terminating sessions.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external database diagnostic target.
+steps:
+  - id: step-01
+    name: Inspect PostgreSQL activity
+    order: 1
+    type: postgres
+    action: get_activity
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+  - id: step-02
+    name: Inspect database locks
+    order: 2
+    type: database
+    action: get_locks
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+  - id: step-03
+    name: Inspect slow queries
+    order: 3
+    type: database
+    action: get_slow_queries
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: PostgreSQL Activity Investigation completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - database
+  - diagnostic
+  - read-only
+  - phase-13

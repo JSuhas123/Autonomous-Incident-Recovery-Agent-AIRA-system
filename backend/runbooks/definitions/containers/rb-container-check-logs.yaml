@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-LOGS
+semver: "1.0.0"
+name: Check Container Logs
+description: Inspect recent and previous container log evidence.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-container-logs
+    order: 1
+    type: containers
+    action: check_container_logs
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, logs, diagnostic]

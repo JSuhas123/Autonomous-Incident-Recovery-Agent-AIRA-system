@@ -1,0 +1,113 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-DEPLOYMENT-RESTART-001
+name: Kubernetes Unhealthy Deployment Restart
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates an unhealthy Kubernetes Deployment, performs a controlled restart when approved, and
+  verifies recovery.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - DeploymentUnhealthy
+    - kubernetes.deployment.unhealthy
+    - DeploymentUnavailable
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.deployment
+  - resource.namespace
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: HIGH
+  blastRadius: deployment
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-deployment
+    order: 1
+    name: Investigate Deployment
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-DEPLOYMENT
+        required: true
+        parameterMappings:
+          deployment: ${incident.resource.deployment}
+          namespace: ${incident.resource.namespace}
+  - id: restart-deployment
+    order: 2
+    name: Restart Unhealthy Deployment
+    type: RECOVERY
+    failurePolicy: ESCALATE
+    requiresApproval: true
+    runbooks:
+      - runbookId: RB-K8S-RESTART-DEPLOYMENT
+        required: true
+        parameterMappings:
+          deployment: ${incident.resource.deployment}
+          namespace: ${incident.resource.namespace}
+  - id: verify-deployment
+    order: 3
+    name: Verify Deployment Recovery
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-DEPLOYMENT
+        required: true
+        parameterMappings:
+          deployment: ${incident.resource.deployment}
+          namespace: ${incident.resource.namespace}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true

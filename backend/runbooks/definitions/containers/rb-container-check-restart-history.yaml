@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-RESTART-HISTORY
+semver: "1.0.0"
+name: Check Container Restart History
+description: Inspect container restart counts and restart history.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-restart-history
+    order: 1
+    type: containers
+    action: check_restart_history
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, restart, diagnostic]

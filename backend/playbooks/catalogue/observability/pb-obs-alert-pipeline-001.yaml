@@ -1,94 +1,140 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-OBS-ALERT-PIPELINE-001
-semver: "1.0.0"
-name: Alert Pipeline Failure Recovery
+semver: "2.0.0"
+
+name: Alert Pipeline Failure Investigation
+
 description: >
-  Detects and resolves failures in the alerting pipeline (Alertmanager,
-  PagerDuty forwarder, notification webhook). Restarts pipeline components,
-  validates routing rules and sends a test notification to confirm end-to-end
-  delivery.
+  Investigates failures in the alert evaluation, routing and delivery pipeline.
+  Inspects alert-pipeline health and downstream alert delivery without
+  restarting Alertmanager, modifying routing rules, changing receivers,
+  creating silences or sending synthetic alerts.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
 
-incidentMatching:
-  incidentType: observability.alert_pipeline_failure
-  severity: [high, critical]
-  environment: [production]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - alerting
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: AlertPipeline
+incident:
+  types:
+    - observability.alert_pipeline_failure
+    - AlertPipelineFailure
+    - AlertDeliveryFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - alertmanager
+    - prometheus
+    - pagerduty
+    - webhook
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
-  - pipeline_component
-  - failure_reason
+  - resource.targetId
 
-stages:
-  - stageId: investigate-pipeline
-    name: Investigate Alert Pipeline
-    type: INVESTIGATION
-    order: 1
-    description: Inspect Alertmanager status and recent delivery errors
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          label_selector: "app=alertmanager"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: restart-pipeline-component
-    name: Restart Pipeline Component
-    type: RECOVERY
-    order: 2
-    description: Restart the failing component in the alert pipeline
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.evidence.pipeline_component}"
-        required: true
-    failurePolicy: ESCALATE
-
-  - stageId: verify-alert-delivery
-    name: Verify Alert Delivery
-    type: VERIFICATION
-    order: 3
-    description: Send test alert and confirm end-to-end delivery
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pipeline_component: "${incident.evidence.pipeline_component}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.80
 
 risk:
-  level: HIGH
-  blastRadius: service
+  level: LOW
+  blastRadius: observability-target
   reversible: true
-  rollbackStrategy: NONE
 
 policy:
-  required: false
+  required: true
+  approvalGroups:
+    - observability-team
 
 approval:
-  mode: AUTOMATIC
+  mode: MANUAL
+
+stages:
+  - id: investigate-alert-pipeline
+    order: 1
+    name: Investigate Alert Pipeline
+    type: INVESTIGATION
+    description: >
+      Inspect alert processing, routing and pipeline-health evidence.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-ALERT-PIPELINE
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-alert-delivery
+    order: 2
+    name: Investigate Alert Delivery
+    type: INVESTIGATION
+    description: >
+      Determine whether evaluated alerts are reaching configured downstream
+      notification destinations.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-ALERT-DELIVERY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TARGET-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-alert-pipeline
+    order: 3
+    name: Verify Alert Pipeline State
+    type: VERIFICATION
+    description: >
+      Re-check alert processing and delivery after remediation has occurred
+      externally or through an approved operational workflow.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-ALERT-PIPELINE
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-ALERT-DELIVERY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
 
 escalation:
   enabled: true
-  maxAttempts: 2
+  maxAttempts: 1
   escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - alerting
+  - alertmanager
+  - pagerduty
+  - diagnostic
+  - read-only

@@ -1,0 +1,65 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-VERIFY-POD-RECOVERY
+name: Kubernetes Pod Recovery Verification
+description: Read-only verification that a Kubernetes pod is Running and Ready after recovery.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Name of the pod to verify.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the pod.
+steps:
+  - id: step-01
+    name: Check pod readiness
+    order: 1
+    type: kubernetes
+    action: check_pod_ready
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Collect pod detail after recovery
+    order: 2
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ALL
+  timeoutSeconds: 120
+  checks:
+    - id: check-01
+      type: pod_ready
+      description: Pod must be Running and Ready.
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 120
+auditConfig:
+  redactSensitiveValues: false

@@ -1,87 +1,95 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-DB-REPLICATION-LAG-001
-semver: "1.0.0"
-name: Database Replication Lag Recovery
+semver: 2.0.0
+
+name: Database Replication Lag Investigation
+
 description: >
-  Detects and responds to excessive replication lag on database replicas.
-  Investigates write volume, network conditions and replica health. Triggers
-  failover only when replica is unrecoverable.
+  Investigates excessive database replication lag and verifies current
+  replication state using read-only diagnostics. This playbook does not
+  stop replication, promote replicas, perform failover, or modify database
+  topology.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
 
-incidentMatching:
-  incidentType: database.replication_lag
-  severity: [high, critical]
-  environment: [production]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: DatabaseReplica
+incident:
+  types:
+    - DatabaseReplicationLag
+    - DatabaseReplicationDegraded
+    - database.replication_lag
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - replica_host
-  - primary_host
-  - lag_seconds
+  - resource.targetId
 
-stages:
-  - stageId: investigate-replication-lag
-    name: Investigate Replication Lag
-    type: INVESTIGATION
-    order: 1
-    description: Collect replication metrics and identify root cause
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          replica_host: "${incident.resource.replica_host}"
-          primary_host: "${incident.resource.primary_host}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: mitigate-lag
-    name: Mitigate Replication Lag
-    type: MITIGATION
-    order: 2
-    description: Throttle writes or pause non-critical replication sources
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          replica_host: "${incident.resource.replica_host}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: verify-replication
-    name: Verify Replication Caught Up
-    type: VERIFICATION
-    order: 3
-    description: Confirm lag is below acceptable threshold
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          replica_host: "${incident.resource.replica_host}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.75
 
 risk:
-  level: CRITICAL
-  blastRadius: cluster
-  reversible: false
-  rollbackStrategy: NONE
+  level: LOW
+  blastRadius: database-target
+  reversible: true
 
 policy:
   required: true
-  approvalGroups: [dba-team, platform-lead]
 
 approval:
   mode: MANUAL
+
+stages:
+  - id: investigate-replication
+    order: 1
+    name: Investigate Replication State
+    type: INVESTIGATION
+    description: >
+      Collect replication state and evaluate observed replication lag.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-REPLICATION
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-replication
+    order: 2
+    name: Verify Replication State
+    type: VERIFICATION
+    description: >
+      Verify whether replication lag is currently within acceptable limits.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-VERIFY-REPLICATION
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
@@ -90,3 +98,14 @@ escalation:
   enabled: true
   maxAttempts: 1
   escalateTo: dba-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - database
+  - replication
+  - replication-lag
+  - diagnostic
+  - read-only

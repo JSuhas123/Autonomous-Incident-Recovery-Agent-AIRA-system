@@ -1,0 +1,97 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-RUNTIME-UNAVAILABLE-001
+semver: "1.0.0"
+
+name: Container Runtime Unavailable Investigation
+
+description: >
+  Investigates unavailable or degraded container runtimes such as Docker,
+  containerd or CRI-compatible runtimes without restarting or modifying
+  runtime services.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+
+incident:
+  types:
+    - container.runtime_unavailable
+    - ContainerRuntimeUnavailable
+  severities:
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.7
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-runtime
+    order: 1
+    name: Inspect Runtime Health
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RUNTIME-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-container
+    order: 2
+    name: Inspect Container State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-STATE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-runtime-storage
+    order: 3
+    name: Verify Runtime Storage
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-FILESYSTEM-USAGE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - runtime
+  - docker
+  - containerd

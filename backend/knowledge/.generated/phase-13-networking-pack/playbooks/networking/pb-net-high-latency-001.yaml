@@ -1,0 +1,87 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-HIGH-LATENCY-001
+semver: 1.0.0
+name: Network High Latency Investigation
+description: Investigates elevated latency using latency, packet-loss and route diagnostics.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - NetworkHighLatency
+    - NetworkLatencyDegraded
+    - network.high_latency
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-latency
+    order: 1
+    name: Investigate Network Latency
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-LATENCY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-PACKET-LOSS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-ROUTE
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-latency
+    order: 2
+    name: Verify Network Latency
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-LATENCY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

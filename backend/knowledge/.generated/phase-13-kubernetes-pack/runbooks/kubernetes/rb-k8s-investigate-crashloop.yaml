@@ -1,0 +1,87 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-INVESTIGATE-CRASHLOOP
+name: Kubernetes CrashLoop Investigation
+description: Read-only investigation of a pod repeatedly restarting or entering CrashLoopBackOff.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: pod
+    type: string
+    required: true
+    description: Name of the affected Kubernetes pod.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the affected pod.
+steps:
+  - id: step-01
+    name: Get pod detail
+    order: 1
+    type: kubernetes
+    action: get_pod
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Collect recent Kubernetes events
+    order: 2
+    type: kubernetes
+    action: get_events
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+  - id: step-03
+    name: Collect current container logs
+    order: 3
+    type: kubernetes
+    action: get_logs
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+      tailLines: 100
+    failurePolicy: CONTINUE
+  - id: step-04
+    name: Collect previous container logs
+    order: 4
+    type: kubernetes
+    action: get_logs
+    params:
+      pod: ${pod}
+      namespace: ${namespace}
+      tailLines: 100
+      previous: true
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: pod_ready
+      description: Capture current pod readiness state.
+      params:
+        pod: ${pod}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+auditConfig:
+  redactSensitiveValues: false

@@ -1,0 +1,104 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-OOM-001
+semver: "1.0.0"
+
+name: Container Out Of Memory Investigation
+
+description: >
+  Investigates containers terminated or degraded because of memory
+  exhaustion. Correlates termination reason, memory consumption,
+  configured limits and restart history without changing memory limits.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+
+incident:
+  types:
+    - container.oom
+    - container.oom_killed
+    - ContainerOOMKilled
+  severities:
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.7
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-termination
+    order: 1
+    name: Inspect Termination Reason
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-EXIT-REASON
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-memory
+    order: 2
+    name: Inspect Memory State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RESOURCE-USAGE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-RESOURCE-LIMITS
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-restart-history
+    order: 3
+    name: Verify Restart History
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RESTART-HISTORY
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - oom
+  - memory
+  - resources

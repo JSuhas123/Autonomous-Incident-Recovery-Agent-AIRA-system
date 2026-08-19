@@ -1,87 +1,96 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-DB-DISK-PRESSURE-001
-semver: "1.0.0"
-name: Database Disk Pressure Recovery
+semver: 2.0.0
+
+name: Database Storage Pressure Investigation
+
 description: >
-  Responds to database nodes approaching disk capacity. Identifies growth
-  sources (logs, temp tables, orphaned data), triggers cleanup and alerts
-  when automated cleanup is insufficient.
+  Investigates database storage pressure and verifies current storage
+  headroom using read-only diagnostics. This playbook does not delete
+  database data, purge logs, vacuum tables, resize volumes, or perform
+  other storage mutations.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
 
-incidentMatching:
-  incidentType: database.disk_pressure
-  severity: [high, critical]
-  environment: [production, staging]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: DatabaseNode
+incident:
+  types:
+    - DatabaseDiskPressure
+    - DatabaseStoragePressure
+    - database.disk_pressure
+    - database.storage.pressure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - db_host
-  - disk_used_percent
-  - disk_path
+  - resource.targetId
 
-stages:
-  - stageId: investigate-disk-usage
-    name: Investigate Disk Usage
-    type: INVESTIGATION
-    order: 1
-    description: Identify largest consumers and growth trends
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          db_host: "${incident.resource.host}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: cleanup-disk
-    name: Clean Up Disk Space
-    type: RECOVERY
-    order: 2
-    description: Remove old logs, vacuum dead tuples, purge temp data
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          db_host: "${incident.resource.host}"
-          disk_path: "${incident.resource.disk_path}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: verify-disk-headroom
-    name: Verify Disk Headroom
-    type: VERIFICATION
-    order: 3
-    description: Confirm disk usage is below critical threshold
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        semver: ">=1.0.0"
-        parameterMappings:
-          db_host: "${incident.resource.host}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.70
 
 risk:
-  level: CRITICAL
-  blastRadius: cluster
-  reversible: false
-  rollbackStrategy: NONE
+  level: LOW
+  blastRadius: database-target
+  reversible: true
 
 policy:
   required: true
-  approvalGroups: [dba-team]
 
 approval:
   mode: MANUAL
+
+stages:
+  - id: investigate-storage
+    order: 1
+    name: Investigate Database Storage
+    type: INVESTIGATION
+    description: >
+      Inspect storage utilization, available capacity, and storage-pressure
+      indicators for the affected database target.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-STORAGE
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-storage
+    order: 2
+    name: Verify Storage State
+    type: VERIFICATION
+    description: >
+      Verify whether storage utilization remains under unsafe pressure.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-VERIFY-STORAGE
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
@@ -90,3 +99,14 @@ escalation:
   enabled: true
   maxAttempts: 1
   escalateTo: dba-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - database
+  - storage
+  - disk-pressure
+  - diagnostic
+  - read-only

@@ -1,84 +1,41 @@
 apiVersion: aira.io/v1
 kind: Playbook
 playbookId: PB-CONTAINER-CRASH-001
-semver: "1.0.0"
-name: Container Crash Recovery
+semver: "2.0.0"
+
+name: Container Crash Investigation
+
 description: >
-  Handles containers that have exited with a non-zero status code. Collects
-  crash logs, identifies exit code patterns and restarts the container with
-  optional resource limit adjustments.
+  Investigates containers that terminate unexpectedly or exit with non-zero
+  status codes. Correlates container state, termination reason, previous logs
+  and restart history without restarting or modifying the workload.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
 
-incidentMatching:
-  incidentType: container.crash
-  severity: [medium, high, critical]
-  environment: [production, staging]
-
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: Container
+incident:
+  types:
+    - container.crash
+    - ContainerCrash
+  severities:
+    - medium
+    - high
+    - critical
 
 requiredEvidence:
-  - namespace
-  - pod_name
-  - container_name
-  - exit_code
+  - resource.targetId
 
-stages:
-  - stageId: collect-crash-logs
-    name: Collect Crash Logs
-    type: INVESTIGATION
-    order: 1
-    description: Retrieve previous container logs and exit code
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-          container: "${incident.resource.container}"
-        required: true
-    failurePolicy: CONTINUE
-
-  - stageId: restart-crashed-container
-    name: Restart Crashed Container
-    type: RECOVERY
-    order: 2
-    description: Restart the pod hosting the crashed container
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: verify-container-stable
-    name: Verify Container Stable
-    type: VERIFICATION
-    order: 3
-    description: Confirm container has not crashed again within the window
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          pod_name: "${incident.resource.pod}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.6
 
 risk:
-  level: MEDIUM
-  blastRadius: pod
+  level: LOW
+  blastRadius: none
   reversible: true
-  rollbackStrategy: NONE
 
 policy:
   required: false
@@ -86,10 +43,69 @@ policy:
 approval:
   mode: AUTOMATIC
 
+stages:
+  - id: inspect-container-state
+    order: 1
+    name: Inspect Container State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-STATE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-EXIT-REASON
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-crash-evidence
+    order: 2
+    name: Inspect Crash Evidence
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-LOGS
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-RESTART-HISTORY
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-runtime
+    order: 3
+    name: Verify Runtime Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RUNTIME-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
 rollback:
   strategy: NONE
 
 escalation:
-  enabled: true
-  maxAttempts: 3
+  maxRecoveryAttempts: 1
   escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - crash
+  - runtime
+  - diagnostic
+  - read-only

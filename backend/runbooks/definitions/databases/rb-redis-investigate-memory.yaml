@@ -1,0 +1,62 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-REDIS-INVESTIGATE-MEMORY
+semver: 1.0.0
+name: Redis Memory Pressure Investigation
+description: Inspects Redis memory state without flushing data or changing maxmemory and eviction policy.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external database diagnostic target.
+steps:
+  - id: step-01
+    name: Inspect Redis memory
+    order: 1
+    type: redis
+    action: get_memory
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+  - id: step-02
+    name: Read Redis operational information
+    order: 2
+    type: redis
+    action: get_info
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: Redis Memory Pressure Investigation completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - database
+  - diagnostic
+  - read-only
+  - phase-13

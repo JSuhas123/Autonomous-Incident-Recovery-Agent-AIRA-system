@@ -1,0 +1,71 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-MSG-CHECK-QUEUE-DEPTH
+semver: "1.0.0"
+
+name: Queue Backlog Investigation
+
+description: >
+  Inspects queue or topic backlog depth and determines whether messages are
+  accumulating faster than they are being consumed.
+
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - messaging
+    - queue
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Registered messaging diagnostic target identifier.
+
+steps:
+  - id: step-01
+    name: Check Queue Depth
+    order: 1
+    type: messaging
+    action: check_queue_depth
+    params:
+      targetId: "${targetId}"
+    failurePolicy: STOP
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: Queue-depth evidence was collected.
+      timeoutSeconds: 30
+      optional: false
+
+rollbackConfig:
+  strategy: NONE
+
+auditConfig:
+  redactSensitiveValues: true
+
+tags:
+  - messaging
+  - queue
+  - backlog
+  - diagnostic
+  - read-only

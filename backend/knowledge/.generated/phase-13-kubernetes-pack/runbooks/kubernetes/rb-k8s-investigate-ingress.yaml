@@ -1,0 +1,68 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-INVESTIGATE-INGRESS
+name: Kubernetes Ingress Investigation
+description: >-
+  Read-only investigation of Kubernetes Ingress routing, TLS configuration, backend Services, and
+  observed load-balancer state.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: ingress
+    type: string
+    required: true
+    description: Name of the affected Kubernetes Ingress.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Ingress.
+steps:
+  - id: step-01
+    name: Get Ingress configuration
+    order: 1
+    type: kubernetes
+    action: get_ingress
+    params:
+      resource: ${ingress}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Evaluate Ingress routing configuration
+    order: 2
+    type: kubernetes
+    action: check_ingress
+    params:
+      resource: ${ingress}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: ingress_configured
+      description: Capture whether the Ingress currently contains usable routing configuration.
+      params:
+        ingress: ${ingress}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+auditConfig:
+  redactSensitiveValues: false

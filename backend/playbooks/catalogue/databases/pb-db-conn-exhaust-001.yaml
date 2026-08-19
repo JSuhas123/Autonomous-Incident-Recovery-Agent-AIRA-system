@@ -1,17 +1,32 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-DB-CONN-EXHAUST-001
-semver: 1.0.0
-name: Database Connection Pool Exhaustion Recovery
+semver: 2.0.0
+
+name: Database Connection Pool Exhaustion Investigation
+
 description: >
-  Recovery playbook for database connection pool exhaustion incidents.
-  Analyzes connection usage, clears stale connections, and restores service.
+  Investigates database connection-pool exhaustion using deterministic
+  read-only diagnostics. Collects active connection state, evaluates
+  connection-pool pressure, and verifies whether connection utilization
+  has returned to a healthy condition. This playbook does not terminate
+  sessions or mutate database configuration.
+
 lifecycle: DRAFT
 
 owner:
   ownerType: system
-  name: AIRA Platform
+  ownerId: aira-core
+  name: AIRA Database Reliability
   team: database-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
 
 incident:
   types:
@@ -23,17 +38,25 @@ incident:
     - P2
     - critical
     - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - resource.database
-  - resource.namespace
+  - resource.targetId
 
 conditions:
-  minimumConfidence: 0.7
+  minimumConfidence: 0.70
 
 risk:
-  level: CRITICAL
-  blastRadius: database
+  level: LOW
+  blastRadius: database-target
+  reversible: true
 
 policy:
   required: true
@@ -42,51 +65,40 @@ approval:
   mode: MANUAL
 
 stages:
-  - id: diagnose-connections
+  - id: investigate-connections
     order: 1
-    name: Diagnose Connection Pool State
+    name: Investigate Database Connections
     type: INVESTIGATION
-    description: Query active connections, identify long-running queries and stale connections
-    failurePolicy: CONTINUE
-    runbooks:
-      - runbookId: RB-DB-FAILOVER
-        required: false
-        parameterMappings:
-          database: "${incident.resource.database}"
-          namespace: "${incident.resource.namespace}"
-
-  - id: clear-stale-connections
-    order: 2
-    name: Clear Stale Database Connections
-    type: MITIGATION
-    description: Terminate idle/stale connections to free up pool capacity
+    description: >
+      Collect active connection usage and evaluate connection-pool pressure.
     failurePolicy: STOP
     runbooks:
-      - runbookId: RB-DB-FAILOVER
-        required: false
+      - runbookId: RB-DB-INVESTIGATE-CONNECTIONS
+        required: true
         parameterMappings:
-          database: "${incident.resource.database}"
+          targetId: "${incident.resource.targetId}"
 
-  - id: verify-connection-recovery
-    order: 3
-    name: Verify Connection Pool Recovery
+  - id: verify-connection-pool
+    order: 2
+    name: Verify Connection Pool State
     type: VERIFICATION
+    description: >
+      Re-evaluate the pool and active connection state to determine whether
+      the exhaustion condition is still present.
     failurePolicy: ESCALATE
     runbooks:
-      - runbookId: RB-DB-FAILOVER
-        required: false
+      - runbookId: RB-DB-VERIFY-CONNECTION-POOL
+        required: true
         parameterMappings:
-          database: "${incident.resource.database}"
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
 
 escalation:
-  maxRecoveryAttempts: 1
+  enabled: true
+  maxAttempts: 1
   escalateTo: dba-oncall
-  notifyChannels:
-    - slack-db-alerts
-    - pagerduty
 
 outcome:
   captureLearning: true
@@ -95,5 +107,6 @@ outcome:
 tags:
   - database
   - connections
-  - pool
-  - performance
+  - connection-pool
+  - diagnostic
+  - read-only

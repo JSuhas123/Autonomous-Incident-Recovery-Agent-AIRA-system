@@ -1,98 +1,162 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-NET-INGRESS-FAILURE-001
-semver: "1.0.0"
-name: Ingress Controller Failure Recovery
+semver: "2.0.0"
+
+name: Ingress Traffic Failure Investigation
+
 description: >
-  Investigates and restores a failed or degraded ingress controller. Covers
-  nginx-ingress, traefik and cloud-native ALB controllers. Restarts controller
-  pods and validates backend service routing.
+  Investigates ingress traffic failures using deterministic networking
+  diagnostics across connectivity, upstream availability, load-balancer
+  health, port reachability, and TLS. This playbook does not restart ingress
+  controllers or modify ingress, proxy, or load-balancer configuration.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
 
-incidentMatching:
-  incidentType: network.ingress_failure
-  severity: [high, critical]
-  environment: [production, staging]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+    - ingress
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: Ingress
+incident:
+  types:
+    - network.ingress_failure
+    - IngressFailure
+    - IngressRoutingFailure
+    - IngressUnavailable
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - kubernetes
+    - ingress
+    - proxy
+    - load-balancer
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
+  - resource.targetId
   - ingress_name
-  - ingress_class
 
-stages:
-  - stageId: investigate-ingress
-    name: Investigate Ingress Failure
-    type: INVESTIGATION
-    order: 1
-    description: Inspect ingress controller pods and recent error events
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          label_selector: "app.kubernetes.io/name=${incident.evidence.ingress_class}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: restart-ingress-controller
-    name: Restart Ingress Controller
-    type: RECOVERY
-    order: 2
-    description: Rolling restart of ingress controller deployment
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.evidence.ingress_class}"
-        required: true
-    failurePolicy: ESCALATE
-
-  - stageId: verify-ingress-routing
-    name: Verify Ingress Routing
-    type: VERIFICATION
-    order: 3
-    description: Confirm traffic is routed correctly through the ingress
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          ingress_name: "${incident.evidence.ingress_name}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.75
 
 risk:
-  level: HIGH
-  blastRadius: cluster
+  level: LOW
+  blastRadius: network-target
   reversible: true
-  rollbackStrategy: NONE
 
 policy:
   required: true
-  approvalGroups: [network-team]
+  approvalGroups:
+    - network-team
 
 approval:
-  mode: CONDITIONAL
-  condition:
-    field: severity
-    operator: equals
-    value: critical
+  mode: MANUAL
+
+stages:
+  - id: investigate-ingress-connectivity
+    order: 1
+    name: Investigate Ingress Connectivity
+    type: INVESTIGATION
+    description: >
+      Inspect end-to-end connectivity and target port reachability for the
+      affected ingress path.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-NET-INVESTIGATE-PORT
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-ingress-routing
+    order: 2
+    name: Investigate Ingress Routing
+    type: INVESTIGATION
+    description: >
+      Inspect upstream and load-balancer health to determine whether traffic
+      routing is failing before or behind the ingress boundary.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-NET-INVESTIGATE-LOAD-BALANCER
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-ingress-tls
+    order: 3
+    name: Inspect Ingress TLS
+    type: INVESTIGATION
+    description: >
+      Inspect TLS handshake and certificate-chain health for the ingress path.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-TLS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-ingress-path
+    order: 4
+    name: Verify Ingress Path
+    type: VERIFICATION
+    description: >
+      Verify end-to-end reachability and upstream availability after the
+      incident has been investigated or externally remediated.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-NET-VERIFY-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
 
 escalation:
   enabled: true
-  maxAttempts: 2
+  maxAttempts: 1
   escalateTo: network-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - networking
+  - ingress
+  - upstream
+  - load-balancer
+  - tls
+  - diagnostic
+  - read-only

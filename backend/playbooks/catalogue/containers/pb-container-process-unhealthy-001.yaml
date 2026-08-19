@@ -1,0 +1,103 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-PROCESS-UNHEALTHY-001
+semver: "1.0.0"
+
+name: Container Process Unhealthy Investigation
+
+description: >
+  Investigates unhealthy container processes and correlates process state
+  with resource consumption, logs and container lifecycle evidence.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+
+incident:
+  types:
+    - container.process_unhealthy
+    - container.process_stalled
+  severities:
+    - medium
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-process
+    order: 1
+    name: Inspect Process Health
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-PROCESS-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-resources
+    order: 2
+    name: Inspect Resource Usage
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RESOURCE-USAGE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-LOGS
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-container
+    order: 3
+    name: Verify Container State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-STATE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - process
+  - health
+  - runtime

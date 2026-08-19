@@ -54,19 +54,53 @@ class K8sClient {
   /**
    * Initialize Kubernetes API clients
    */
-  setupClients() {
-    try {
-      this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api);
-      this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api);
-      this.customApi = this.kc.makeApiClient(k8s.CustomObjectsApi);
-      this.isReady = true;
-      console.log('[K8s] API clients initialized successfully');
-    } catch (error) {
-      console.error('[K8s] Failed to initialize API clients:', error.message);
-      this.isReady = false;
-      throw new Error(`K8s client initialization failed: ${error.message}`);
-    }
+ setupClients() {
+  try {
+    this.coreApi =
+      this.kc.makeApiClient(
+        k8s.CoreV1Api
+      );
+
+    this.appsApi =
+      this.kc.makeApiClient(
+        k8s.AppsV1Api
+      );
+
+    this.networkingApi =
+      this.kc.makeApiClient(
+        k8s.NetworkingV1Api
+      );
+
+    this.autoscalingApi =
+      this.kc.makeApiClient(
+        k8s.AutoscalingV2Api
+      );
+
+    this.customApi =
+      this.kc.makeApiClient(
+        k8s.CustomObjectsApi
+      );
+
+    this.isReady =
+      true;
+
+    console.log(
+      "[K8s] API clients initialized successfully"
+    );
+  } catch (error) {
+    console.error(
+      "[K8s] Failed to initialize API clients:",
+      error.message
+    );
+
+    this.isReady =
+      false;
+
+    throw new Error(
+      `K8s client initialization failed: ${error.message}`
+    );
   }
+}
 
   /**
    * Verify Kubernetes cluster connectivity
@@ -623,6 +657,1163 @@ class K8sClient {
     }, { resource: `node/${nodeName}` });
   }
 
+    // ==========================================================================
+  // PHASE 13 — EXTENDED READ-ONLY KUBERNETES INTELLIGENCE
+  // ==========================================================================
+
+  /**
+   * Get PersistentVolumeClaim information.
+   */
+  async getPVC(
+    pvcName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.coreApi
+    ) {
+      throw new Error(
+        "K8s client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.coreApi
+          .readNamespacedPersistentVolumeClaim(
+            pvcName,
+            ns
+          );
+
+      const pvc =
+        response.body;
+
+      return {
+        name:
+          pvc.metadata?.name,
+
+        namespace:
+          pvc.metadata?.namespace,
+
+        phase:
+          pvc.status?.phase,
+
+        volumeName:
+          pvc.spec?.volumeName ||
+          null,
+
+        storageClassName:
+          pvc.spec?.storageClassName ||
+          null,
+
+        accessModes:
+          pvc.spec?.accessModes ||
+          [],
+
+        requestedStorage:
+          pvc.spec?.resources
+            ?.requests
+            ?.storage ||
+          null,
+
+        capacity:
+          pvc.status?.capacity ||
+          {},
+
+        conditions:
+          pvc.status?.conditions ||
+          [],
+
+        labels:
+          pvc.metadata?.labels ||
+          {},
+
+        createdAt:
+          pvc.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        throw new Error(
+          `PVC ${pvcName} not found in namespace ${ns}`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Deterministically verify whether a PVC is Bound.
+   */
+  async checkPVCBound(
+    pvcName,
+    namespace = null
+  ) {
+    const pvc =
+      await this.getPVC(
+        pvcName,
+        namespace
+      );
+
+    const bound =
+      pvc.phase ===
+      "Bound";
+
+    return {
+      name:
+        pvc.name,
+
+      namespace:
+        pvc.namespace,
+
+      phase:
+        pvc.phase,
+
+      bound,
+
+      volumeName:
+        pvc.volumeName,
+
+      storageClassName:
+        pvc.storageClassName,
+
+      requestedStorage:
+        pvc.requestedStorage,
+
+      capacity:
+        pvc.capacity,
+
+      message:
+        bound
+          ? `PVC ${pvc.name} is Bound`
+          : `PVC ${pvc.name} is not Bound (phase=${pvc.phase || "unknown"})`,
+
+      checkedAt:
+        new Date()
+          .toISOString(),
+    };
+  }
+
+
+  /**
+   * Get Service information.
+   */
+  async getService(
+    serviceName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.coreApi
+    ) {
+      throw new Error(
+        "K8s client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.coreApi
+          .readNamespacedService(
+            serviceName,
+            ns
+          );
+
+      const service =
+        response.body;
+
+      return {
+        name:
+          service.metadata?.name,
+
+        namespace:
+          service.metadata
+            ?.namespace,
+
+        type:
+          service.spec?.type,
+
+        clusterIP:
+          service.spec?.clusterIP,
+
+        clusterIPs:
+          service.spec?.clusterIPs ||
+          [],
+
+        selector:
+          service.spec?.selector ||
+          {},
+
+        ports:
+          (
+            service.spec?.ports ||
+            []
+          ).map(
+            (
+              port
+            ) => ({
+              name:
+                port.name ||
+                null,
+
+              protocol:
+                port.protocol,
+
+              port:
+                port.port,
+
+              targetPort:
+                port.targetPort,
+
+              nodePort:
+                port.nodePort ||
+                null,
+            })
+          ),
+
+        externalIPs:
+          service.spec
+            ?.externalIPs ||
+          [],
+
+        externalName:
+          service.spec
+            ?.externalName ||
+          null,
+
+        loadBalancer:
+          service.status
+            ?.loadBalancer ||
+          null,
+
+        labels:
+          service.metadata
+            ?.labels ||
+          {},
+
+        createdAt:
+          service.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        throw new Error(
+          `Service ${serviceName} not found in namespace ${ns}`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Get Service endpoint information.
+   *
+   * Uses the CoreV1 Endpoints API because it is available across a wide
+   * Kubernetes version range and provides a deterministic readiness view.
+   */
+  async getEndpoints(
+    serviceName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.coreApi
+    ) {
+      throw new Error(
+        "K8s client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.coreApi
+          .readNamespacedEndpoints(
+            serviceName,
+            ns
+          );
+
+      const endpoints =
+        response.body;
+
+      const subsets =
+        (
+          endpoints.subsets ||
+          []
+        ).map(
+          (
+            subset
+          ) => ({
+            readyAddresses:
+              (
+                subset.addresses ||
+                []
+              ).map(
+                (
+                  address
+                ) => ({
+                  ip:
+                    address.ip,
+
+                  hostname:
+                    address.hostname ||
+                    null,
+
+                  nodeName:
+                    address.nodeName ||
+                    null,
+
+                  targetRef:
+                    address.targetRef
+                      ? {
+                          kind:
+                            address
+                              .targetRef
+                              .kind,
+
+                          name:
+                            address
+                              .targetRef
+                              .name,
+
+                          namespace:
+                            address
+                              .targetRef
+                              .namespace,
+                        }
+                      : null,
+                })
+              ),
+
+            notReadyAddresses:
+              (
+                subset
+                  .notReadyAddresses ||
+                []
+              ).map(
+                (
+                  address
+                ) => ({
+                  ip:
+                    address.ip,
+
+                  hostname:
+                    address.hostname ||
+                    null,
+
+                  nodeName:
+                    address.nodeName ||
+                    null,
+
+                  targetRef:
+                    address.targetRef
+                      ? {
+                          kind:
+                            address
+                              .targetRef
+                              .kind,
+
+                          name:
+                            address
+                              .targetRef
+                              .name,
+
+                          namespace:
+                            address
+                              .targetRef
+                              .namespace,
+                        }
+                      : null,
+                })
+              ),
+
+            ports:
+              (
+                subset.ports ||
+                []
+              ).map(
+                (
+                  port
+                ) => ({
+                  name:
+                    port.name ||
+                    null,
+
+                  port:
+                    port.port,
+
+                  protocol:
+                    port.protocol,
+                })
+              ),
+          })
+        );
+
+      const readyCount =
+        subsets.reduce(
+          (
+            total,
+            subset
+          ) =>
+            total +
+            subset
+              .readyAddresses
+              .length,
+          0
+        );
+
+      const notReadyCount =
+        subsets.reduce(
+          (
+            total,
+            subset
+          ) =>
+            total +
+            subset
+              .notReadyAddresses
+              .length,
+          0
+        );
+
+      return {
+        name:
+          endpoints.metadata?.name,
+
+        namespace:
+          endpoints.metadata
+            ?.namespace,
+
+        subsets,
+
+        readyCount,
+
+        notReadyCount,
+
+        hasReadyEndpoints:
+          readyCount >
+          0,
+
+        createdAt:
+          endpoints.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        /*
+         * A service with no endpoint object should be represented as an
+         * unhealthy deterministic observation rather than fabricated data.
+         */
+        return {
+          name:
+            serviceName,
+
+          namespace:
+            ns,
+
+          subsets:
+            [],
+
+          readyCount:
+            0,
+
+          notReadyCount:
+            0,
+
+          hasReadyEndpoints:
+            false,
+
+          missing:
+            true,
+        };
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Verify that a Service currently has at least one ready endpoint.
+   */
+  async checkServiceEndpoints(
+    serviceName,
+    namespace = null
+  ) {
+    const service =
+      await this.getService(
+        serviceName,
+        namespace
+      );
+
+    /*
+     * ExternalName Services intentionally have no pod endpoints.
+     */
+    if (
+      service.type ===
+      "ExternalName"
+    ) {
+      return {
+        service:
+          service.name,
+
+        namespace:
+          service.namespace,
+
+        serviceType:
+          service.type,
+
+        healthy:
+          Boolean(
+            service.externalName
+          ),
+
+        readyEndpoints:
+          0,
+
+        notReadyEndpoints:
+          0,
+
+        externalName:
+          service.externalName,
+
+        reason:
+          "EXTERNAL_NAME_SERVICE",
+
+        checkedAt:
+          new Date()
+            .toISOString(),
+      };
+    }
+
+    const endpoints =
+      await this.getEndpoints(
+        serviceName,
+        namespace
+      );
+
+    return {
+      service:
+        service.name,
+
+      namespace:
+        service.namespace,
+
+      serviceType:
+        service.type,
+
+      healthy:
+        endpoints
+          .hasReadyEndpoints ===
+        true,
+
+      readyEndpoints:
+        endpoints.readyCount,
+
+      notReadyEndpoints:
+        endpoints.notReadyCount,
+
+      reason:
+        endpoints
+          .hasReadyEndpoints
+          ? "READY_ENDPOINTS_PRESENT"
+          : "NO_READY_ENDPOINTS",
+
+      checkedAt:
+        new Date()
+          .toISOString(),
+    };
+  }
+
+
+  /**
+   * Get NetworkingV1 Ingress information.
+   */
+  async getIngress(
+    ingressName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.networkingApi
+    ) {
+      throw new Error(
+        "K8s networking client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.networkingApi
+          .readNamespacedIngress(
+            ingressName,
+            ns
+          );
+
+      const ingress =
+        response.body;
+
+      return {
+        name:
+          ingress.metadata?.name,
+
+        namespace:
+          ingress.metadata
+            ?.namespace,
+
+        ingressClassName:
+          ingress.spec
+            ?.ingressClassName ||
+          null,
+
+        defaultBackend:
+          ingress.spec
+            ?.defaultBackend ||
+          null,
+
+        rules:
+          (
+            ingress.spec?.rules ||
+            []
+          ).map(
+            (
+              rule
+            ) => ({
+              host:
+                rule.host ||
+                null,
+
+              paths:
+                (
+                  rule.http
+                    ?.paths ||
+                  []
+                ).map(
+                  (
+                    path
+                  ) => ({
+                    path:
+                      path.path,
+
+                    pathType:
+                      path.pathType,
+
+                    serviceName:
+                      path.backend
+                        ?.service
+                        ?.name,
+
+                    servicePort:
+                      path.backend
+                        ?.service
+                        ?.port
+                        ?.number ??
+                      path.backend
+                        ?.service
+                        ?.port
+                        ?.name ??
+                      null,
+                  })
+                ),
+            })
+          ),
+
+        tls:
+          (
+            ingress.spec?.tls ||
+            []
+          ).map(
+            (
+              entry
+            ) => ({
+              hosts:
+                entry.hosts ||
+                [],
+
+              secretName:
+                entry.secretName ||
+                null,
+            })
+          ),
+
+        loadBalancer:
+          ingress.status
+            ?.loadBalancer ||
+          {},
+
+        labels:
+          ingress.metadata
+            ?.labels ||
+          {},
+
+        annotations:
+          ingress.metadata
+            ?.annotations ||
+          {},
+
+        createdAt:
+          ingress.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        throw new Error(
+          `Ingress ${ingressName} not found in namespace ${ns}`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Deterministic structural verification for an Ingress.
+   *
+   * This deliberately does NOT claim external HTTP reachability.
+   * It verifies that the Ingress has routing configuration and, where
+   * applicable, an observed load-balancer address.
+   */
+  async checkIngress(
+    ingressName,
+    namespace = null
+  ) {
+    const ingress =
+      await this.getIngress(
+        ingressName,
+        namespace
+      );
+
+    const pathCount =
+      ingress.rules
+        .reduce(
+          (
+            total,
+            rule
+          ) =>
+            total +
+            rule.paths.length,
+          0
+        );
+
+    const hasDefaultBackend =
+      Boolean(
+        ingress.defaultBackend
+      );
+
+    const loadBalancerIngress =
+      ingress
+        .loadBalancer
+        ?.ingress ||
+      [];
+
+    const hasRouting =
+      pathCount >
+        0 ||
+      hasDefaultBackend;
+
+    return {
+      ingress:
+        ingress.name,
+
+      namespace:
+        ingress.namespace,
+
+      ingressClassName:
+        ingress
+          .ingressClassName,
+
+      configured:
+        hasRouting,
+
+      ruleCount:
+        ingress.rules.length,
+
+      pathCount,
+
+      tlsCount:
+        ingress.tls.length,
+
+      hasDefaultBackend,
+
+      loadBalancerObserved:
+        loadBalancerIngress
+          .length >
+        0,
+
+      healthy:
+        hasRouting,
+
+      reason:
+        hasRouting
+          ? "INGRESS_ROUTING_CONFIGURED"
+          : "INGRESS_HAS_NO_ROUTING",
+
+      checkedAt:
+        new Date()
+          .toISOString(),
+    };
+  }
+
+
+  /**
+   * Get HorizontalPodAutoscaler information.
+   */
+  async getHPA(
+    hpaName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.autoscalingApi
+    ) {
+      throw new Error(
+        "K8s autoscaling client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.autoscalingApi
+          .readNamespacedHorizontalPodAutoscaler(
+            hpaName,
+            ns
+          );
+
+      const hpa =
+        response.body;
+
+      return {
+        name:
+          hpa.metadata?.name,
+
+        namespace:
+          hpa.metadata
+            ?.namespace,
+
+        scaleTargetRef:
+          hpa.spec
+            ?.scaleTargetRef ||
+          null,
+
+        minReplicas:
+          hpa.spec
+            ?.minReplicas ??
+          1,
+
+        maxReplicas:
+          hpa.spec
+            ?.maxReplicas,
+
+        currentReplicas:
+          hpa.status
+            ?.currentReplicas ??
+          0,
+
+        desiredReplicas:
+          hpa.status
+            ?.desiredReplicas ??
+          0,
+
+        currentMetrics:
+          hpa.status
+            ?.currentMetrics ||
+          [],
+
+        conditions:
+          hpa.status
+            ?.conditions ||
+          [],
+
+        lastScaleTime:
+          hpa.status
+            ?.lastScaleTime ||
+          null,
+
+        createdAt:
+          hpa.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        throw new Error(
+          `HPA ${hpaName} not found in namespace ${ns}`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Get ResourceQuota information.
+   */
+  async getResourceQuota(
+    quotaName,
+    namespace = null
+  ) {
+    const ns =
+      namespace ||
+      this.namespace;
+
+    if (
+      !this.isReady ||
+      !this.coreApi
+    ) {
+      throw new Error(
+        "K8s client not initialized"
+      );
+    }
+
+    try {
+      const response =
+        await this.coreApi
+          .readNamespacedResourceQuota(
+            quotaName,
+            ns
+          );
+
+      const quota =
+        response.body;
+
+      return {
+        name:
+          quota.metadata?.name,
+
+        namespace:
+          quota.metadata
+            ?.namespace,
+
+        hard:
+          quota.status?.hard ||
+          quota.spec?.hard ||
+          {},
+
+        used:
+          quota.status?.used ||
+          {},
+
+        scopes:
+          quota.spec?.scopes ||
+          [],
+
+        scopeSelector:
+          quota.spec
+            ?.scopeSelector ||
+          null,
+
+        labels:
+          quota.metadata
+            ?.labels ||
+          {},
+
+        createdAt:
+          quota.metadata
+            ?.creationTimestamp,
+      };
+    } catch (error) {
+      if (
+        error.statusCode ===
+        404
+      ) {
+        throw new Error(
+          `ResourceQuota ${quotaName} not found in namespace ${ns}`
+        );
+      }
+
+      throw error;
+    }
+  }
+
+
+  /**
+   * Read-only DNS health inspection.
+   *
+   * This does NOT execute commands in workloads.
+   * It checks the Kubernetes DNS Service and its backing endpoints.
+   */
+  async checkDNS(
+    namespace = "kube-system"
+  ) {
+    if (
+      !this.isReady ||
+      !this.coreApi
+    ) {
+      throw new Error(
+        "K8s client not initialized"
+      );
+    }
+
+    const candidates = [
+      "kube-dns",
+      "coredns",
+    ];
+
+    let selectedService =
+      null;
+
+    let lastError =
+      null;
+
+    for (
+      const serviceName
+      of candidates
+    ) {
+      try {
+        selectedService =
+          await this.getService(
+            serviceName,
+            namespace
+          );
+
+        if (
+          selectedService
+        ) {
+          break;
+        }
+      } catch (error) {
+        lastError =
+          error;
+      }
+    }
+
+    if (
+      !selectedService
+    ) {
+      return {
+        healthy:
+          false,
+
+        namespace,
+
+        service:
+          null,
+
+        readyEndpoints:
+          0,
+
+        reason:
+          "DNS_SERVICE_NOT_FOUND",
+
+        error:
+          lastError
+            ?.message ||
+          null,
+
+        checkedAt:
+          new Date()
+            .toISOString(),
+      };
+    }
+
+    const endpointState =
+      await this.getEndpoints(
+        selectedService.name,
+        namespace
+      );
+
+    const dnsPorts =
+      selectedService
+        .ports
+        .filter(
+          (
+            port
+          ) =>
+            port.port ===
+              53 ||
+            String(
+              port.name ||
+              ""
+            )
+              .toLowerCase()
+              .includes(
+                "dns"
+              )
+        );
+
+    const healthy =
+      endpointState
+        .readyCount >
+        0 &&
+      dnsPorts.length >
+        0;
+
+    return {
+      healthy,
+
+      namespace,
+
+      service:
+        selectedService
+          .name,
+
+      serviceType:
+        selectedService
+          .type,
+
+      readyEndpoints:
+        endpointState
+          .readyCount,
+
+      notReadyEndpoints:
+        endpointState
+          .notReadyCount,
+
+      dnsPorts,
+
+      reason:
+        healthy
+          ? "DNS_SERVICE_AND_ENDPOINTS_HEALTHY"
+          : endpointState
+              .readyCount ===
+            0
+            ? "DNS_HAS_NO_READY_ENDPOINTS"
+            : "DNS_SERVICE_PORT_NOT_FOUND",
+
+      checkedAt:
+        new Date()
+          .toISOString(),
+    };
+  }
+  
   /**
    * Execute K8s operation with retry logic
    * 

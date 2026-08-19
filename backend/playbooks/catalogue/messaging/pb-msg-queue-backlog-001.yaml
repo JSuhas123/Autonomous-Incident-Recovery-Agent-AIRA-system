@@ -1,0 +1,104 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MSG-QUEUE-BACKLOG-001
+semver: "1.0.0"
+
+name: Message Queue Backlog Investigation
+
+description: >
+  Investigates abnormal queue or topic backlog growth by examining broker
+  health, queue depth, consumer health and consumer lag without mutating
+  messaging infrastructure.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+incident:
+  types:
+    - messaging.queue_backlog
+    - MessageQueueBuildup
+  severities:
+    - medium
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-queue
+    order: 1
+    name: Inspect Queue Depth
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-MSG-CHECK-QUEUE-DEPTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-consumer
+    order: 2
+    name: Inspect Consumers
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONSUMER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-MSG-CHECK-CONSUMER-LAG
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-delivery
+    order: 3
+    name: Verify Delivery Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-DELIVERY-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: messaging-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - queue
+  - backlog
+  - consumer

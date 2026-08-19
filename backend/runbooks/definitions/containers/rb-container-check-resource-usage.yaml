@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-RESOURCE-USAGE
+semver: "1.0.0"
+name: Check Container Resource Usage
+description: Inspect container CPU and memory utilization.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-resource-usage
+    order: 1
+    type: containers
+    action: check_resource_usage
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, cpu, memory, diagnostic]

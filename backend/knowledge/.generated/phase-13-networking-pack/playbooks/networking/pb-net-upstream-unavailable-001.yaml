@@ -1,0 +1,84 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-UPSTREAM-UNAVAILABLE-001
+semver: 1.0.0
+name: Network Upstream Unavailable Investigation
+description: Investigates unavailable upstream dependencies using upstream and connectivity diagnostics.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - UpstreamUnavailable
+    - UpstreamDependencyFailure
+    - network.upstream.unavailable
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - proxy
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-upstream
+    order: 1
+    name: Investigate Upstream
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-upstream
+    order: 2
+    name: Verify Upstream
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

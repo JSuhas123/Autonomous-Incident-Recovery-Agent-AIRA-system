@@ -1,0 +1,125 @@
+apiVersion: aira.io/v1
+kind: Playbook
+
+playbookId: PB-OBS-METRICS-FLOW-FAILURE-001
+semver: "1.0.0"
+
+name: Metrics Flow Failure Investigation
+
+description: >
+  Investigates missing, delayed or interrupted metrics telemetry across scrape,
+  collection, export and ingestion stages.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - metrics
+
+incident:
+  types:
+    - observability.metrics_flow_failure
+    - MetricsMissing
+    - MetricsPipelineFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - prometheus
+    - opentelemetry
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.75
+
+risk:
+  level: LOW
+  blastRadius: observability-target
+  reversible: true
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-metrics
+    order: 1
+    name: Investigate Metrics Flow
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-METRICS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-SCRAPE-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-ingestion
+    order: 2
+    name: Investigate Metrics Ingestion
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-INGESTION-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TELEMETRY-FRESHNESS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-metrics
+    order: 3
+    name: Verify Metrics Flow
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-METRICS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - metrics
+  - prometheus
+  - diagnostic
+  - read-only

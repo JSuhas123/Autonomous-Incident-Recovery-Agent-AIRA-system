@@ -1,0 +1,86 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-RESOLVE-ROLLBACK-TARGET
+name: Resolve Kubernetes Deployment Rollback Target
+
+description: >
+  Read-only validation of a Kubernetes Deployment before rollback.
+  Confirms the target Deployment exists and can safely proceed to the
+  deterministic rollback stage. This Runbook does not mutate infrastructure.
+
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Deployment whose rollback target is being resolved.
+
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Deployment.
+
+steps:
+  - id: step-01
+    name: Read current Deployment
+    order: 1
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Read current Deployment status
+    order: 2
+    type: kubernetes
+    action: get_deployment_status
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment exists and can be evaluated for rollback.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: false

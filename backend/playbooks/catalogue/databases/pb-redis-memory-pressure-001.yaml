@@ -1,0 +1,79 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-REDIS-MEMORY-PRESSURE-001
+semver: 1.0.0
+name: Redis Memory Pressure Investigation
+description: Investigates Redis memory pressure without flushing data or changing memory configuration.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - RedisMemoryPressure
+    - RedisMemoryHigh
+    - redis.memory.pressure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - redis
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-memory
+    order: 1
+    name: Investigate Redis Memory
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-REDIS-INVESTIGATE-MEMORY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-redis-health
+    order: 2
+    name: Verify Redis Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-REDIS-INVESTIGATE-HEALTH
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

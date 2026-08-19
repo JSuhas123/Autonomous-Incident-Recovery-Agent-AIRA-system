@@ -1,0 +1,90 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-DNS-FAILURE-001
+name: Kubernetes Cluster DNS Failure Investigation
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates Kubernetes cluster DNS health through DNS Service and endpoint evidence without
+  executing commands inside application workloads.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - ClusterDNSFailure
+    - KubernetesDNSFailure
+    - DNSResolutionFailure
+    - kubernetes.dns.failure
+    - kubernetes.coredns.unhealthy
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - provider.kubernetes
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: LOW
+  blastRadius: cluster-dns
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-dns
+    order: 1
+    name: Investigate Cluster DNS
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-DNS
+        required: true
+        parameterMappings:
+          namespace: ${incident.resource.namespace}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true

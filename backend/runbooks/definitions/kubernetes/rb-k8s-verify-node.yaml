@@ -1,0 +1,50 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-VERIFY-NODE
+name: Kubernetes Node State Verification
+description: Read-only verification of Kubernetes node readiness after investigation or remediation.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: node
+    type: string
+    required: true
+    description: Kubernetes node to verify.
+steps:
+  - id: step-01
+    name: Get node state
+    order: 1
+    type: kubernetes
+    action: get_node
+    params:
+      node: ${node}
+    failurePolicy: STOP
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ALL
+  timeoutSeconds: 60
+  checks:
+    - id: check-01
+      type: node_ready
+      description: Evaluate current node readiness.
+      params:
+        node: ${node}
+      timeoutSeconds: 60
+auditConfig:
+  redactSensitiveValues: false

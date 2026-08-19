@@ -1,0 +1,83 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-PACKET-LOSS-001
+semver: 1.0.0
+name: Network Packet Loss Investigation
+description: Investigates packet loss and routing conditions without network mutation.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - NetworkPacketLoss
+    - PacketLossHigh
+    - network.packet_loss
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-packet-loss
+    order: 1
+    name: Investigate Packet Loss
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-PACKET-LOSS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-ROUTE
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-packet-loss
+    order: 2
+    name: Verify Packet Loss
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-PACKET-LOSS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

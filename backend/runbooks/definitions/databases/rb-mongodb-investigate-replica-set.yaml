@@ -1,0 +1,62 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-MONGODB-INVESTIGATE-REPLICA-SET
+semver: 1.0.0
+name: MongoDB Replica Set Investigation
+description: Inspects MongoDB replica-set state without reconfiguration, election manipulation, or failover.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external database diagnostic target.
+steps:
+  - id: step-01
+    name: Inspect MongoDB replica-set status
+    order: 1
+    type: mongodb
+    action: get_replica_status
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+  - id: step-02
+    name: Read MongoDB server status
+    order: 2
+    type: mongodb
+    action: get_server_status
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: MongoDB Replica Set Investigation completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - database
+  - diagnostic
+  - read-only
+  - phase-13

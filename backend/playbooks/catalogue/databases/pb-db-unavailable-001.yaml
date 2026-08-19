@@ -1,0 +1,82 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-UNAVAILABLE-001
+semver: 1.0.0
+name: Database Availability Investigation
+description: Investigates database unavailability using read-only connectivity and health diagnostics.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - DatabaseUnavailable
+    - DatabaseConnectivityFailure
+    - database.unavailable
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: check-connectivity
+    order: 1
+    name: Check Connectivity
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-CHECK-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: check-health
+    order: 2
+    name: Assess Database Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-CHECK-HEALTH
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

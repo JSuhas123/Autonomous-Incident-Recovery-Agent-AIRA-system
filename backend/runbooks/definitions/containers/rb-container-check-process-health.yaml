@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-PROCESS-HEALTH
+semver: "1.0.0"
+name: Check Container Process Health
+description: Inspect container process health without arbitrary command execution.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-process-health
+    order: 1
+    type: containers
+    action: check_process_health
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, process, health, diagnostic]

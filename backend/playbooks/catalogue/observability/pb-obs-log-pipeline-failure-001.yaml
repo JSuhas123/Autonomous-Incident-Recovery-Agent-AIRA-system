@@ -1,0 +1,126 @@
+apiVersion: aira.io/v1
+kind: Playbook
+
+playbookId: PB-OBS-LOG-PIPELINE-FAILURE-001
+semver: "1.0.0"
+
+name: Log Pipeline Failure Investigation
+
+description: >
+  Investigates missing or interrupted log telemetry across collectors,
+  exporters and ingestion backends.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - logs
+
+incident:
+  types:
+    - observability.log_pipeline_failure
+    - LogsMissing
+    - LogIngestionFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - fluent-bit
+    - fluentd
+    - opentelemetry
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.75
+
+risk:
+  level: LOW
+  blastRadius: observability-target
+  reversible: true
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-logs
+    order: 1
+    name: Investigate Log Flow
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-LOGS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-COLLECTOR-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-log-ingestion
+    order: 2
+    name: Investigate Log Ingestion
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-EXPORTER-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-INGESTION-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-logs
+    order: 3
+    name: Verify Log Flow
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-LOGS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - logs
+  - telemetry
+  - diagnostic
+  - read-only

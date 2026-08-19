@@ -1,0 +1,79 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MYSQL-REPLICATION-DEGRADED-001
+semver: 1.0.0
+name: MySQL Replication Degradation Investigation
+description: Investigates MySQL replication degradation without modifying replica configuration.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - MySQLReplicationLag
+    - MySQLReplicationDegraded
+    - mysql.replication.degraded
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - mysql
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: mysql-replication
+    order: 1
+    name: Inspect MySQL Replication
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-MYSQL-INVESTIGATE-REPLICATION
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-replication
+    order: 2
+    name: Verify Replication State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-VERIFY-REPLICATION
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

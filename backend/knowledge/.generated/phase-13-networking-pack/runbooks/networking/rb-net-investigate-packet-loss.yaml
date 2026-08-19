@@ -1,0 +1,62 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-NET-INVESTIGATE-PACKET-LOSS
+semver: 1.0.0
+name: Network Packet Loss Investigation
+description: Investigates packet-loss conditions without changing routes or network devices.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external network diagnostic target.
+steps:
+  - id: step-01
+    name: Measure packet loss
+    order: 1
+    type: networking
+    action: check_packet_loss
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+  - id: step-02
+    name: Inspect route state
+    order: 2
+    type: networking
+    action: check_route
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: Network Packet Loss Investigation completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - networking
+  - diagnostic
+  - read-only
+  - phase-13

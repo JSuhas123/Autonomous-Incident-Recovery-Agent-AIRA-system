@@ -1,0 +1,99 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-NODE-DEGRADED-001
+name: Kubernetes Node Degradation Investigation
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates degraded Kubernetes nodes and verifies current node state without automatically
+  performing cluster-wide mutation.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - NodeDegraded
+    - NodePressure
+    - kubernetes.node.degraded
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.node
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: HIGH
+  blastRadius: node
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-node
+    order: 1
+    name: Investigate Node
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-NODE
+        required: true
+        parameterMappings:
+          node: ${incident.resource.node}
+          namespace: ${incident.resource.namespace}
+  - id: verify-node
+    order: 2
+    name: Verify Node State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-NODE
+        required: true
+        parameterMappings:
+          node: ${incident.resource.node}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true

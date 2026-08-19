@@ -1,0 +1,97 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MSG-DLQ-OVERFLOW-001
+semver: "1.0.0"
+
+name: Dead Letter Queue Overflow Investigation
+
+description: >
+  Investigates abnormal dead-letter queue accumulation and correlates it with
+  delivery and consumer health without replaying or deleting messages.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+incident:
+  types:
+    - messaging.dlq_overflow
+    - DLQOverflow
+  severities:
+    - medium
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-dlq
+    order: 1
+    name: Inspect Dead Letter Queue
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-MSG-CHECK-DLQ-DEPTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-delivery
+    order: 2
+    name: Inspect Delivery Health
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-DELIVERY-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-consumer
+    order: 3
+    name: Verify Consumer Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONSUMER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: messaging-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - dlq
+  - dead-letter
+  - delivery

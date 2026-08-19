@@ -1,0 +1,88 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-PROXY-UPSTREAM-FAILURE-001
+semver: 1.0.0
+name: Proxy Upstream Failure Investigation
+description: Investigates proxy-to-upstream failures using upstream, port and TLS diagnostics.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - ProxyUpstreamFailure
+    - ReverseProxyUpstreamUnavailable
+    - network.proxy.upstream_failure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - proxy
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-proxy-upstream
+    order: 1
+    name: Investigate Proxy Upstream
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-PORT
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-TLS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-upstream
+    order: 2
+    name: Verify Upstream
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

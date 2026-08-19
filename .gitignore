@@ -104,5 +104,3 @@ FINAL_E2E_TEST_REPORT.md
 api-services-validation.js
 e2e-infra-test.js
 
-# docs/ folder (content duplicated in root-level .md files)
-docs/

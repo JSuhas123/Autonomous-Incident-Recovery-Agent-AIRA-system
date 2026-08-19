@@ -1,0 +1,65 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-VERIFY-SERVICE-ENDPOINTS
+name: Kubernetes Service Endpoint Verification
+description: Read-only verification that a Kubernetes Service has usable ready endpoints.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: service
+    type: string
+    required: true
+    description: Kubernetes Service to verify.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Service.
+steps:
+  - id: step-01
+    name: Check ready Service endpoints
+    order: 1
+    type: kubernetes
+    action: check_service_endpoints
+    params:
+      resource: ${service}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Collect final endpoint state
+    order: 2
+    type: kubernetes
+    action: get_endpoints
+    params:
+      resource: ${service}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ALL
+  timeoutSeconds: 60
+  checks:
+    - id: check-01
+      type: service_endpoints_ready
+      description: Service must expose usable ready endpoints.
+      params:
+        service: ${service}
+        namespace: ${namespace}
+      timeoutSeconds: 60
+auditConfig:
+  redactSensitiveValues: false

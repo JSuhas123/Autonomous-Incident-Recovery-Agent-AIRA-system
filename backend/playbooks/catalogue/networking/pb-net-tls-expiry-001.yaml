@@ -1,90 +1,118 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-NET-TLS-EXPIRY-001
-semver: "1.0.0"
-name: TLS Certificate Expiry Response
+semver: "2.0.0"
+
+name: TLS Certificate Expiry Investigation
+
 description: >
-  Detects imminently expiring or already-expired TLS certificates. Triggers
-  certificate renewal via cert-manager or flags for manual rotation. Validates
-  the new certificate and reloads affected services.
+  Investigates expired or imminently expiring TLS certificates using
+  deterministic TLS diagnostics. Validates TLS handshake and certificate-chain
+  state without triggering certificate renewal, replacing certificates,
+  modifying cert-manager resources, or reloading services.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
 
-incidentMatching:
-  incidentType: network.tls_expiry
-  severity: [medium, high, critical]
-  environment: [production, staging]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+    - tls
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: Certificate
+incident:
+  types:
+    - network.tls_expiry
+    - TLSCertificateExpiry
+    - CertificateExpired
+    - CertificateExpiring
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+    - medium
+  providers:
+    - networking
+    - tls
+    - kubernetes
+    - cert-manager
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
-  - certificate_name
-  - expiry_timestamp
+  - resource.targetId
   - domain_name
+  - expiry_timestamp
 
-stages:
-  - stageId: investigate-certificate
-    name: Investigate Certificate Status
-    type: INVESTIGATION
-    order: 1
-    description: Retrieve certificate details and expiry timeline
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          certificate_name: "${incident.evidence.certificate_name}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: trigger-renewal
-    name: Trigger Certificate Renewal
-    type: RECOVERY
-    order: 2
-    description: Annotate cert-manager Certificate resource to trigger renewal
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          certificate_name: "${incident.evidence.certificate_name}"
-        required: true
-    failurePolicy: ESCALATE
-
-  - stageId: verify-certificate-valid
-    name: Verify Certificate Valid
-    type: VERIFICATION
-    order: 3
-    description: Confirm new certificate is issued and loaded
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          domain_name: "${incident.evidence.domain_name}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.80
 
 risk:
-  level: HIGH
-  blastRadius: service
-  reversible: false
-  rollbackStrategy: NONE
+  level: LOW
+  blastRadius: network-target
+  reversible: true
 
 policy:
   required: true
-  approvalGroups: [security-team]
+  approvalGroups:
+    - network-team
+    - security-team
 
 approval:
   mode: MANUAL
+
+stages:
+  - id: investigate-certificate
+    order: 1
+    name: Investigate TLS Certificate
+    type: INVESTIGATION
+    description: >
+      Inspect TLS handshake and certificate-chain state for the affected
+      endpoint.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-TLS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-endpoint-connectivity
+    order: 2
+    name: Investigate Endpoint Connectivity
+    type: INVESTIGATION
+    description: >
+      Confirm that certificate symptoms are not caused by broader endpoint
+      connectivity failure.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-certificate
+    order: 3
+    name: Verify TLS Certificate
+    type: VERIFICATION
+    description: >
+      Re-check TLS state after external renewal or remediation and confirm
+      whether the certificate and handshake are healthy.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-TLS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
@@ -93,3 +121,15 @@ escalation:
   enabled: true
   maxAttempts: 1
   escalateTo: security-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - networking
+  - tls
+  - certificate
+  - expiry
+  - diagnostic
+  - read-only

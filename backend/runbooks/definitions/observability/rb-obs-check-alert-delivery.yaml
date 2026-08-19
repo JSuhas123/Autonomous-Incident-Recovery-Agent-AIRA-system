@@ -1,0 +1,72 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-OBS-CHECK-ALERT-DELIVERY
+semver: "1.0.0"
+
+name: Alert Delivery Investigation
+
+description: >
+  Inspects whether evaluated alerts are successfully reaching configured
+  notification destinations such as PagerDuty or webhook receivers without
+  sending synthetic alerts or modifying routing configuration.
+
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - alerting
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Registered observability diagnostic target identifier.
+
+steps:
+  - id: step-01
+    name: Check Alert Delivery
+    order: 1
+    type: observability
+    action: check_alert_delivery
+    params:
+      targetId: "${targetId}"
+    failurePolicy: STOP
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: Alert-delivery evidence was collected.
+      timeoutSeconds: 30
+      optional: false
+
+rollbackConfig:
+  strategy: NONE
+
+auditConfig:
+  redactSensitiveValues: true
+
+tags:
+  - observability
+  - alerting
+  - notifications
+  - pagerduty
+  - diagnostic

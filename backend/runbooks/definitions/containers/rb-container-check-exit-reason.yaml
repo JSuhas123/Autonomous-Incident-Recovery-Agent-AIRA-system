@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-EXIT-REASON
+semver: "1.0.0"
+name: Check Container Exit Reason
+description: Inspect container exit code and termination reason.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-exit-reason
+    order: 1
+    type: containers
+    action: check_exit_reason
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, exit, crash, diagnostic]

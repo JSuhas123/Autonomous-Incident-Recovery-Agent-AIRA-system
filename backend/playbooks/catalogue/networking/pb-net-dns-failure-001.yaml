@@ -1,97 +1,120 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-NET-DNS-FAILURE-001
-semver: "1.0.0"
-name: DNS Resolution Failure Recovery
+semver: "2.0.0"
+
+name: DNS Resolution Failure Investigation
+
 description: >
-  Diagnoses DNS resolution failures within a Kubernetes cluster. Checks
-  CoreDNS pod health, ConfigMap configuration and upstream resolver
-  connectivity. Restarts CoreDNS pods if they are unhealthy.
+  Investigates DNS resolution failures using deterministic read-only
+  networking diagnostics. Validates DNS resolution and supporting network
+  connectivity without restarting CoreDNS, modifying resolver configuration,
+  or changing DNS records.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
 
-incidentMatching:
-  incidentType: network.dns_failure
-  severity: [high, critical]
-  environment: [production, staging]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+    - dns
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: Service
+incident:
+  types:
+    - network.dns_failure
+    - DNSResolutionFailure
+    - DNSUnavailable
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - dns
+    - kubernetes
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
+  - resource.targetId
   - failing_hostname
 
-stages:
-  - stageId: investigate-dns
-    name: Investigate DNS Failure
-    type: INVESTIGATION
-    order: 1
-    description: Check CoreDNS pod status and recent events
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "kube-system"
-          label_selector: "k8s-app=kube-dns"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: restart-coredns
-    name: Restart CoreDNS Pods
-    type: RECOVERY
-    order: 2
-    description: Rolling restart of CoreDNS deployment
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "kube-system"
-          deployment_name: "coredns"
-        required: true
-    failurePolicy: ESCALATE
-
-  - stageId: verify-dns-resolution
-    name: Verify DNS Resolution
-    type: VERIFICATION
-    order: 3
-    description: Confirm hostname resolves correctly
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "kube-system"
-          target_hostname: "${incident.evidence.failing_hostname}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.75
 
 risk:
-  level: HIGH
-  blastRadius: cluster
+  level: LOW
+  blastRadius: network-target
   reversible: true
-  rollbackStrategy: NONE
 
 policy:
   required: true
-  approvalGroups: [network-team]
+  approvalGroups:
+    - network-team
 
 approval:
-  mode: CONDITIONAL
-  condition:
-    field: severity
-    operator: equals
-    value: critical
+  mode: MANUAL
+
+stages:
+  - id: investigate-dns
+    order: 1
+    name: Investigate DNS Resolution
+    type: INVESTIGATION
+    description: >
+      Inspect DNS resolution and supporting connectivity for the affected
+      network target.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-DNS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-NET-INVESTIGATE-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-dns
+    order: 2
+    name: Verify DNS Resolution
+    type: VERIFICATION
+    description: >
+      Re-check DNS resolution to determine whether the incident condition
+      remains present.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-DNS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
 
 escalation:
   enabled: true
-  maxAttempts: 2
+  maxAttempts: 1
   escalateTo: network-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - networking
+  - dns
+  - resolution
+  - diagnostic
+  - read-only

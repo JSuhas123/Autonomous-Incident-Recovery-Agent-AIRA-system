@@ -1,0 +1,120 @@
+apiVersion: aira.io/v1
+kind: Playbook
+
+playbookId: PB-OBS-EXPORTER-FAILURE-001
+semver: "1.0.0"
+
+name: Telemetry Exporter Failure Investigation
+
+description: >
+  Investigates telemetry exporter failures and downstream delivery problems
+  without restarting exporters or changing export destinations.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - telemetry-exporter
+
+incident:
+  types:
+    - observability.exporter_failure
+    - TelemetryExporterFailure
+    - ExportFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - opentelemetry
+    - prometheus
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.75
+
+risk:
+  level: LOW
+  blastRadius: observability-target
+  reversible: true
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-exporter
+    order: 1
+    name: Investigate Exporter
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-EXPORTER-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-downstream
+    order: 2
+    name: Investigate Downstream Ingestion
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-INGESTION-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TARGET-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-exporter
+    order: 3
+    name: Verify Exporter Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-EXPORTER-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - exporter
+  - telemetry
+  - diagnostic
+  - read-only

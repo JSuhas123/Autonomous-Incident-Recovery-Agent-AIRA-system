@@ -1,0 +1,66 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-INVESTIGATE-DEPLOYMENT
+name: Kubernetes Deployment Investigation
+description: Read-only investigation of deployment health, replica availability and rollout state.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Name of the Kubernetes Deployment.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the deployment.
+steps:
+  - id: step-01
+    name: Get deployment detail
+    order: 1
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Get deployment status
+    order: 2
+    type: kubernetes
+    action: get_deployment_status
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Capture current deployment availability.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+auditConfig:
+  redactSensitiveValues: false

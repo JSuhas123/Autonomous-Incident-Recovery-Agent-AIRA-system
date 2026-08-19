@@ -1,0 +1,81 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-ROLLBACK-RESOURCE-CONFIG
+name: Roll Back Kubernetes Deployment Resource Configuration
+
+description: >
+  Draft rollback procedure for restoring the previous Kubernetes Deployment
+  memory configuration. This definition MUST NOT become ACTIVE until a dedicated
+  deterministic restore_deployment_memory action handler exists.
+
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+
+  providers:
+    - kubernetes
+
+risk:
+  level: HIGH
+  blastRadius: deployment
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Deployment whose previous resource configuration will be restored.
+
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Deployment.
+
+  - name: previous_revision
+    type: integer
+    required: false
+    description: Historical revision associated with the previous configuration.
+
+steps:
+  - id: step-01
+    name: Restore previous deployment resource configuration
+    order: 1
+    type: kubernetes
+    action: restore_deployment_memory
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+      previousRevision: ${previous_revision}
+    requiresConfirmation: true
+    timeoutSeconds: 120
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: true
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment becomes available after resource rollback.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false

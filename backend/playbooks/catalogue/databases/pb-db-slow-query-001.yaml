@@ -1,0 +1,81 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-SLOW-QUERY-001
+semver: 1.0.0
+name: Database Slow Query Investigation
+description: Investigates slow-query degradation, transaction duration, and lock evidence without query termination.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - DatabaseSlowQuery
+    - DatabaseLatencyHigh
+    - database.slow_query
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-queries
+    order: 1
+    name: Investigate Slow Queries
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-SLOW-QUERIES
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-health
+    order: 2
+    name: Verify Database Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-DB-CHECK-HEALTH
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

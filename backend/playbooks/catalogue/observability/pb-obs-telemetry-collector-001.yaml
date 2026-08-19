@@ -1,93 +1,163 @@
 apiVersion: aira.io/v1
 kind: Playbook
+
 playbookId: PB-OBS-TELEMETRY-COLLECTOR-001
-semver: "1.0.0"
-name: Telemetry Collector Failure Recovery
+semver: "2.0.0"
+
+name: Telemetry Collector Failure Investigation
+
 description: >
-  Recovers a failed telemetry collector (OpenTelemetry Collector, Prometheus
-  agent, Fluentd/Fluent Bit). Restarts the collector, validates pipeline
-  health and confirms metrics/traces/logs are flowing.
+  Investigates failures affecting OpenTelemetry Collectors, Prometheus agents,
+  Fluent Bit, Fluentd and equivalent telemetry collectors. Inspects collector
+  health, exporter state, ingestion and telemetry flow without restarting or
+  reconfiguring collector workloads.
+
 lifecycle: DRAFT
 
 owner:
-  type: system
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
 
-incidentMatching:
-  incidentType: observability.collector_failure
-  severity: [high, critical]
-  environment: [production, staging]
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - telemetry-collector
 
-triggers:
-  - type: condition
-    conditions:
-      - field: resource.kind
-        operator: equals
-        value: DaemonSet
+incident:
+  types:
+    - observability.collector_failure
+    - TelemetryCollectorFailure
+    - OpenTelemetryCollectorFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - opentelemetry
+    - prometheus
+    - fluent-bit
+    - fluentd
+  environments:
+    - production
+    - staging
 
 requiredEvidence:
-  - namespace
-  - collector_name
-  - collector_type
+  - resource.targetId
 
-stages:
-  - stageId: investigate-collector
-    name: Investigate Collector Failure
-    type: INVESTIGATION
-    order: 1
-    description: Check collector pod status and pipeline errors
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          label_selector: "app=${incident.evidence.collector_name}"
-        required: true
-    failurePolicy: STOP
-
-  - stageId: restart-collector
-    name: Restart Telemetry Collector
-    type: RECOVERY
-    order: 2
-    description: Rolling restart of the collector daemonset/deployment
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          deployment_name: "${incident.evidence.collector_name}"
-        required: true
-    failurePolicy: ESCALATE
-
-  - stageId: verify-telemetry-flow
-    name: Verify Telemetry Flow
-    type: VERIFICATION
-    order: 3
-    description: Confirm telemetry data is ingested downstream
-    runbooks:
-      - runbookId: RB-K8S-POD-RESTART
-        semver: ">=1.0.0"
-        parameterMappings:
-          namespace: "${incident.resource.namespace}"
-          collector_name: "${incident.evidence.collector_name}"
-        required: true
-    failurePolicy: ESCALATE
+conditions:
+  minimumConfidence: 0.80
 
 risk:
-  level: HIGH
-  blastRadius: cluster
+  level: LOW
+  blastRadius: observability-target
   reversible: true
-  rollbackStrategy: NONE
 
 policy:
-  required: false
+  required: true
+  approvalGroups:
+    - observability-team
 
 approval:
-  mode: AUTOMATIC
+  mode: MANUAL
+
+stages:
+  - id: investigate-collector
+    order: 1
+    name: Investigate Collector Health
+    type: INVESTIGATION
+    description: >
+      Inspect the health and diagnostic state of the affected telemetry
+      collector.
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-COLLECTOR-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-export
+    order: 2
+    name: Investigate Export and Ingestion
+    type: INVESTIGATION
+    description: >
+      Inspect exporter and downstream ingestion health.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-EXPORTER-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-INGESTION-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-telemetry-flow
+    order: 3
+    name: Investigate Telemetry Flow
+    type: INVESTIGATION
+    description: >
+      Determine which telemetry signals are no longer flowing through the
+      collector.
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-METRICS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-LOGS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TRACES-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-collector
+    order: 4
+    name: Verify Collector Recovery
+    type: VERIFICATION
+    description: >
+      Re-check collector and ingestion health after approved remediation.
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-COLLECTOR-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-INGESTION-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
 
 rollback:
   strategy: NONE
 
 escalation:
   enabled: true
-  maxAttempts: 2
+  maxAttempts: 1
   escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - telemetry
+  - collector
+  - opentelemetry
+  - diagnostic
+  - read-only

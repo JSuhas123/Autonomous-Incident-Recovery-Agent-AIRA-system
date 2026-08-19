@@ -1,0 +1,123 @@
+apiVersion: aira.io/v1
+kind: Playbook
+
+playbookId: PB-OBS-TELEMETRY-STALE-001
+semver: "1.0.0"
+
+name: Stale Telemetry Investigation
+
+description: >
+  Investigates telemetry that has stopped updating or become stale across
+  metrics, logs and traces.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - telemetry
+
+incident:
+  types:
+    - observability.telemetry_stale
+    - TelemetryStale
+    - TelemetryMissing
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.75
+
+risk:
+  level: LOW
+  blastRadius: observability-target
+  reversible: true
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-freshness
+    order: 1
+    name: Investigate Telemetry Freshness
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-TELEMETRY-FRESHNESS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: investigate-signal-flow
+    order: 2
+    name: Investigate Signal Flow
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-METRICS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-LOGS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TRACES-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-freshness
+    order: 3
+    name: Verify Telemetry Freshness
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-TELEMETRY-FRESHNESS
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - telemetry
+  - freshness
+  - diagnostic
+  - read-only

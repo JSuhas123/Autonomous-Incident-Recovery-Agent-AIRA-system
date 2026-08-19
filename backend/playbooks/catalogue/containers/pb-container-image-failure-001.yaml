@@ -1,0 +1,104 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-IMAGE-FAILURE-001
+semver: "1.0.0"
+
+name: Container Image Failure Investigation
+
+description: >
+  Investigates image-related container startup failures by examining runtime
+  image state, container state and termination evidence without pulling,
+  replacing or deleting images.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+
+incident:
+  types:
+    - container.image_failure
+    - container.image_unavailable
+  severities:
+    - medium
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-image
+    order: 1
+    name: Inspect Image State
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-IMAGE-STATE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-container
+    order: 2
+    name: Inspect Container Failure
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-STATE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-EXIT-REASON
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-runtime
+    order: 3
+    name: Verify Runtime Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RUNTIME-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - image
+  - runtime
+  - startup

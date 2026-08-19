@@ -1,0 +1,103 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-CONTAINER-RESTART-STORM-001
+semver: "1.0.0"
+
+name: Container Restart Storm Investigation
+
+description: >
+  Investigates containers repeatedly terminating and restarting by
+  correlating restart history, termination reasons, logs and resource state.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+
+incident:
+  types:
+    - container.restart_storm
+    - ContainerRestartStorm
+  severities:
+    - medium
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-restarts
+    order: 1
+    name: Inspect Restart History
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RESTART-HISTORY
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-CONTAINER-CHECK-EXIT-REASON
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-logs
+    order: 2
+    name: Inspect Container Logs
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-LOGS
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-resources
+    order: 3
+    name: Verify Resource State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-CONTAINER-CHECK-RESOURCE-USAGE
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: oncall-platform
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - containers
+  - restart
+  - crash-loop
+  - diagnostic

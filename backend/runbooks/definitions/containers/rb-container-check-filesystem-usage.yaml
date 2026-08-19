@@ -1,0 +1,31 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-CONTAINER-CHECK-FILESYSTEM-USAGE
+semver: "1.0.0"
+name: Check Container Filesystem Usage
+description: Inspect container filesystem and ephemeral storage utilization.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  name: AIRA Container Reliability
+  team: platform-reliability
+execution:
+  mode: OBSERVE
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  required: [targetId]
+steps:
+  - id: check-filesystem-usage
+    order: 1
+    type: containers
+    action: check_filesystem_usage
+    parameters:
+      targetId: "${parameters.targetId}"
+verification:
+  required: false
+rollback:
+  supported: false
+tags: [containers, filesystem, storage, diagnostic]

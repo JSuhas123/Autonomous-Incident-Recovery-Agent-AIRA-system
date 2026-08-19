@@ -1,0 +1,97 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MSG-REPLICATION-DEGRADED-001
+semver: "1.0.0"
+
+name: Messaging Replication Degradation Investigation
+
+description: >
+  Investigates degraded broker replication, under-replicated partitions and
+  replica availability without changing replica assignments or replication
+  factors.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+incident:
+  types:
+    - messaging.replication_degraded
+    - kafka.under_replicated_partitions
+  severities:
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.7
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-replication
+    order: 1
+    name: Inspect Replication Health
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-MSG-CHECK-REPLICATION-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-partitions
+    order: 2
+    name: Inspect Partition Health
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-PARTITION-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-broker
+    order: 3
+    name: Verify Broker Health
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-BROKER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: messaging-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - kafka
+  - replication
+  - partition

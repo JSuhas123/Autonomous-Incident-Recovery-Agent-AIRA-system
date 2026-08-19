@@ -1,0 +1,103 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MSG-BROKER-UNAVAILABLE-001
+semver: "1.0.0"
+
+name: Messaging Broker Unavailable Investigation
+
+description: >
+  Diagnoses broker availability incidents by inspecting broker, connection,
+  publish and delivery health without restarting or reconfiguring brokers.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Messaging Reliability
+  team: messaging-reliability
+
+incident:
+  types:
+    - messaging.broker_unavailable
+    - QueueBrokerUnavailable
+  severities:
+    - high
+    - critical
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.65
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-broker
+    order: 1
+    name: Inspect Broker
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-BROKER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-connection
+    order: 2
+    name: Inspect Broker Connections
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONNECTION-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-message-path
+    order: 3
+    name: Verify Message Path
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-PUBLISH-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-MSG-CHECK-DELIVERY-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: messaging-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - broker
+  - availability
+  - rabbitmq
+  - kafka

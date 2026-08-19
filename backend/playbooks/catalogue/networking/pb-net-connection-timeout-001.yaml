@@ -1,0 +1,87 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-CONNECTION-TIMEOUT-001
+semver: 1.0.0
+name: Network Connection Timeout Investigation
+description: Investigates network timeout conditions using connectivity, latency and packet-loss diagnostics.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - ConnectionTimeout
+    - NetworkTimeout
+    - network.connection.timeout
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-timeout
+    order: 1
+    name: Investigate Connection Timeout
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-LATENCY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-PACKET-LOSS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-connectivity
+    order: 2
+    name: Verify Connectivity
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-CONNECTIVITY
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

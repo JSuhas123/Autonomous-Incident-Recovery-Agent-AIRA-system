@@ -1,0 +1,124 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-MQ-RECOVERY-001
+semver: "2.0.0"
+
+name: Message Queue Incident Investigation
+
+description: >
+  Safely investigates message queue incidents including queue buildup,
+  dead-letter accumulation, broker degradation and consumer lag. This
+  playbook is diagnostic-only and does not purge queues, replay messages,
+  reset offsets, restart brokers or mutate messaging infrastructure.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: AIRA Platform
+  team: platform-reliability
+
+incident:
+  types:
+    - MessageQueueBuildup
+    - DLQOverflow
+    - QueueBrokerUnavailable
+    - mq.consumer.lag
+  severities:
+    - P2
+    - P3
+    - high
+    - medium
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.6
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+policy:
+  required: false
+
+approval:
+  mode: AUTOMATIC
+
+stages:
+  - id: inspect-broker
+    order: 1
+    name: Inspect Broker Health
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-BROKER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-backlog
+    order: 2
+    name: Inspect Queue Backlog
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-QUEUE-DEPTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: inspect-consumers
+    order: 3
+    name: Inspect Consumer Health
+    type: INVESTIGATION
+    failurePolicy: CONTINUE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-CONSUMER-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-MSG-CHECK-CONSUMER-LAG
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-delivery
+    order: 4
+    name: Verify Message Delivery State
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-MSG-CHECK-DELIVERY-HEALTH
+        semver: ">=1.0.0"
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  maxRecoveryAttempts: 1
+  escalateTo: platform-oncall
+  notifyChannels:
+    - slack-platform
+    - pagerduty
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: false
+
+tags:
+  - messaging
+  - rabbitmq
+  - kafka
+  - diagnostic
+  - read-only

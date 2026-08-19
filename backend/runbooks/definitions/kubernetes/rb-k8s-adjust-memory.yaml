@@ -1,0 +1,88 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-ADJUST-MEMORY
+name: Adjust Kubernetes Deployment Memory
+
+description: >
+  Draft deterministic procedure for modifying an approved Kubernetes Deployment
+  memory request and limit. This definition MUST NOT become ACTIVE until the
+  dedicated patch_deployment_memory action handler is implemented, validated,
+  policy-gated, approval-gated, and tested.
+
+semver: 1.0.0
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+
+  providers:
+    - kubernetes
+
+risk:
+  level: HIGH
+  blastRadius: deployment
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Deployment whose container memory configuration will change.
+
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Deployment.
+
+  - name: memory_request
+    type: string
+    required: true
+    description: Policy-approved Kubernetes memory request quantity.
+
+  - name: memory_limit
+    type: string
+    required: true
+    description: Policy-approved Kubernetes memory limit quantity.
+
+steps:
+  - id: step-01
+    name: Apply approved deployment memory configuration
+    order: 1
+    type: kubernetes
+    action: patch_deployment_memory
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+      memoryRequest: ${memory_request}
+      memoryLimit: ${memory_limit}
+    requiresConfirmation: true
+    timeoutSeconds: 120
+    failurePolicy: STOP
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ALL
+  timeoutSeconds: 300
+
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment becomes available after the approved memory change.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 300
+
+auditConfig:
+  redactSensitiveValues: false

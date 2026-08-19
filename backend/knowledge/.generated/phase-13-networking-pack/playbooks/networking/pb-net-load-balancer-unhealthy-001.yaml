@@ -1,0 +1,84 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-NET-LOAD-BALANCER-UNHEALTHY-001
+semver: 1.0.0
+name: Load Balancer Unhealthy Investigation
+description: Investigates load-balancer health and upstream availability without changing backend membership.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+incident:
+  types:
+    - LoadBalancerUnhealthy
+    - LoadBalancerBackendFailure
+    - network.load_balancer.unhealthy
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - networking
+    - load-balancer
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: network-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-load-balancer
+    order: 1
+    name: Investigate Load Balancer
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-NET-INVESTIGATE-LOAD-BALANCER
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+      - runbookId: RB-NET-INVESTIGATE-UPSTREAM
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: verify-load-balancer
+    order: 2
+    name: Verify Load Balancer
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-NET-VERIFY-LOAD-BALANCER
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: network-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - networking
+  - diagnostic
+  - phase-13

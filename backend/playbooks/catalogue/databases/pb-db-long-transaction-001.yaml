@@ -1,0 +1,80 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-DB-LONG-TRANSACTION-001
+semver: 1.0.0
+name: Database Long Transaction Investigation
+description: Investigates long-running transactions and related lock contention without terminating transactions.
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Database Reliability
+  team: database-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - database
+incident:
+  types:
+    - DatabaseLongTransaction
+    - database.long_transaction
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - database
+    - postgresql
+    - mysql
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.targetId
+conditions:
+  minimumConfidence: 0.75
+risk:
+  level: LOW
+  blastRadius: database-target
+  reversible: true
+policy:
+  required: true
+approval:
+  mode: MANUAL
+stages:
+  - id: investigate-transactions
+    order: 1
+    name: Investigate Long Transactions
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-LONG-TRANSACTIONS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+  - id: inspect-locks
+    order: 2
+    name: Inspect Lock Relationships
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-DB-INVESTIGATE-LOCKS
+        required: true
+        parameterMappings:
+          targetId: ${incident.resource.targetId}
+rollback:
+  strategy: NONE
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: dba-oncall
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+tags:
+  - database
+  - diagnostic
+  - phase-13

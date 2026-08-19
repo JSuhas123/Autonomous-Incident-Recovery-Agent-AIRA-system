@@ -1,0 +1,65 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-K8S-VERIFY-PVC
+name: Kubernetes PersistentVolumeClaim Recovery Verification
+description: Read-only verification that a Kubernetes PersistentVolumeClaim has reached the Bound state.
+semver: 1.0.0
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  name: Platform Engineering
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+  providers:
+    - kubernetes
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: pvc
+    type: string
+    required: true
+    description: PersistentVolumeClaim to verify.
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the PersistentVolumeClaim.
+steps:
+  - id: step-01
+    name: Check PersistentVolumeClaim binding
+    order: 1
+    type: kubernetes
+    action: check_pvc_bound
+    params:
+      resource: ${pvc}
+      namespace: ${namespace}
+    failurePolicy: STOP
+  - id: step-02
+    name: Collect final PersistentVolumeClaim state
+    order: 2
+    type: kubernetes
+    action: get_pvc
+    params:
+      resource: ${pvc}
+      namespace: ${namespace}
+    failurePolicy: CONTINUE
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+verification:
+  strategy: ALL
+  timeoutSeconds: 60
+  checks:
+    - id: check-01
+      type: pvc_bound
+      description: PersistentVolumeClaim must be Bound.
+      params:
+        pvc: ${pvc}
+        namespace: ${namespace}
+      timeoutSeconds: 60
+auditConfig:
+  redactSensitiveValues: false

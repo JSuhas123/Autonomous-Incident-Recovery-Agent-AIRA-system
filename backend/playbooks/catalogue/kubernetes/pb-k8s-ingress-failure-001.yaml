@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-INGRESS-FAILURE-001
+name: Kubernetes Ingress Routing Failure Investigation
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates Kubernetes Ingress routing and load-balancer configuration and verifies that usable
+  routing remains configured.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - IngressUnavailable
+    - IngressRoutingFailure
+    - IngressConfigurationFailure
+    - kubernetes.ingress.unavailable
+    - kubernetes.ingress.routing_failure
+  severities:
+    - P1
+    - P2
+    - P3
+    - critical
+    - high
+    - medium
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.ingress
+  - resource.namespace
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: LOW
+  blastRadius: ingress
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-ingress
+    order: 1
+    name: Investigate Ingress
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-INGRESS
+        required: true
+        parameterMappings:
+          ingress: ${incident.resource.ingress}
+          namespace: ${incident.resource.namespace}
+  - id: verify-ingress
+    order: 2
+    name: Verify Ingress Configuration
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-INGRESS
+        required: true
+        parameterMappings:
+          ingress: ${incident.resource.ingress}
+          namespace: ${incident.resource.namespace}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true

@@ -1,0 +1,113 @@
+apiVersion: aira.io/v1
+kind: Playbook
+
+playbookId: PB-OBS-SCRAPE-FAILURE-001
+semver: "1.0.0"
+
+name: Metrics Scrape Failure Investigation
+
+description: >
+  Investigates Prometheus-style scrape failures and target unavailability
+  without modifying scrape configuration.
+
+lifecycle: DRAFT
+
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Observability Reliability
+  team: observability-reliability
+
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - observability
+    - metrics
+
+incident:
+  types:
+    - observability.scrape_failure
+    - PrometheusTargetDown
+    - MetricsScrapeFailure
+  severities:
+    - P1
+    - P2
+    - critical
+    - high
+  providers:
+    - observability
+    - prometheus
+  environments:
+    - production
+    - staging
+
+requiredEvidence:
+  - resource.targetId
+
+conditions:
+  minimumConfidence: 0.80
+
+risk:
+  level: LOW
+  blastRadius: observability-target
+  reversible: true
+
+policy:
+  required: true
+
+approval:
+  mode: MANUAL
+
+stages:
+  - id: investigate-scrape
+    order: 1
+    name: Investigate Scrape Health
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-OBS-CHECK-SCRAPE-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-TARGET-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+  - id: verify-scrape
+    order: 2
+    name: Verify Metrics Scraping
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-OBS-CHECK-SCRAPE-HEALTH
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+      - runbookId: RB-OBS-CHECK-METRICS-FLOW
+        required: true
+        parameterMappings:
+          targetId: "${incident.resource.targetId}"
+
+rollback:
+  strategy: NONE
+
+escalation:
+  enabled: true
+  maxAttempts: 1
+  escalateTo: observability-oncall
+
+outcome:
+  captureLearning: true
+  updateIncidentMemory: true
+
+tags:
+  - observability
+  - prometheus
+  - scrape
+  - diagnostic
+  - read-only

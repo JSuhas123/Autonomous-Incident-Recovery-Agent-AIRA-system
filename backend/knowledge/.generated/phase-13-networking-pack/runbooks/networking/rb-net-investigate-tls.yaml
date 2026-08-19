@@ -1,0 +1,62 @@
+apiVersion: aira.io/v1
+kind: Runbook
+runbookId: RB-NET-INVESTIGATE-TLS
+semver: 1.0.0
+name: TLS Connectivity Investigation
+description: Inspects TLS handshake and certificate-chain state without replacing certificates.
+lifecycle: ACTIVE
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Networking Reliability
+  team: networking-reliability
+scope:
+  environments:
+    - production
+    - staging
+  services:
+    - networking
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+parameters:
+  - name: targetId
+    type: string
+    required: true
+    description: Identifier of an explicitly registered external network diagnostic target.
+steps:
+  - id: step-01
+    name: Inspect TLS state
+    order: 1
+    type: networking
+    action: check_tls
+    params:
+      targetId: ${targetId}
+    failurePolicy: STOP
+  - id: step-02
+    name: Check connectivity
+    order: 2
+    type: networking
+    action: check_connectivity
+    params:
+      targetId: ${targetId}
+    failurePolicy: CONTINUE
+verification:
+  strategy: ALL
+  timeoutSeconds: 30
+  checks:
+    - id: check-01
+      type: diagnostic_completed
+      description: TLS Connectivity Investigation completed and returned diagnostic evidence.
+      timeoutSeconds: 30
+      optional: false
+rollbackConfig:
+  strategy: NONE
+auditConfig:
+  redactSensitiveValues: true
+tags:
+  - networking
+  - diagnostic
+  - read-only
+  - phase-13

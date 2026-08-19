@@ -1,0 +1,85 @@
+apiVersion: aira.io/v1
+kind: Runbook
+
+runbookId: RB-K8S-INVESTIGATE-ROLLOUT
+name: Investigate Kubernetes Deployment Rollout
+
+description: >
+  Read-only investigation of a Kubernetes Deployment rollout failure.
+  Collects Deployment state and replica status without modifying the workload.
+
+semver: 1.0.0
+lifecycle: ACTIVE
+
+owner:
+  ownerType: system
+  name: Platform Engineering
+
+scope:
+  environments:
+    - production
+    - staging
+    - dev
+
+  providers:
+    - kubernetes
+
+risk:
+  level: LOW
+  blastRadius: none
+  reversible: true
+
+parameters:
+  - name: deployment
+    type: string
+    required: true
+    description: Kubernetes Deployment experiencing rollout failure.
+
+  - name: namespace
+    type: string
+    required: true
+    description: Namespace containing the Deployment.
+
+steps:
+  - id: step-01
+    name: Read deployment detail
+    order: 1
+    type: kubernetes
+    action: get_deployment
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: STOP
+
+  - id: step-02
+    name: Read deployment replica status
+    order: 2
+    type: kubernetes
+    action: get_deployment_status
+    params:
+      resource: ${deployment}
+      namespace: ${namespace}
+    timeoutSeconds: 30
+    failurePolicy: CONTINUE
+
+rollbackConfig:
+  strategy: NONE
+  nonReversibleAcknowledged: false
+
+verification:
+  strategy: ANY
+  timeoutSeconds: 30
+
+  checks:
+    - id: check-01
+      type: deployment_available
+      description: Deployment existence/status can be evaluated.
+      params:
+        deployment: ${deployment}
+        namespace: ${namespace}
+      timeoutSeconds: 30
+      optional: true
+
+auditConfig:
+  redactSensitiveValues: false

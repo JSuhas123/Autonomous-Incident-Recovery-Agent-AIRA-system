@@ -13,6 +13,7 @@
  * Registry key: `${type}/${action}` (lower-snake)
  */
 
+
 const HANDLER_STATUS = Object.freeze({
   IMPLEMENTED:     'IMPLEMENTED',
   MISSING_HANDLER: 'MISSING_HANDLER',
@@ -148,12 +149,107 @@ function resetActionHandlerRegistry() {
 
 // ── Loader ─────────────────────────────────────────────────────────────────
 
-function _loadBuiltinHandlers(registry) {
-  const k8s   = require('./handlers/kubernetesHandlers');
-  const wait  = require('./handlers/waitHandlers');
+function _loadBuiltinHandlers(
+  registry
+) {
+  const k8s =
+    require(
+      './handlers/kubernetesHandlers'
+    );
 
-  for (const handler of k8s.handlers)  registry.register(handler);
-  for (const handler of wait.handlers) registry.register(handler);
+  const wait =
+    require(
+      './handlers/waitHandlers'
+    );
+
+  const database =
+    require(
+      './handlers/databaseHandlers'
+    );
+
+  const networking =
+    require(
+      './handlers/networkingHandlers'
+    );
+
+  const observability =
+  require(
+    './handlers/observabilityHandlers'
+  );  
+
+  const messaging =
+  require(
+    './handlers/messagingHandlers'
+  );
+
+  const containers =
+  require(
+    './handlers/containerHandlers'
+  );
+
+
+  for (
+  const handler
+  of containers.handlers
+) {
+  registry.register(
+    handler
+  );
+}
+
+  for (
+  const handler
+  of messaging.handlers
+) {
+  registry.register(
+    handler
+  );
+}
+
+  for (
+  const handler
+  of observability.handlers
+) {
+  registry.register(
+    handler
+  );
+}
+
+  for (
+    const handler
+    of k8s.handlers
+  ) {
+    registry.register(
+      handler
+    );
+  }
+
+  for (
+    const handler
+    of wait.handlers
+  ) {
+    registry.register(
+      handler
+    );
+  }
+
+  for (
+    const handler
+    of database.handlers
+  ) {
+    registry.register(
+      handler
+    );
+  }
+
+  for (
+    const handler
+    of networking.handlers
+  ) {
+    registry.register(
+      handler
+    );
+  }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

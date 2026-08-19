@@ -1,0 +1,105 @@
+apiVersion: aira.io/v1
+kind: Playbook
+playbookId: PB-K8S-SERVICE-ENDPOINT-FAILURE-001
+name: Kubernetes Service Endpoint Failure Investigation
+semver: 1.0.0
+lifecycle: DRAFT
+owner:
+  ownerType: system
+  ownerId: aira-core
+  name: AIRA Platform Reliability
+  team: platform-reliability
+description: >-
+  Investigates Kubernetes Service configuration and backing endpoint availability, then verifies
+  whether usable endpoints are present.
+category: kubernetes
+tags:
+  - kubernetes
+  - incident-response
+scope:
+  environments:
+    - development
+    - staging
+    - production
+  providers:
+    - kubernetes
+  resourceTypes:
+    - Deployment
+    - StatefulSet
+    - DaemonSet
+    - Pod
+    - Node
+  namespaces:
+    - "*"
+incident:
+  types:
+    - ServiceUnavailable
+    - ServiceEndpointFailure
+    - ServiceHasNoEndpoints
+    - kubernetes.service.unavailable
+    - kubernetes.service.no_endpoints
+  severities:
+    - P1
+    - P2
+    - P3
+    - critical
+    - high
+    - medium
+  providers:
+    - kubernetes
+    - k8s
+  environments:
+    - production
+    - staging
+requiredEvidence:
+  - resource.service
+  - resource.namespace
+conditions:
+  minimumConfidence: 0.75
+  requireCorrelation: true
+  requireEvidence: true
+risk:
+  level: LOW
+  blastRadius: service
+policy:
+  required: true
+  failClosed: true
+approval:
+  mode: POLICY_DRIVEN
+  requiredForProduction: true
+stages:
+  - id: investigate-service
+    order: 1
+    name: Investigate Service and Endpoints
+    type: INVESTIGATION
+    failurePolicy: STOP
+    runbooks:
+      - runbookId: RB-K8S-INVESTIGATE-SERVICE
+        required: true
+        parameterMappings:
+          service: ${incident.resource.service}
+          namespace: ${incident.resource.namespace}
+  - id: verify-service-endpoints
+    order: 2
+    name: Verify Service Endpoints
+    type: VERIFICATION
+    failurePolicy: ESCALATE
+    runbooks:
+      - runbookId: RB-K8S-VERIFY-SERVICE-ENDPOINTS
+        required: true
+        parameterMappings:
+          service: ${incident.resource.service}
+          namespace: ${incident.resource.namespace}
+rollback:
+  enabled: true
+  automatic: false
+  requireVerificationFailure: true
+escalation:
+  enabled: true
+  onFailure: MANUAL_REQUIRED
+  onAmbiguity: MANUAL_REQUIRED
+  onPolicyDenial: MANUAL_REQUIRED
+outcome:
+  captureLearning: true
+  persistEvidence: true
+  persistDecisionTrace: true
