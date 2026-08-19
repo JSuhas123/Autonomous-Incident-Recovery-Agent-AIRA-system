@@ -26,9 +26,11 @@ const crypto =
     "node:crypto"
   );
 
-const RuntimeRecoveryCheckpoint =
+const {
+  runtimeRecoveryCheckpointRepository,
+} =
   require(
-    "../../models/RuntimeRecoveryCheckpoint"
+    "../../persistence/repositories"
   );
 
 const {
@@ -46,19 +48,78 @@ const {
   );
 
 class RuntimeCheckpointPersistenceService {
-  constructor(
-    options = {}
+ constructor(
+  options = {}
+) {
+  if (
+    options.repository
   ) {
-    this.RuntimeRecoveryCheckpoint =
-      options.RuntimeRecoveryCheckpoint ||
-      RuntimeRecoveryCheckpoint;
+    this.repository =
+      options.repository;
+  } else if (
+    options
+      .RuntimeRecoveryCheckpoint
+  ) {
+    /*
+     * Phase 13 compatibility bridge.
+     *
+     * Legacy unit tests and callers historically injected the
+     * Mongoose-style model directly.
+     *
+     * Keep that dependency behind an adapter-shaped object so the
+     * service itself still speaks repository operations only.
+     *
+     * Remove this compatibility path after Mongo retirement.
+     */
+    const Model =
+      options
+        .RuntimeRecoveryCheckpoint;
 
-    this.defaultLeaseMs =
-      normalizePositiveNumber(
-        options.defaultLeaseMs,
-        60000
-      );
+    this.repository = {
+      async create(
+        data
+      ) {
+        return Model
+          .create(
+            data
+          );
+      },
+
+      async findOneAndUpdate(
+        filter,
+        update
+      ) {
+        return Model
+          .findOneAndUpdate(
+            filter,
+            update,
+            {
+              new:
+                true,
+            }
+          );
+      },
+
+      async findOne(
+        filter
+      ) {
+        return Model
+          .findOne(
+            filter
+          );
+      },
+    };
+  } else {
+    this.repository =
+      runtimeRecoveryCheckpointRepository;
   }
+
+  this.defaultLeaseMs =
+    normalizePositiveNumber(
+      options.defaultLeaseMs,
+      60000
+    );
+}
 
   // ==========================================================================
   // CREATE / ENSURE
@@ -161,11 +222,16 @@ class RuntimeCheckpointPersistenceService {
 
       executionAuthorized:
         false,
+
+      metadata: {
+        persistenceVersion:
+          "phase13-repository-v1",
+      },
     };
 
     try {
       const checkpoint =
-        await this.RuntimeRecoveryCheckpoint
+        await this.repository
           .create(
             insert
           );
@@ -182,6 +248,9 @@ class RuntimeCheckpointPersistenceService {
     } catch (
       error
     ) {
+      /*
+       * Preserve unique-index based idempotency.
+       */
       if (
         error?.code !==
         11000
@@ -257,8 +326,14 @@ class RuntimeCheckpointPersistenceService {
         leaseMs
       );
 
+    /*
+     * This MUST remain an atomic compare-and-update.
+     *
+     * PostgreSQL implementation will later reproduce this using
+     * UPDATE ... WHERE ... RETURNING or row locking.
+     */
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           {
             organizationId:
@@ -286,7 +361,6 @@ class RuntimeCheckpointPersistenceService {
               ],
             },
           },
-
           {
             $set: {
               status:
@@ -331,11 +405,6 @@ class RuntimeCheckpointPersistenceService {
               attempt:
                 1,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -411,14 +480,13 @@ class RuntimeCheckpointPersistenceService {
       );
 
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           this.buildOwnedFilter(
             input,
             CHECKPOINT_STATUS
               .PROCESSING
           ),
-
           {
             $set: {
               "owner.heartbeatAt":
@@ -430,11 +498,6 @@ class RuntimeCheckpointPersistenceService {
               lastTransitionAt:
                 now,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -480,7 +543,7 @@ class RuntimeCheckpointPersistenceService {
       );
 
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           this.buildOwnedFilter(
             input,
@@ -488,7 +551,6 @@ class RuntimeCheckpointPersistenceService {
               CHECKPOINT_STATUS
                 .PROCESSING
           ),
-
           {
             $set: {
               status:
@@ -505,11 +567,6 @@ class RuntimeCheckpointPersistenceService {
               executionAuthorized:
                 false,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -549,14 +606,13 @@ class RuntimeCheckpointPersistenceService {
       );
 
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           this.buildOwnedFilter(
             input,
             CHECKPOINT_STATUS
               .PROCESSING
           ),
-
           {
             $set: {
               status:
@@ -603,11 +659,6 @@ class RuntimeCheckpointPersistenceService {
               executionAuthorized:
                 false,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -647,14 +698,13 @@ class RuntimeCheckpointPersistenceService {
       );
 
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           this.buildOwnedFilter(
             input,
             CHECKPOINT_STATUS
               .PROCESSING
           ),
-
           {
             $set: {
               status:
@@ -698,11 +748,6 @@ class RuntimeCheckpointPersistenceService {
               executionAuthorized:
                 false,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -746,8 +791,11 @@ class RuntimeCheckpointPersistenceService {
       INTERRUPTION_REASON
         .UNKNOWN;
 
+    /*
+     * Only an actually expired PROCESSING lease can be abandoned.
+     */
     const checkpoint =
-      await this.RuntimeRecoveryCheckpoint
+      await this.repository
         .findOneAndUpdate(
           {
             organizationId:
@@ -774,7 +822,6 @@ class RuntimeCheckpointPersistenceService {
                 now,
             },
           },
-
           {
             $set: {
               status:
@@ -813,11 +860,6 @@ class RuntimeCheckpointPersistenceService {
               executionAuthorized:
                 false,
             },
-          },
-
-          {
-            new:
-              true,
           }
         );
 
@@ -847,7 +889,7 @@ class RuntimeCheckpointPersistenceService {
       input
     );
 
-    return this.RuntimeRecoveryCheckpoint
+    return this.repository
       .findOne({
         organizationId:
           input.organizationId,
@@ -1091,6 +1133,10 @@ function sanitizeResult(
     ...result,
   };
 
+  /*
+   * Runtime result persistence can never smuggle execution authority
+   * into the checkpoint document.
+   */
   delete clone
     .executionAuthorized;
 

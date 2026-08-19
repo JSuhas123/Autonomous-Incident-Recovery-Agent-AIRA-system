@@ -40,6 +40,9 @@
     "migrate:services:environments": "node scripts/migrate-services-to-environments.js",
     "migrate:incidents:environments": "node scripts/migrate-incidents-to-environments.js",
     "simulate": "node run-simulation.js",
+    "test:persistence": "jest persistence --runInBand",
+    "db:postgres:check": "node scripts/check-postgres.js",
+    "db:postgres:migrate": "node scripts/postgres-migrate.js", 
     "bootstrap:organizations": "node scripts/bootstrap-organizations.js",
     "simulate:clean": "rm -rf simulation/results/* && npm run simulate"
   },
@@ -69,6 +72,7 @@
     "mongoose": "^8.6.2",
     "prom-client": "^15.1.0",
     "redis": "^4.6.12",
+    "pg": "^8.22.0",
     "uuid": "^11.1.1",
     "winston": "^3.11.0",
     "xss": "^1.0.14"

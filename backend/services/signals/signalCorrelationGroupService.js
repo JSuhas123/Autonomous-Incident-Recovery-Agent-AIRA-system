@@ -1,17 +1,12 @@
 "use strict";
 
 const {
-  Signal,
-} =
-  require(
-    "../../models/Signal"
-  );
+  signalRepository,
 
-const {
-  SignalCorrelation,
+  signalCorrelationRepository,
 } =
   require(
-    "../../models/SignalCorrelation"
+    "../../persistence/repositories"
   );
 
 class SignalCorrelationGroupService {
@@ -77,26 +72,36 @@ class SignalCorrelationGroupService {
     const relatedSignals =
       correlationResult
         ?.correlated
-        ? await Signal
-            .find({
-              organizationId:
-                signal.organizationId,
+        ? await signalRepository
+            .list(
+              {
+                organizationId:
+                  signal.organizationId,
 
-              environmentId:
-                signal.environmentId,
+                environmentId:
+                  signal.environmentId,
 
-              $or: [
-                {
-                  correlationGroupId,
+                $or: [
+                  {
+                    correlationGroupId,
+                  },
+
+                  {
+                    signalId:
+                      signal.signalId,
+                  },
+                ],
+              },
+              {
+                sort: {
+                  observedAt:
+                    1,
                 },
 
-                {
-                  signalId:
-                    signal.signalId,
-                },
-              ],
-            })
-            .lean()
+                limit:
+                  500,
+              }
+            )
         : [
             this.toPlain(
               signal
@@ -213,19 +218,18 @@ class SignalCorrelationGroupService {
       );
 
     const group =
-      await SignalCorrelation
-        .findOneAndUpdate(
+      await signalCorrelationRepository
+        .upsertGroup(
           {
             organizationId:
               signal.organizationId,
 
             environmentId:
               signal.environmentId,
-
-            correlationGroupId,
           },
+          correlationGroupId,
           {
-            $set: {
+            set: {
               tenantId:
                 signal.tenantId,
 
@@ -273,36 +277,22 @@ class SignalCorrelationGroupService {
               evidence,
             },
 
-            $addToSet: {
-              signalIds: {
-                $each:
-                  uniqueSignals
-                    .map(
-                      (entry) =>
-                        entry.signalId
-                    )
-                    .filter(
-                      Boolean
-                    ),
-              },
-            },
-          },
-          {
-            upsert:
-              true,
-
-            new:
-              true,
-
-            setDefaultsOnInsert:
-              true,
+            addSignalIds:
+              uniqueSignals
+                .map(
+                  (entry) =>
+                    entry.signalId
+                )
+                .filter(
+                  Boolean
+                ),
           }
         );
 
     /*
      * Ensure all related signals point at the same group.
      */
-    await Signal
+    await signalRepository
       .updateMany(
         {
           organizationId:
@@ -319,7 +309,6 @@ class SignalCorrelationGroupService {
         {
           $set: {
             correlationGroupId:
-
               group
                 .correlationGroupId,
 
@@ -581,17 +570,40 @@ class SignalCorrelationGroupService {
     context,
     correlationGroupId
   ) {
-    return SignalCorrelation
-      .findOne({
-        organizationId:
-          context.organizationId,
+    if (
+      !context
+        ?.organizationId ||
+      !context
+        ?.environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Complete correlation-group context is required"
+        ),
+        {
+          code:
+            "SIGNAL_GROUP_QUERY_CONTEXT_REQUIRED",
+        }
+      );
+    }
 
-        environmentId:
-          context.environmentId,
+    if (
+      !correlationGroupId
+    ) {
+      return null;
+    }
 
-        correlationGroupId,
-      })
-      .lean();
+    return signalCorrelationRepository
+      .findGroup(
+        {
+          organizationId:
+            context.organizationId,
+
+          environmentId:
+            context.environmentId,
+        },
+        correlationGroupId
+      );
   }
 }
 

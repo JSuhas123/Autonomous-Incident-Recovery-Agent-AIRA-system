@@ -8,11 +8,17 @@ const incidentStateMachine =
   );
 
 const {
-  Incident,
   buildFingerprint,
 } =
   require(
     "../../models/Incident"
+  );
+
+const {
+  incidentRepository,
+} =
+  require(
+    "../../persistence/repositories"
   );
 
 const incidentEventService =
@@ -667,7 +673,7 @@ async function openOrUpdate({
     new Date();
 
   let existing =
-    await Incident
+    await incidentRepository
       .findOne({
         organizationId:
           monitor
@@ -866,8 +872,10 @@ async function openOrUpdate({
       },
     });
 
-    await existing
-      .save();
+    await incidentRepository
+      .save(
+        existing
+      );
 
     await publishIncidentLifecycle(
       "INCIDENT_UPDATED",
@@ -908,7 +916,7 @@ async function openOrUpdate({
 
   try {
     const incident =
-      await Incident
+      await incidentRepository
         .create({
           organizationId:
             monitor
@@ -1076,7 +1084,7 @@ async function openOrUpdate({
       11000
     ) {
       existing =
-        await Incident
+        await incidentRepository
           .findOne({
             organizationId:
               monitor
@@ -1127,8 +1135,8 @@ async function resolveForMonitor({
     new Date();
 
   const openIncidents =
-    await Incident
-      .find({
+    await incidentRepository
+      .findMany({
         organizationId:
           monitor
             .organizationId,
@@ -1199,8 +1207,10 @@ async function resolveForMonitor({
     incident.resolution =
       "Monitor recovery threshold reached.";
 
-    await incident
-      .save();
+    await incidentRepository
+      .save(
+        incident
+      );
 
     await publishIncidentLifecycle(
       "INCIDENT_RESOLVED",
@@ -1238,7 +1248,7 @@ async function transitionStatus(
   }
 ) {
   const incident =
-    await Incident
+    await incidentRepository
       .findOne(
         incidentOwnershipQuery(
           incidentId,
@@ -1277,8 +1287,10 @@ async function transitionStatus(
   if (
     result.changed
   ) {
-    await incident
-      .save();
+    await incidentRepository
+      .save(
+        incident
+      );
 
     const topicName =
       targetStatus ===
@@ -1419,7 +1431,7 @@ async function resolveManually(
   }
 ) {
   const incident =
-    await Incident
+    await incidentRepository
       .findOne(
         incidentOwnershipQuery(
           incidentId,
@@ -1471,8 +1483,10 @@ async function resolveManually(
   incident.resolutionType =
     "manual";
 
-  await incident
-    .save();
+  await incidentRepository
+    .save(
+      incident
+    );
 
   await publishIncidentLifecycle(
     "INCIDENT_RESOLVED",
@@ -1503,7 +1517,7 @@ async function reopen(
   }
 ) {
   const incident =
-    await Incident
+    await incidentRepository
       .findOne(
         incidentOwnershipQuery(
           incidentId,
@@ -1551,8 +1565,10 @@ async function reopen(
       }
     );
 
-  await incident
-    .save();
+  await incidentRepository
+    .save(
+      incident
+    );
 
   await publishIncidentLifecycle(
     "INCIDENT_UPDATED",
@@ -1613,7 +1629,7 @@ async function assign(
   }
 ) {
   const incident =
-    await Incident
+    await incidentRepository
       .findOne(
         incidentOwnershipQuery(
           incidentId,
@@ -1672,8 +1688,10 @@ async function assign(
     },
   });
 
-  await incident
-    .save();
+  await incidentRepository
+    .save(
+      incident
+    );
 
   await publishIncidentLifecycle(
     "INCIDENT_UPDATED",
@@ -1984,7 +2002,7 @@ async function openOrUpdateFromSignal({
   // ==========================================================================
 
   let existing =
-    await Incident
+    await incidentRepository
       .findOne({
         organizationId:
           signal
@@ -2010,7 +2028,7 @@ async function openOrUpdateFromSignal({
     groupId
   ) {
     existing =
-      await Incident
+      await incidentRepository
         .findOne({
           organizationId:
             signal
@@ -2240,8 +2258,10 @@ async function openOrUpdateFromSignal({
       },
     });
 
-    await existing
-      .save();
+    await incidentRepository
+      .save(
+        existing
+      );
 
     await publishIncidentLifecycle(
       "INCIDENT_UPDATED",
@@ -2306,7 +2326,7 @@ async function openOrUpdateFromSignal({
 
   try {
     const incident =
-      await Incident
+      await incidentRepository
         .create({
           organizationId:
             signal
@@ -2473,7 +2493,7 @@ async function openOrUpdateFromSignal({
       11000
     ) {
       const concurrent =
-        await Incident
+        await incidentRepository
           .findOne({
             organizationId:
               signal
@@ -2579,8 +2599,8 @@ async function resolveFromSignal({
   }
 
   const incidents =
-    await Incident
-      .find(
+    await incidentRepository
+      .findMany(
         filter
       );
 
@@ -2667,8 +2687,10 @@ async function resolveFromSignal({
         0
       ) + 1;
 
-    await incident
-      .save();
+    await incidentRepository
+      .save(
+        incident
+      );
 
     await publishIncidentLifecycle(
       "INCIDENT_RESOLVED",

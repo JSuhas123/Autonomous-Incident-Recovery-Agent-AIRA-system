@@ -20,19 +20,17 @@
  * - no execution authorization
  */
 
-const mongoose =
-  require(
-    "mongoose"
-  );
+const {
+  agentIntelligenceRunRepository,
 
-const AgentIntelligenceRun =
-  require(
-    "../../models/AgentIntelligenceRun"
-  );
+  incidentDiagnosisRepository,
 
-const IncidentDiagnosis =
+  persistenceTransactionManager,
+
+  persistenceIdentifierPolicy,
+} =
   require(
-    "../../models/IncidentDiagnosis"
+    "../../persistence/repositories"
   );
 
 class DiagnosisPersistenceService {
@@ -41,58 +39,54 @@ class DiagnosisPersistenceService {
   // ==========================================================================
 
   async persist(
+  coordinatorResult
+) {
+  this.assertCoordinatorResult(
     coordinatorResult
-  ) {
-    this.assertCoordinatorResult(
-      coordinatorResult
-    );
+  );
 
-    const {
-      runId,
-      diagnosis,
-      context,
-      agentTrace,
-      confidence,
-      startedAt,
-      completedAt,
-    } =
-      coordinatorResult;
+  const {
+    runId,
+    diagnosis,
+    context,
+    agentTrace,
+    confidence,
+    startedAt,
+    completedAt,
+  } =
+    coordinatorResult;
 
-    const session =
-      await mongoose
-        .startSession();
+  return persistenceTransactionManager
+    .run(
+      async (
+        transaction
+      ) => {
+        // ================================================================
+        // 1. CREATE RUN
+        // ================================================================
 
-    try {
-      let persistedRun;
-      let persistedDiagnosis;
+        const persistedRun =
+          await this.createRun(
+            {
+              runId,
+              diagnosis,
+              context,
+              agentTrace,
+              confidence,
+              startedAt,
+              completedAt,
+            },
+            transaction
+          );
 
-      await session.withTransaction(
-        async () => {
-          // ==================================================================
-          // 1. CREATE RUN
-          // ==================================================================
+        // ================================================================
+        // 2. FIND CURRENT DIAGNOSIS
+        // ================================================================
 
-          persistedRun =
-            await this.createRun(
+        const currentDiagnosis =
+          await incidentDiagnosisRepository
+            .findCurrent(
               {
-                runId,
-                diagnosis,
-                context,
-                agentTrace,
-                confidence,
-                startedAt,
-                completedAt,
-              },
-              session
-            );
-
-          // ==================================================================
-          // 2. FIND CURRENT DIAGNOSIS
-          // ==================================================================
-
-          const currentDiagnosis =
-            await IncidentDiagnosis
-              .findOne({
                 organizationId:
                   context
                     .organizationId,
@@ -104,125 +98,120 @@ class DiagnosisPersistenceService {
                 incidentId:
                   context
                     .incidentId,
-
-                isCurrent:
-                  true,
-              })
-              .session(
-                session
-              );
-
-          // ==================================================================
-          // 3. DETERMINE REVISION
-          // ==================================================================
-
-          const revision =
-            currentDiagnosis
-              ? (
-                  currentDiagnosis
-                    .revision +
-                  1
-                )
-              : 1;
-
-          // ==================================================================
-          // 4. SUPERSEDE OLD DIAGNOSIS
-          // ==================================================================
-
-          if (
-            currentDiagnosis
-          ) {
-            currentDiagnosis
-              .isCurrent =
-              false;
-
-            currentDiagnosis
-              .status =
-              "superseded";
-
-            await currentDiagnosis
-              .save({
-                session,
-              });
-          }
-
-          // ==================================================================
-          // 5. CREATE NEW DIAGNOSIS
-          // ==================================================================
-
-          persistedDiagnosis =
-            await this.createDiagnosis(
-              {
-                coordinatorResult,
-
-                run:
-                  persistedRun,
-
-                revision,
-
-                previousDiagnosis:
-                  currentDiagnosis,
               },
-              session
+              transaction
             );
 
-          // ==================================================================
-          // 6. LINK OLD -> NEW
-          // ==================================================================
+        // ================================================================
+        // 3. DETERMINE REVISION
+        // ================================================================
 
-          if (
-            currentDiagnosis
-          ) {
-            currentDiagnosis
-              .supersededByDiagnosisId =
-              persistedDiagnosis
-                ._id;
+        const revision =
+          currentDiagnosis
+            ? (
+                currentDiagnosis
+                  .revision +
+                1
+              )
+            : 1;
 
-            await currentDiagnosis
-              .save({
-                session,
-              });
-          }
+        // ================================================================
+        // 4. SUPERSEDE OLD DIAGNOSIS
+        // ================================================================
 
-          // ==================================================================
-          // 7. LINK RUN -> DIAGNOSIS
-          // ==================================================================
+        if (
+          currentDiagnosis
+        ) {
+          currentDiagnosis
+            .isCurrent =
+            false;
 
-          persistedRun
-            .diagnosisId =
+          currentDiagnosis
+            .status =
+            "superseded";
+
+          await incidentDiagnosisRepository
+            .save(
+              currentDiagnosis,
+              transaction
+            );
+        }
+
+        // ================================================================
+        // 5. CREATE NEW DIAGNOSIS
+        // ================================================================
+
+        const persistedDiagnosis =
+          await this.createDiagnosis(
+            {
+              coordinatorResult,
+
+              run:
+                persistedRun,
+
+              revision,
+
+              previousDiagnosis:
+                currentDiagnosis,
+            },
+            transaction
+          );
+
+        // ================================================================
+        // 6. LINK OLD -> NEW
+        // ================================================================
+
+        if (
+          currentDiagnosis
+        ) {
+          currentDiagnosis
+            .supersededByDiagnosisId =
             persistedDiagnosis
               ._id;
 
-          await persistedRun
-            .save({
-              session,
-            });
+          await incidentDiagnosisRepository
+            .save(
+              currentDiagnosis,
+              transaction
+            );
         }
-      );
-       
-      return {
-        run:
-          persistedRun,
 
-        diagnosis:
-          persistedDiagnosis,
+        // ================================================================
+        // 7. LINK RUN -> DIAGNOSIS
+        // ================================================================
 
-        revision:
+        persistedRun
+          .diagnosisId =
           persistedDiagnosis
-            .revision,
+            ._id;
 
-        isCurrent:
-          persistedDiagnosis
-            .isCurrent,
+        await agentIntelligenceRunRepository
+          .save(
+            persistedRun,
+            transaction
+          );
 
-        executionAuthorized:
-          false,
-      };
-    } finally {
-      await session
-        .endSession();
-    }
-  }
+        return {
+          run:
+            persistedRun,
+
+          diagnosis:
+            persistedDiagnosis,
+
+          revision:
+            persistedDiagnosis
+              .revision,
+
+          isCurrent:
+            persistedDiagnosis
+              .isCurrent,
+
+          executionAuthorized:
+            false,
+        };
+      }
+    );
+}
 
   // ==========================================================================
   // CREATE RUN
@@ -238,7 +227,7 @@ class DiagnosisPersistenceService {
       startedAt,
       completedAt,
     },
-    session
+    transaction
   ) {
     const status =
       this.resolveRunStatus(
@@ -256,10 +245,9 @@ class DiagnosisPersistenceService {
               : "completed"
           );
 
-    const [
-      run,
-    ] =
-      await AgentIntelligenceRun
+    const 
+      run =
+      await AgentIntelligenceRepository
         .create(
           [
             {
@@ -496,7 +484,7 @@ class DiagnosisPersistenceService {
             },
           ],
           {
-            session,
+            transaction
           }
         );
 
@@ -514,7 +502,7 @@ class DiagnosisPersistenceService {
       revision,
       previousDiagnosis,
     },
-    session
+    transaction
   ) {
     const {
       diagnosis,
@@ -532,10 +520,9 @@ class DiagnosisPersistenceService {
         .primaryHypothesis ||
       null;
 
-    const [
-      created,
-    ] =
-      await IncidentDiagnosis
+    const 
+      created =
+      await IncidentDiagnosisRepository
         .create(
           [
             {
@@ -794,7 +781,7 @@ class DiagnosisPersistenceService {
             },
           ],
           {
-            session,
+            transaction
           }
         );
 
@@ -1102,20 +1089,26 @@ class DiagnosisPersistenceService {
       affectedServiceIds:
         affectedServices
           .filter(
-            mongoose
-              .Types
-              .ObjectId
-              .isValid
-          ),
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
       affectedResourceIds:
         affectedResources
-          .filter(
-            mongoose
-              .Types
-              .ObjectId
-              .isValid
-          ),
+         .filter(
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
     };
   }
 
@@ -1168,24 +1161,30 @@ class DiagnosisPersistenceService {
               symptom
                 .affectedServices
             )
-              .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+.filter(
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           affectedResourceIds:
             normalizeIds(
               symptom
                 .affectedResources
             )
-              .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+             .filter(
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           evidenceIds:
             symptom
@@ -1264,23 +1263,29 @@ class DiagnosisPersistenceService {
                 .affectedServices
             )
               .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           affectedResourceIds:
             normalizeIds(
               finding
                 .affectedResources
             )
-              .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+             .filter(
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           metadata:
             finding.metadata ||
@@ -1369,12 +1374,15 @@ class DiagnosisPersistenceService {
               hypothesis
                 .affectedServices
             )
-              .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+             .filter(
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           affectedResourceIds:
             normalizeIds(
@@ -1382,11 +1390,14 @@ class DiagnosisPersistenceService {
                 .affectedResources
             )
               .filter(
-                mongoose
-                  .Types
-                  .ObjectId
-                  .isValid
-              ),
+  (
+    value
+  ) =>
+    persistenceIdentifierPolicy
+      .isValidResourceId(
+        value
+      )
+),
 
           explanation:
             hypothesis.explanation ||

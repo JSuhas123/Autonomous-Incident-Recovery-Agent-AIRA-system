@@ -3,8 +3,12 @@
 const crypto = require("crypto");
 
 const TenantConfig = require("../../models/TenantConfig");
-const PolicyDefinition = require("../../models/PolicyDefinition");
-
+const {
+  policyRepository,
+} =
+  require(
+    "../../persistence/repositories"
+  );
 /**
  * Legacy tenant configuration service.
  *
@@ -118,47 +122,55 @@ class TenantService {
   /**
    * Get active policy for a tenant.
    */
-  static async getTenantPolicy(tenantId) {
-    try {
-      const tenant =
-        await this.getActiveTenant(
+  static async getTenantPolicy(
+  tenantId
+) {
+  try {
+    const tenant =
+      await this
+        .getActiveTenant(
           tenantId
         );
 
-      if (!tenant) {
-        return null;
-      }
+    if (
+      !tenant
+    ) {
+      return null;
+    }
 
-      const policy =
-        await PolicyDefinition.findOne({
+    const policy =
+      await policyRepository
+        .findActiveForTenant(
           tenantId,
-          version:
-            tenant.policyVersion,
-          status: "active",
-        });
-
-      if (!policy) {
-        console.warn(
-          `[tenant] No policy found for tenant=${tenantId} v${tenant.policyVersion}`
+          tenant.policyVersion
         );
 
-        return null;
-      }
-
-      console.log(
-        `[tenant] Retrieved policy v${policy.version} for tenant=${tenantId}`
+    if (
+      !policy
+    ) {
+      console.warn(
+        `[tenant] No policy found for tenant=${tenantId} v${tenant.policyVersion}`
       );
 
-      return policy;
-    } catch (error) {
-      console.error(
-        "[tenant] Error getting policy:",
-        error.message
-      );
-
-      throw error;
+      return null;
     }
+
+    console.log(
+      `[tenant] Retrieved policy v${policy.version} for tenant=${tenantId}`
+    );
+
+    return policy;
+  } catch (
+    error
+  ) {
+    console.error(
+      "[tenant] Error getting policy:",
+      error.message
+    );
+
+    throw error;
   }
+}
 
   /**
    * Validate tenant status and API-key status.

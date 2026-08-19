@@ -20,24 +20,17 @@
  * - execution still does not start here
  */
 
-const mongoose =
-  require(
-    "mongoose"
-  );
-
 const crypto =
   require(
     "node:crypto"
   );
 
-const ExecutionAuthorization =
+const {
+  executionAuthorizationRepository,
+  persistenceTransactionManager,
+} =
   require(
-    "../../models/ExecutionAuthorization"
-  );
-
-const ExecutionRequest =
-  require(
-    "../../models/ExecutionRequest"
+    "../../persistence/repositories"
   );
 
 const {
@@ -68,93 +61,86 @@ class ExecutionAuthorizationPersistenceService {
     } =
       input;
 
-    const session =
-      await mongoose
-        .startSession();
+    return persistenceTransactionManager
+      .run(
+        async (
+          transaction
+        ) => {
+          const persistedAuthorization =
+            await this.persistAuthorization(
+              {
+                engineResult,
+                criticResult,
+              },
+              transaction
+            );
 
-    let persistedAuthorization;
-    let persistedRequest =
-      null;
+          /*
+           * Fail closed.
+           *
+           * An executable request is created only if BOTH:
+           *
+           * - authorization engine grants execution
+           * - authorization critic accepts execution
+           */
+          if (
+            engineResult
+              .authorizationGranted !==
+              true ||
+            criticResult
+              .accepted !==
+              true ||
+            criticResult
+              .authorizationGranted !==
+              true
+          ) {
+            return {
+              authorization:
+                persistedAuthorization,
 
-    try {
-      await session
-        .withTransaction(
-          async () => {
-            // =================================================================
-            // 1. PERSIST AUTHORIZATION
-            // =================================================================
+              executionRequest:
+                null,
 
-            persistedAuthorization =
-              await this.persistAuthorization(
-                {
-                  engineResult,
+              requestCreated:
+                false,
 
-                  criticResult,
-                },
+              authorizationGranted:
+                false,
 
-                session
-              );
-
-            // =================================================================
-            // 2. DO NOT CREATE REQUEST FOR BLOCKED AUTHORIZATION
-            // =================================================================
-
-            if (
-              engineResult
-                .authorizationGranted !==
-                true ||
-              criticResult
-                .accepted !==
-                true ||
-              criticResult
-                .authorizationGranted !==
-                true
-            ) {
-              return;
-            }
-
-            // =================================================================
-            // 3. CREATE EXECUTION REQUEST
-            // =================================================================
-
-            persistedRequest =
-              await this.persistExecutionRequest(
-                {
-                  engineResult,
-
-                  authorization:
-                    persistedAuthorization,
-                },
-
-                session
-              );
+              executionStarted:
+                false,
+            };
           }
-        );
 
-      return {
-        authorization:
-          persistedAuthorization,
+          const persistedRequest =
+            await this.persistExecutionRequest(
+              {
+                engineResult,
 
-        executionRequest:
-          persistedRequest,
+                authorization:
+                  persistedAuthorization,
+              },
+              transaction
+            );
 
-        requestCreated:
-          Boolean(
-            persistedRequest
-          ),
+          return {
+            authorization:
+              persistedAuthorization,
 
-        authorizationGranted:
-          Boolean(
-            persistedRequest
-          ),
+            executionRequest:
+              persistedRequest,
 
-        executionStarted:
-          false,
-      };
-    } finally {
-      await session
-        .endSession();
-    }
+            requestCreated:
+              true,
+
+            authorizationGranted:
+              true,
+
+            executionStarted:
+              false,
+          };
+        }
+      );
   }
 
   // ==========================================================================
@@ -166,7 +152,7 @@ class ExecutionAuthorizationPersistenceService {
       engineResult,
       criticResult,
     },
-    session
+    transaction
   ) {
     const source =
       engineResult
@@ -177,154 +163,153 @@ class ExecutionAuthorizationPersistenceService {
         .executionPlan ||
       null;
 
-    const document =
-      new ExecutionAuthorization({
-        authorizationId:
-          source.authorizationId,
+    const document = {
+      authorizationId:
+        source.authorizationId,
 
-        organizationId:
-          source.organizationId,
+      organizationId:
+        source.organizationId,
 
-        environmentId:
-          source.environmentId,
+      environmentId:
+        source.environmentId,
 
-        incidentId:
-          source.incidentId,
+      incidentId:
+        source.incidentId,
 
-        recoveryDecisionId:
-          source.recoveryDecisionId,
+      recoveryDecisionId:
+        source.recoveryDecisionId,
 
-        recoveryDecisionRevision:
-          source
-            .recoveryDecisionRevision,
+      recoveryDecisionRevision:
+        source
+          .recoveryDecisionRevision,
 
-        selectedCandidateId:
-          source
-            .selectedCandidateId,
+      selectedCandidateId:
+        source
+          .selectedCandidateId,
 
-        selectedPlaybookId:
-          source
-            .selectedPlaybookId,
+      selectedPlaybookId:
+        source
+          .selectedPlaybookId,
 
-        decision:
-          source.decision,
+      decision:
+        source.decision,
 
-        status:
-          source.status,
+      status:
+        source.status,
 
-        authorizationGranted:
-          source
-            .authorizationGranted ===
-            true &&
-          criticResult
-            .accepted ===
-            true &&
-          criticResult
-            .authorizationGranted ===
-            true,
+      authorizationGranted:
+        source
+          .authorizationGranted ===
+          true &&
+        criticResult
+          .accepted ===
+          true &&
+        criticResult
+          .authorizationGranted ===
+          true,
 
-        approvalState:
-          source.approvalState,
+      approvalState:
+        source.approvalState,
 
-        policyState:
-          source.policyState,
+      policyState:
+        source.policyState,
 
-        freshnessState:
-          source.freshnessState,
+      freshnessState:
+        source.freshnessState,
 
-        killSwitchState:
-          source.killSwitchState,
+      killSwitchState:
+        source.killSwitchState,
 
-        lockState:
-          source.lockState,
+      lockState:
+        source.lockState,
 
-        idempotencyState:
-          source.idempotencyState,
+      idempotencyState:
+        source.idempotencyState,
 
-        validFrom:
-          source.validFrom,
+      validFrom:
+        source.validFrom,
 
-        expiresAt:
-          source.expiresAt,
+      expiresAt:
+        source.expiresAt,
 
-        authorizedAt:
-          source.authorizedAt,
+      authorizedAt:
+        source.authorizedAt,
 
-        reasons:
-          source.reasons ||
-          [],
+      reasons:
+        source.reasons ||
+        [],
 
-        warnings:
-          source.warnings ||
-          [],
+      warnings:
+        source.warnings ||
+        [],
 
-        executionPlan:
-          plan,
+      executionPlan:
+        plan,
 
-        planId:
-          plan
-            ?.planId ||
-          source
-            ?.metadata
-            ?.planId ||
-          null,
+      planId:
+        plan
+          ?.planId ||
+        source
+          ?.metadata
+          ?.planId ||
+        null,
 
-        planHash:
-          plan
-            ?.planHash ||
-          source
-            ?.metadata
-            ?.planHash ||
-          null,
+      planHash:
+        plan
+          ?.planHash ||
+        source
+          ?.metadata
+          ?.planHash ||
+        null,
 
-        idempotencyKey:
-          source
-            ?.metadata
-            ?.idempotencyKey ||
-          engineResult
-            ?.idempotency
-            ?.idempotencyKey ||
-          null,
+      idempotencyKey:
+        source
+          ?.metadata
+          ?.idempotencyKey ||
+        engineResult
+          ?.idempotency
+          ?.idempotencyKey ||
+        null,
 
-        leaseKey:
-          source
-            ?.metadata
-            ?.leaseKey ||
-          engineResult
-            ?.lease
-            ?.leaseKey ||
-          null,
+      leaseKey:
+        source
+          ?.metadata
+          ?.leaseKey ||
+        engineResult
+          ?.lease
+          ?.leaseKey ||
+        null,
 
-        leaseOwnerId:
-          source
-            ?.metadata
-            ?.leaseOwnerId ||
-          engineResult
-            ?.lease
-            ?.ownerId ||
-          null,
+      leaseOwnerId:
+        source
+          ?.metadata
+          ?.leaseOwnerId ||
+        engineResult
+          ?.lease
+          ?.ownerId ||
+        null,
 
-        stageTrace:
-          engineResult
-            .trace ||
-          [],
+      stageTrace:
+        engineResult
+          .trace ||
+        [],
 
-        criticResult,
+      criticResult,
 
-        metadata: {
-          ...(
-            source.metadata ||
-            {}
-          ),
+      metadata: {
+        ...(
+          source.metadata ||
+          {}
+        ),
 
-          persistenceVersion:
-            "phase8.11-v1",
-        },
-      });
+        persistenceVersion:
+          "phase13-repository-v1",
+      },
+    };
 
     /*
      * If critic rejects an apparently authorized result,
-     * persist it as blocked.
+     * persist the final state as BLOCKED.
      */
     if (
       criticResult
@@ -352,12 +337,11 @@ class ExecutionAuthorizationPersistenceService {
       }
     }
 
-    await document
-      .save({
-        session,
-      });
-
-    return document;
+    return executionAuthorizationRepository
+      .createAuthorization(
+        document,
+        transaction
+      );
   }
 
   // ==========================================================================
@@ -369,7 +353,7 @@ class ExecutionAuthorizationPersistenceService {
       engineResult,
       authorization,
     },
-    session
+    transaction
   ) {
     const plan =
       engineResult
@@ -463,48 +447,46 @@ class ExecutionAuthorizationPersistenceService {
             plan.planHash,
 
           persistenceVersion:
-            "phase8.11-v1",
+            "phase13-repository-v1",
         },
       });
 
-    const request =
-      new ExecutionRequest({
-        ...requestContract,
+    const request = {
+      ...requestContract,
 
-        planId:
-          plan.planId,
+      planId:
+        plan.planId,
 
-        planHash:
-          plan.planHash,
+      planHash:
+        plan.planHash,
 
-        executionPlan:
-          plan,
+      executionPlan:
+        plan,
 
-        leaseOwnerId:
+      leaseOwnerId:
+        authorization
+          .leaseOwnerId,
+
+      requestedAt:
+        new Date(),
+
+      metadata: {
+        ...(
+          requestContract.metadata ||
+          {}
+        ),
+
+        authorizationExpiresAt:
           authorization
-            .leaseOwnerId,
+            .expiresAt,
+      },
+    };
 
-        requestedAt:
-          new Date(),
-
-        metadata: {
-          ...(
-            requestContract.metadata ||
-            {}
-          ),
-
-          authorizationExpiresAt:
-            authorization
-              .expiresAt,
-        },
-      });
-
-    await request
-      .save({
-        session,
-      });
-
-    return request;
+    return executionAuthorizationRepository
+      .createExecutionRequest(
+        request,
+        transaction
+      );
   }
 
   // ==========================================================================

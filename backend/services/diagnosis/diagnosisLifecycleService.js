@@ -32,9 +32,11 @@ const diagnosisPersistenceService =
     "./diagnosisPersistenceService"
   );
 
-const AgentIntelligenceRun =
+const {
+  agentIntelligenceRunRepository,
+} =
   require(
-    "../../models/AgentIntelligenceRun"
+    "../../persistence/repositories"
   );
 
 class DiagnosisLifecycleService {
@@ -448,90 +450,77 @@ class DiagnosisLifecycleService {
   // SHOULD RUN?
   // ==========================================================================
 
-  async shouldRunDiagnosis({
-    organizationId,
-    environmentId,
-    incidentId,
-  }) {
-    const previous =
-      await AgentIntelligenceRun
-        .findOne({
-          organizationId,
-          environmentId,
-          incidentId,
-        })
-        .sort({
-          createdAt:
-            -1,
-        })
-        .select({
-          createdAt:
-            1,
+ async shouldRunDiagnosis({
+  organizationId,
+  environmentId,
+  incidentId,
+}) {
+  const previous =
+    await agentIntelligenceRunRepository
+      .findLatestForIncident({
+        organizationId,
 
-          status:
-            1,
+        environmentId,
 
-          completedAt:
-            1,
-        })
-        .lean();
+        incidentId,
+      });
 
-    if (
-      !previous
-    ) {
-      return {
-        run:
-          true,
-
-        reason:
-          "first_diagnosis",
-      };
-    }
-
-    const timestamp =
-      previous.completedAt ||
-      previous.createdAt;
-
-    if (
-      !timestamp
-    ) {
-      return {
-        run:
-          true,
-
-        reason:
-          "previous_run_timestamp_missing",
-      };
-    }
-
-    const elapsed =
-      Date.now() -
-      new Date(
-        timestamp
-      )
-        .getTime();
-
-    if (
-      elapsed <
-      this.minimumRerunIntervalMs
-    ) {
-      return {
-        run:
-          false,
-
-        reason:
-          "diagnosis_debounce_active",
-      };
-    }
-
+  if (
+    !previous
+  ) {
     return {
       run:
         true,
 
       reason:
-        "diagnosis_refresh_allowed",
+        "first_diagnosis",
     };
   }
+
+  const timestamp =
+    previous.completedAt ||
+    previous.createdAt;
+
+  if (
+    !timestamp
+  ) {
+    return {
+      run:
+        true,
+
+      reason:
+        "previous_run_timestamp_missing",
+    };
+  }
+
+  const elapsed =
+    Date.now() -
+    new Date(
+      timestamp
+    )
+      .getTime();
+
+  if (
+    elapsed <
+    this.minimumRerunIntervalMs
+  ) {
+    return {
+      run:
+        false,
+
+      reason:
+        "diagnosis_debounce_active",
+    };
+  }
+
+  return {
+    run:
+      true,
+
+    reason:
+      "diagnosis_refresh_allowed",
+  };
+}
 
   // ==========================================================================
   // MEANINGFUL UPDATE

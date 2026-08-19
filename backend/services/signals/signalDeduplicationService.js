@@ -1,14 +1,20 @@
 "use strict";
 
 const {
-  Signal,
+  signalRepository,
 } =
   require(
-    "../../models/Signal"
+    "../../persistence/repositories"
   );
 
 class SignalDeduplicationService {
-  constructor() {
+  constructor(
+    options = {}
+  ) {
+    this.repository =
+      options.repository ||
+      signalRepository;
+
     this.defaultWindowMs =
       Number(
         process.env
@@ -58,8 +64,8 @@ class SignalDeduplicationService {
         windowMs
       );
 
-    return Signal
-      .findOne({
+    return this.repository
+      .findLatestDuplicate({
         organizationId:
           normalizedSignal
             .organizationId,
@@ -81,10 +87,6 @@ class SignalDeduplicationService {
           $ne:
             "failed",
         },
-      })
-      .sort({
-        lastSeenAt:
-          -1,
       });
   }
 
@@ -158,8 +160,8 @@ class SignalDeduplicationService {
         );
 
     /*
-     * If a duplicate is incident-worthy, the canonical
-     * retained signal must remain incident-worthy too.
+     * If a duplicate is incident-worthy, the retained canonical
+     * signal must remain incident-worthy.
      */
     existingSignal
       .incidentCandidate =
@@ -171,9 +173,7 @@ class SignalDeduplicationService {
       );
 
     /*
-     * Keep bounded references to exact duplicate signal IDs.
-     *
-     * We don't need thousands of IDs on one document.
+     * Keep bounded references to duplicate signal IDs.
      */
     if (
       incomingSignal
@@ -201,8 +201,10 @@ class SignalDeduplicationService {
           );
     }
 
-    await existingSignal
-      .save();
+    await this.repository
+      .save(
+        existingSignal
+      );
 
     return existingSignal;
   }

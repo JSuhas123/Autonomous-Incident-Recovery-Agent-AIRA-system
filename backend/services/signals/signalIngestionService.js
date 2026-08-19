@@ -1,10 +1,10 @@
 "use strict";
 
 const {
-  Signal,
+  signalRepository,
 } =
   require(
-    "../../models/Signal"
+    "../../persistence/repositories"
   );
 
 const signalNormalizationService =
@@ -123,18 +123,18 @@ class SignalIngestionService {
       // ----------------------------------------------------------------------
 
       persistedSignal =
-        await Signal
-          .create({
-            ...enriched,
+  await signalRepository
+    .create({
+      ...enriched,
 
-            processingStatus:
-              "enriched",
+      processingStatus:
+        "enriched",
 
-            enrichedAt:
-              enriched
-                .enrichedAt ||
-              new Date(),
-          });
+      enrichedAt:
+        enriched
+          .enrichedAt ||
+        new Date(),
+    });
 
       // ----------------------------------------------------------------------
       // 5. CORRELATE
@@ -160,11 +160,11 @@ class SignalIngestionService {
        * updates the stored document directly.
        */
       persistedSignal =
-        await Signal
-          .findById(
-            persistedSignal
-              ._id
-          );
+  await signalRepository
+    .findByDatabaseId(
+      persistedSignal
+        ._id
+    );
 
       // ----------------------------------------------------------------------
       // 6. UPDATE / CREATE CORRELATION GROUP
@@ -185,11 +185,11 @@ class SignalIngestionService {
        * - incidentCandidate
        */
       persistedSignal =
-        await Signal
-          .findById(
-            persistedSignal
-              ._id
-          );
+  await signalRepository
+    .findByDatabaseId(
+      persistedSignal
+        ._id
+    );
 
       // ----------------------------------------------------------------------
       // 7. ROUTE
@@ -207,11 +207,11 @@ class SignalIngestionService {
        * update processing state.
        */
       persistedSignal =
-        await Signal
-          .findById(
-            persistedSignal
-              ._id
-          );
+  await signalRepository
+    .findByDatabaseId(
+      persistedSignal
+        ._id
+    );
 
       return {
         accepted:
@@ -241,34 +241,34 @@ class SignalIngestionService {
           ?._id
       ) {
         try {
-          await Signal
-            .updateOne(
-              {
-                _id:
-                  persistedSignal
-                    ._id,
+          await signalRepository
+  .updateOne(
+    {
+      _id:
+        persistedSignal
+          ._id,
 
-                organizationId:
-                  persistedSignal
-                    .organizationId,
+      organizationId:
+        persistedSignal
+          .organizationId,
 
-                environmentId:
-                  persistedSignal
-                    .environmentId,
-              },
-              {
-                $set: {
-                  processingStatus:
-                    "failed",
+      environmentId:
+        persistedSignal
+          .environmentId,
+    },
+    {
+      $set: {
+        processingStatus:
+          "failed",
 
-                  processingError:
-                    this
-                      .safeErrorMessage(
-                        error
-                      ),
-                },
-              }
-            );
+        processingError:
+          this
+            .safeErrorMessage(
+              error
+            ),
+      },
+    }
+  );
         } catch (
           persistenceError
         ) {
@@ -972,40 +972,54 @@ class SignalIngestionService {
   // ==========================================================================
 
   async getById(
-    context,
-    signalId
+  context,
+  signalId
+) {
+  if (
+    !context
+      ?.organizationId ||
+    !context
+      ?.environmentId
   ) {
-    if (
-      !context
-        ?.organizationId ||
-      !context
-        ?.environmentId
-    ) {
-      throw Object.assign(
-        new Error(
-          "Complete signal query context is required"
-        ),
-        {
-          code:
-            "SIGNAL_QUERY_CONTEXT_REQUIRED",
-        }
-      );
-    }
-
-    return Signal
-      .findOne({
-        organizationId:
-          context
-            .organizationId,
-
-        environmentId:
-          context
-            .environmentId,
-
-        signalId,
-      })
-      .lean();
+    throw Object.assign(
+      new Error(
+        "Complete signal query context is required"
+      ),
+      {
+        code:
+          "SIGNAL_QUERY_CONTEXT_REQUIRED",
+      }
+    );
   }
+
+  if (!signalId) {
+    throw Object.assign(
+      new Error(
+        "signalId is required"
+      ),
+      {
+        code:
+          "SIGNAL_ID_REQUIRED",
+
+        status:
+          400,
+      }
+    );
+  }
+
+  return signalRepository
+    .findOneLean({
+      organizationId:
+        context
+          .organizationId,
+
+      environmentId:
+        context
+          .environmentId,
+
+      signalId,
+    });
+}
 
   // ==========================================================================
   // LIST
@@ -1207,18 +1221,18 @@ class SignalIngestionService {
         500
       );
 
-    return Signal
-      .find(
-        filter
-      )
-      .sort({
+    return signalRepository
+  .list(
+    filter,
+    {
+      sort: {
         observedAt:
           -1,
-      })
-      .limit(
-        limit
-      )
-      .lean();
+      },
+
+      limit,
+    }
+  );
   }
 
   // ==========================================================================

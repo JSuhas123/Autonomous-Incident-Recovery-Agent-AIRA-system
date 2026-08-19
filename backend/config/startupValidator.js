@@ -1402,6 +1402,419 @@ function validateRuntimeSafety(
   }
 }
 
+function validatePostgresConfiguration({
+  env,
+  errors,
+  warnings,
+  production,
+}) {
+  const enabled =
+    parseBoolean(
+      env.POSTGRES_ENABLED,
+      false
+    );
+
+  if (
+    !enabled
+  ) {
+    return;
+  }
+
+  const connectionString =
+    env.DATABASE_URL ||
+    env.POSTGRES_URL ||
+    null;
+
+  // ==========================================================================
+  // CONNECTION
+  // ==========================================================================
+
+  if (
+    connectionString
+  ) {
+    if (
+      !isValidUrl(
+        connectionString,
+        [
+          "postgres:",
+          "postgresql:",
+        ]
+      )
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_URL_INVALID",
+        env.DATABASE_URL
+          ? "DATABASE_URL"
+          : "POSTGRES_URL",
+        "PostgreSQL connection URL must use postgres:// or postgresql://"
+      );
+    }
+
+    if (
+      production &&
+      urlUsesLoopback(
+        connectionString
+      )
+    ) {
+      addWarning(
+        warnings,
+        "CONFIG_POSTGRES_PRODUCTION_LOOPBACK",
+        env.DATABASE_URL
+          ? "DATABASE_URL"
+          : "POSTGRES_URL",
+        "Production PostgreSQL connection points to localhost/loopback"
+      );
+    }
+  } else {
+    if (
+      !hasValue(
+        env.POSTGRES_HOST
+      ) &&
+      production
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_HOST_MISSING",
+        "POSTGRES_HOST",
+        "POSTGRES_HOST is required when PostgreSQL is enabled without DATABASE_URL"
+      );
+    }
+
+    if (
+      !hasValue(
+        env.POSTGRES_DATABASE
+      ) &&
+      production
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_DATABASE_MISSING",
+        "POSTGRES_DATABASE",
+        "POSTGRES_DATABASE is required when PostgreSQL is enabled without DATABASE_URL"
+      );
+    }
+
+    if (
+      !hasValue(
+        env.POSTGRES_USER
+      ) &&
+      production
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_USER_MISSING",
+        "POSTGRES_USER",
+        "POSTGRES_USER is required when PostgreSQL is enabled without DATABASE_URL"
+      );
+    }
+
+    if (
+      !hasValue(
+        env.POSTGRES_PASSWORD
+      ) &&
+      production
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_PASSWORD_MISSING",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_PASSWORD is required in production when DATABASE_URL is not used"
+      );
+    }
+  }
+
+  // ==========================================================================
+  // PORT
+  // ==========================================================================
+
+  if (
+    hasValue(
+      env.POSTGRES_PORT
+    )
+  ) {
+    const port =
+      parseInteger(
+        env.POSTGRES_PORT
+      );
+
+    if (
+      port ===
+      null
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_PORT_INVALID",
+        "POSTGRES_PORT",
+        "POSTGRES_PORT must be an integer"
+      );
+    } else if (
+      port <
+        1 ||
+      port >
+        65535
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_PORT_OUT_OF_RANGE",
+        "POSTGRES_PORT",
+        "POSTGRES_PORT must be between 1 and 65535"
+      );
+    }
+  }
+
+  // ==========================================================================
+  // POOL LIMITS
+  // ==========================================================================
+
+  const poolMin =
+    hasValue(
+      env.POSTGRES_POOL_MIN
+    )
+      ? parseInteger(
+          env.POSTGRES_POOL_MIN
+        )
+      : 0;
+
+  const poolMax =
+    hasValue(
+      env.POSTGRES_POOL_MAX
+    )
+      ? parseInteger(
+          env.POSTGRES_POOL_MAX
+        )
+      : 20;
+
+  if (
+    poolMin ===
+    null ||
+    poolMin <
+      0 ||
+    poolMin >
+      100
+  ) {
+    addError(
+      errors,
+      "CONFIG_POSTGRES_POOL_MIN_INVALID",
+      "POSTGRES_POOL_MIN",
+      "POSTGRES_POOL_MIN must be an integer between 0 and 100"
+    );
+  }
+
+  if (
+    poolMax ===
+    null ||
+    poolMax <
+      1 ||
+    poolMax >
+      200
+  ) {
+    addError(
+      errors,
+      "CONFIG_POSTGRES_POOL_MAX_INVALID",
+      "POSTGRES_POOL_MAX",
+      "POSTGRES_POOL_MAX must be an integer between 1 and 200"
+    );
+  }
+
+  if (
+    poolMin !==
+      null &&
+    poolMax !==
+      null &&
+    poolMin >
+      poolMax
+  ) {
+    addError(
+      errors,
+      "CONFIG_POSTGRES_POOL_RANGE_INVALID",
+      "POSTGRES_POOL_MIN",
+      "POSTGRES_POOL_MIN cannot exceed POSTGRES_POOL_MAX"
+    );
+  }
+
+  // ==========================================================================
+  // TIMEOUTS
+  // ==========================================================================
+
+  const timeoutRules = [
+    {
+      name:
+        "POSTGRES_IDLE_TIMEOUT_MS",
+
+      minimum:
+        1000,
+    },
+
+    {
+      name:
+        "POSTGRES_CONNECTION_TIMEOUT_MS",
+
+      minimum:
+        100,
+    },
+
+    {
+      name:
+        "POSTGRES_STATEMENT_TIMEOUT_MS",
+
+      minimum:
+        100,
+    },
+
+    {
+      name:
+        "POSTGRES_QUERY_TIMEOUT_MS",
+
+      minimum:
+        100,
+    },
+  ];
+
+  for (
+    const rule
+    of timeoutRules
+  ) {
+    if (
+      !hasValue(
+        env[
+          rule.name
+        ]
+      )
+    ) {
+      continue;
+    }
+
+    const value =
+      parseInteger(
+        env[
+          rule.name
+        ]
+      );
+
+    if (
+      value ===
+        null ||
+      value <
+        rule.minimum
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_TIMEOUT_INVALID",
+        rule.name,
+        `${rule.name} must be an integer >= ${rule.minimum}`
+      );
+    }
+  }
+
+  // ==========================================================================
+  // SSL
+  // ==========================================================================
+
+  if (
+    production &&
+    !parseBoolean(
+      env.POSTGRES_SSL,
+      false
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_POSTGRES_SSL_DISABLED",
+      "POSTGRES_SSL",
+      "PostgreSQL TLS is disabled in production"
+    );
+  }
+
+  if (
+    production &&
+    parseBoolean(
+      env.POSTGRES_SSL,
+      false
+    ) &&
+    !parseBoolean(
+      env
+        .POSTGRES_SSL_REJECT_UNAUTHORIZED,
+      true
+    )
+  ) {
+    addWarning(
+      warnings,
+      "CONFIG_POSTGRES_SSL_VERIFICATION_DISABLED",
+      "POSTGRES_SSL_REJECT_UNAUTHORIZED",
+      "PostgreSQL TLS certificate verification is disabled in production"
+    );
+  }
+
+  // ==========================================================================
+  // TRANSACTION ISOLATION
+  // ==========================================================================
+
+  if (
+    hasValue(
+      env.POSTGRES_TRANSACTION_ISOLATION
+    )
+  ) {
+    const isolation =
+      String(
+        env
+          .POSTGRES_TRANSACTION_ISOLATION
+      )
+        .trim()
+        .toUpperCase();
+
+    const allowed = [
+      "READ COMMITTED",
+      "REPEATABLE READ",
+      "SERIALIZABLE",
+    ];
+
+    if (
+      !allowed.includes(
+        isolation
+      )
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_ISOLATION_INVALID",
+        "POSTGRES_TRANSACTION_ISOLATION",
+        `POSTGRES_TRANSACTION_ISOLATION must be one of ${allowed.join(", ")}`
+      );
+    }
+  }
+
+  // ==========================================================================
+  // MIGRATION LOCK
+  // ==========================================================================
+
+  if (
+    hasValue(
+      env.POSTGRES_MIGRATION_LOCK_ID
+    )
+  ) {
+    const lockId =
+      parseInteger(
+        env
+          .POSTGRES_MIGRATION_LOCK_ID
+      );
+
+    if (
+      lockId ===
+        null ||
+      lockId <
+        1 ||
+      lockId >
+        2147483647
+    ) {
+      addError(
+        errors,
+        "CONFIG_POSTGRES_MIGRATION_LOCK_INVALID",
+        "POSTGRES_MIGRATION_LOCK_ID",
+        "POSTGRES_MIGRATION_LOCK_ID must be an integer between 1 and 2147483647"
+      );
+    }
+  }
+}
 
 // ============================================================================
 // MAIN VALIDATION
@@ -1858,21 +2271,53 @@ class StartupConfigurationError
 // ============================================================================
 
 function validateEnvironment(
-  options =
-    {}
+  options = {}
 ) {
+  const env =
+    options.env ||
+    process.env;
+
   const report =
     inspectEnvironment(
       options
     );
 
+  /*
+   * Phase 13.2 PostgreSQL validation is deliberately layered on top
+   * of the established Phase 11.14 configuration validator.
+   *
+   * PostgreSQL is optional during migration.
+   *
+   * Once POSTGRES_ENABLED=true, its configuration becomes part of
+   * AIRA's fail-closed startup contract.
+   */
+  validatePostgresConfiguration({
+    env,
+
+    errors:
+      report.errors,
+
+    warnings:
+      report.warnings,
+
+    production:
+      report.production,
+  });
+
+  /*
+   * inspectEnvironment() calculated validity before PostgreSQL
+   * validation was appended, so recompute it here.
+   */
+  report.valid =
+    report.errors.length ===
+    0;
 
   if (
     report.warnings.length >
-    0 &&
+      0 &&
     options
       .silent !==
-    true
+      true
   ) {
     for (
       const warning
@@ -1885,7 +2330,6 @@ function validateEnvironment(
         );
     }
   }
-
 
   if (
     !report.valid
@@ -1914,7 +2358,6 @@ function validateEnvironment(
         "",
       ];
 
-
       process.stderr
         .write(
           lines.join(
@@ -1923,12 +2366,10 @@ function validateEnvironment(
         );
     }
 
-
     throw new StartupConfigurationError(
       report
     );
   }
-
 
   return report;
 }
@@ -1950,6 +2391,36 @@ function getSafeConfigurationSnapshot(
     "MONGODB_URI",
     "REDIS_URL",
     "RABBITMQ_URL",
+
+    // ========================================================================
+    // PHASE 13.2 — POSTGRESQL
+    // ========================================================================
+
+    "POSTGRES_ENABLED",
+    "DATABASE_URL",
+    "POSTGRES_URL",
+    "POSTGRES_HOST",
+    "POSTGRES_PORT",
+    "POSTGRES_DATABASE",
+    "POSTGRES_USER",
+    "POSTGRES_PASSWORD",
+    "POSTGRES_APPLICATION_NAME",
+
+    "POSTGRES_POOL_MIN",
+    "POSTGRES_POOL_MAX",
+
+    "POSTGRES_IDLE_TIMEOUT_MS",
+    "POSTGRES_CONNECTION_TIMEOUT_MS",
+    "POSTGRES_STATEMENT_TIMEOUT_MS",
+    "POSTGRES_QUERY_TIMEOUT_MS",
+
+    "POSTGRES_SSL",
+    "POSTGRES_SSL_REJECT_UNAUTHORIZED",
+
+    "POSTGRES_TRANSACTION_ISOLATION",
+    "POSTGRES_MIGRATION_LOCK_ID",
+
+    // ========================================================================
 
     "CORS_ORIGINS",
 
@@ -1976,7 +2447,6 @@ function getSafeConfigurationSnapshot(
     "LOG_LEVEL",
     "LOG_TO_FILE",
   ];
-
 
   return Object.fromEntries(
     names.map(
@@ -2011,6 +2481,8 @@ module.exports = {
   validateEnvironment,
 
   inspectEnvironment,
+
+  validatePostgresConfiguration,
 
   getSafeConfigurationSnapshot,
 

@@ -1,17 +1,12 @@
 "use strict";
 
 const {
-  Signal,
-} =
-  require(
-    "../../models/Signal"
-  );
+  signalRepository,
 
-const {
-  SignalCorrelation,
+  signalCorrelationRepository,
 } =
   require(
-    "../../models/SignalCorrelation"
+    "../../persistence/repositories"
   );
 
 const incidentOrchestrationService =
@@ -335,8 +330,8 @@ class SignalRouterService {
       correlationGroup
         ?._id
     ) {
-      await SignalCorrelation
-        .updateOne(
+      await signalCorrelationRepository
+  .updateOne(
           {
             _id:
               correlationGroup._id,
@@ -561,36 +556,26 @@ class SignalRouterService {
   // ==========================================================================
 
   async markSignal(
-    signal,
-    updates
-  ) {
-    if (!signal._id) {
-      Object.assign(
-        signal,
-        updates
-      );
+  signal,
+  updates
+) {
+  if (!signal) {
+    throw Object.assign(
+      new Error(
+        "Signal is required"
+      ),
+      {
+        code:
+          "SIGNAL_ROUTER_SIGNAL_REQUIRED",
+      }
+    );
+  }
 
-      return signal;
-    }
-
-    await Signal
-      .updateOne(
-        {
-          _id:
-            signal._id,
-
-          organizationId:
-            signal.organizationId,
-
-          environmentId:
-            signal.environmentId,
-        },
-        {
-          $set:
-            updates,
-        }
-      );
-
+  /*
+   * Pre-persistence objects may legitimately have no database ID.
+   * Preserve the historical in-memory behaviour.
+   */
+  if (!signal._id) {
     Object.assign(
       signal,
       updates
@@ -598,6 +583,47 @@ class SignalRouterService {
 
     return signal;
   }
+
+  if (
+    !signal.organizationId ||
+    !signal.environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Signal persistence requires organization and environment scope"
+      ),
+      {
+        code:
+          "SIGNAL_ROUTER_SCOPE_REQUIRED",
+      }
+    );
+  }
+
+  await signalRepository
+    .updateOne(
+      {
+        _id:
+          signal._id,
+
+        organizationId:
+          signal.organizationId,
+
+        environmentId:
+          signal.environmentId,
+      },
+      {
+        $set:
+          updates,
+      }
+    );
+
+  Object.assign(
+    signal,
+    updates
+  );
+
+  return signal;
+}
 }
 
 module.exports =

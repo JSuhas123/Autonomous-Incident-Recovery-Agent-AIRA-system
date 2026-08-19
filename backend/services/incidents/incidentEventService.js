@@ -5,9 +5,11 @@ const crypto =
     "node:crypto"
   );
 
-const IncidentEvent =
+const {
+  incidentEventRepository,
+} =
   require(
-    "../../models/IncidentEvent"
+    "../../persistence/repositories"
   );
 
 const {
@@ -72,7 +74,7 @@ class IncidentEventService {
         .correlationGroupId ||
       `incident:${incident._id}`;
 
-    return IncidentEvent
+    return incidentEventRepository
       .create({
         eventId,
 
@@ -378,11 +380,16 @@ class IncidentEventService {
       event.publishedAt =
         new Date();
 
+      event.failedAt =
+        null;
+
       event.error =
         null;
 
-      await event
-        .save();
+      await incidentEventRepository
+        .save(
+          event
+        );
 
       return {
         published:
@@ -415,8 +422,10 @@ class IncidentEventService {
             2048
           );
 
-      await event
-        .save();
+      await incidentEventRepository
+        .save(
+          event
+        );
 
       console.error(
         "[incident-event] publication failed:",
@@ -445,10 +454,10 @@ class IncidentEventService {
     topicName
   ) {
     const event =
-      await IncidentEvent
-        .findOne({
-          eventId,
-        });
+      await incidentEventRepository
+        .findByEventId(
+          eventId
+        );
 
     if (!event) {
       return null;
@@ -494,27 +503,10 @@ class IncidentEventService {
     processingTimeMs =
       null
   ) {
-    return IncidentEvent
-      .findOneAndUpdate(
-        {
-          eventId,
-        },
-        {
-          $set: {
-            status:
-              "processed",
-
-            processedAt:
-              new Date(),
-
-            processingTimeMs:
-              processingTimeMs,
-          },
-        },
-        {
-          new:
-            true,
-        }
+    return incidentEventRepository
+      .markProcessed(
+        eventId,
+        processingTimeMs
       );
   }
 
@@ -530,31 +522,58 @@ class IncidentEventService {
     incidentId,
     limit = 200
   ) {
-    return IncidentEvent
-      .find({
-        organizationId,
+    if (
+      !organizationId
+    ) {
+      throw Object.assign(
+        new Error(
+          "organizationId is required to list incident events"
+        ),
+        {
+          code:
+            "INCIDENT_EVENT_ORGANIZATION_REQUIRED",
+        }
+      );
+    }
 
-        environmentId,
+    if (
+      !environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "environmentId is required to list incident events"
+        ),
+        {
+          code:
+            "INCIDENT_EVENT_ENVIRONMENT_REQUIRED",
+        }
+      );
+    }
 
+    if (
+      !incidentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "incidentId is required to list incident events"
+        ),
+        {
+          code:
+            "INCIDENT_EVENT_INCIDENT_REQUIRED",
+        }
+      );
+    }
+
+    return incidentEventRepository
+      .listForIncident(
+        {
+          organizationId,
+
+          environmentId,
+        },
         incidentId,
-      })
-      .sort({
-        occurredAt:
-          1,
-      })
-      .limit(
-        Math.min(
-          Math.max(
-            Number(
-              limit
-            ) ||
-            200,
-            1
-          ),
-          1000
-        )
-      )
-      .lean();
+        limit
+      );
   }
 
   // ==========================================================================

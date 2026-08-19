@@ -1,18 +1,29 @@
 "use strict";
 
-const mongoose =
-  require(
-    "mongoose"
-  );
+/**
+ * AIRA Recovery Decision Persistence Service
+ *
+ * Phase 13 persistence abstraction.
+ *
+ * Persists:
+ *
+ * - RecoveryDecisionRun
+ * - versioned RecoveryDecision
+ * - superseding relationships
+ *
+ * SAFETY:
+ *
+ * - transaction required for revision workflow
+ * - no execution authorization is accepted
+ * - current revision changes atomically
+ */
 
-const RecoveryDecision =
+const {
+  recoveryDecisionRepository,
+  persistenceTransactionManager,
+} =
   require(
-    "../../models/RecoveryDecision"
-  );
-
-const RecoveryDecisionRun =
-  require(
-    "../../models/RecoveryDecisionRun"
+    "../../persistence/repositories"
   );
 
 class RecoveryDecisionPersistenceService {
@@ -37,163 +48,154 @@ class RecoveryDecisionPersistenceService {
       incidentId,
     });
 
-    const session =
-      await mongoose
-        .startSession();
+    return persistenceTransactionManager
+      .run(
+        async (
+          transaction
+        ) => {
+          // ==================================================================
+          // 1. CREATE RUN
+          // ==================================================================
 
-    let persistedRun;
-    let persistedDecision;
+          const persistedRun =
+            await this.createRun(
+              {
+                engineResult,
+                criticResult,
+                organizationId,
+                environmentId,
+                incidentId,
+                diagnosisId,
+                diagnosisRevision,
+              },
+              transaction
+            );
 
-    try {
-      await session
-        .withTransaction(
-          async () => {
-            // =================================================================
-            // 1. CREATE RUN
-            // =================================================================
+          // ==================================================================
+          // 2. FIND CURRENT DECISION
+          // ==================================================================
 
-            persistedRun =
-              await this.createRun(
+          const currentDecision =
+            await recoveryDecisionRepository
+              .findCurrent(
                 {
-                  engineResult,
-                  criticResult,
                   organizationId,
                   environmentId,
                   incidentId,
-                  diagnosisId,
-                  diagnosisRevision,
                 },
-                session
+                transaction
               );
 
-            // =================================================================
-            // 2. FIND CURRENT DECISION
-            // =================================================================
+          // ==================================================================
+          // 3. REVISION
+          // ==================================================================
 
-            const currentDecision =
-              await RecoveryDecision
-                .findOne({
-                  organizationId,
-                  environmentId,
-                  incidentId,
-                  isCurrent:
-                    true,
-                })
-                .session(
-                  session
-                );
+          const revision =
+            currentDecision
+              ? currentDecision
+                  .revision +
+                1
+              : 1;
 
-            // =================================================================
-            // 3. REVISION
-            // =================================================================
+          // ==================================================================
+          // 4. SUPERSEDE OLD
+          // ==================================================================
 
-            const revision =
-              currentDecision
-                ? currentDecision
-                    .revision +
-                  1
-                : 1;
+          if (
+            currentDecision
+          ) {
+            currentDecision
+              .isCurrent =
+              false;
 
-            // =================================================================
-            // 4. SUPERSEDE OLD
-            // =================================================================
+            currentDecision
+              .status =
+              "superseded";
 
-            if (
-              currentDecision
-            ) {
-              currentDecision
-                .isCurrent =
-                false;
-
-              currentDecision
-                .status =
-                "superseded";
-
-              await currentDecision
-                .save({
-                  session,
-                });
-            }
-
-            // =================================================================
-            // 5. CREATE NEW
-            // =================================================================
-
-            persistedDecision =
-              await this.createDecision(
-                {
-                  engineResult,
-                  criticResult,
-                  organizationId,
-                  environmentId,
-                  incidentId,
-                  diagnosisId,
-                  diagnosisRevision,
-                  revision,
-                  previousDecision:
-                    currentDecision,
-                  run:
-                    persistedRun,
-                },
-                session
+            await recoveryDecisionRepository
+              .saveDecision(
+                currentDecision,
+                transaction
               );
+          }
 
-            // =================================================================
-            // 6. LINK OLD -> NEW
-            // =================================================================
+          // ==================================================================
+          // 5. CREATE NEW
+          // ==================================================================
 
-            if (
-              currentDecision
-            ) {
-              currentDecision
-                .supersededByDecisionId =
-                persistedDecision
-                  ._id;
+          const persistedDecision =
+            await this.createDecision(
+              {
+                engineResult,
+                criticResult,
+                organizationId,
+                environmentId,
+                incidentId,
+                diagnosisId,
+                diagnosisRevision,
+                revision,
+                previousDecision:
+                  currentDecision,
+                run:
+                  persistedRun,
+              },
+              transaction
+            );
 
-              await currentDecision
-                .save({
-                  session,
-                });
-            }
+          // ==================================================================
+          // 6. LINK OLD -> NEW
+          // ==================================================================
 
-            // =================================================================
-            // 7. LINK RUN -> DECISION
-            // =================================================================
-
-            persistedRun
-              .decisionId =
+          if (
+            currentDecision
+          ) {
+            currentDecision
+              .supersededByDecisionId =
               persistedDecision
                 ._id;
 
-            await persistedRun
-              .save({
-                session,
-              });
+            await recoveryDecisionRepository
+              .saveDecision(
+                currentDecision,
+                transaction
+              );
           }
-        );
 
-      return {
-        run:
-          persistedRun,
+          // ==================================================================
+          // 7. LINK RUN -> DECISION
+          // ==================================================================
 
-        decision:
-          persistedDecision,
+          persistedRun
+            .decisionId =
+            persistedDecision
+              ._id;
 
-        revision:
-          persistedDecision
-            .revision,
+          await recoveryDecisionRepository
+            .saveRun(
+              persistedRun,
+              transaction
+            );
 
-        isCurrent:
-          persistedDecision
-            .isCurrent,
+          return {
+            run:
+              persistedRun,
 
-        executionAuthorized:
-          false,
-      };
-    } finally {
-      await session
-        .endSession();
-    }
+            decision:
+              persistedDecision,
+
+            revision:
+              persistedDecision
+                .revision,
+
+            isCurrent:
+              persistedDecision
+                .isCurrent,
+
+            executionAuthorized:
+              false,
+          };
+        }
+      );
   }
 
   // ==========================================================================
@@ -210,7 +212,7 @@ class RecoveryDecisionPersistenceService {
       diagnosisId,
       diagnosisRevision,
     },
-    session
+    transaction
   ) {
     const decision =
       engineResult.decision;
@@ -223,83 +225,85 @@ class RecoveryDecisionPersistenceService {
       engineResult.completedAt ||
       new Date();
 
-    const run =
-      new RecoveryDecisionRun({
-        runId:
+    const runData = {
+      runId:
+        decision
+          ?.metadata
+          ?.runId ||
+        decision
+          ?.decisionId ||
+        `recovery-run:${Date.now()}`,
+
+      organizationId,
+
+      environmentId,
+
+      incidentId,
+
+      diagnosisId,
+
+      diagnosisRevision,
+
+      decisionType:
+        decision.decision,
+
+      selectedCandidateId:
+        decision
+          .selectedCandidateId,
+
+      selectedPlaybookId:
+        decision
+          .selectedPlaybookId,
+
+      confidence:
+        decision.confidence,
+
+      stageTrace:
+        engineResult
+          .stageTrace ||
+        [],
+
+      candidateSnapshot:
+        engineResult
+          .candidates ||
+        [],
+
+      criticResult,
+
+      status:
+        "completed",
+
+      startedAt,
+
+      completedAt,
+
+      durationMs:
+        Math.max(
+          0,
+          completedAt -
+          startedAt
+        ),
+
+      executionAuthorized:
+        false,
+
+      metadata: {
+        engineVersion:
           decision
             ?.metadata
-            ?.runId ||
-          decision
-            ?.decisionId ||
-          `recovery-run:${Date.now()}`,
+            ?.engineVersion ||
+          null,
 
-        organizationId,
+        persistenceVersion:
+          "phase13-repository-v1",
+      },
+    };
 
-        environmentId,
-
-        incidentId,
-
-        diagnosisId,
-
-        diagnosisRevision,
-
-        decisionType:
-          decision.decision,
-
-        selectedCandidateId:
-          decision
-            .selectedCandidateId,
-
-        selectedPlaybookId:
-          decision
-            .selectedPlaybookId,
-
-        confidence:
-          decision.confidence,
-
-        stageTrace:
-          engineResult
-            .stageTrace ||
-          [],
-
-        candidateSnapshot:
-          engineResult
-            .candidates ||
-          [],
-
-        criticResult,
-
-        status:
-          "completed",
-
-        startedAt,
-
-        completedAt,
-
-        durationMs:
-          Math.max(
-            0,
-            completedAt -
-            startedAt
-          ),
-
-        executionAuthorized:
-          false,
-
-        metadata: {
-          engineVersion:
-            decision
-              ?.metadata
-              ?.engineVersion ||
-            null,
-        },
-      });
-
-    await run.save({
-      session,
-    });
-
-    return run;
+    return recoveryDecisionRepository
+      .createRun(
+        runData,
+        transaction
+      );
   }
 
   // ==========================================================================
@@ -319,7 +323,7 @@ class RecoveryDecisionPersistenceService {
       previousDecision,
       run,
     },
-    session
+    transaction
   ) {
     const source =
       engineResult.decision;
@@ -333,112 +337,114 @@ class RecoveryDecisionPersistenceService {
           ? "manual_review"
           : "current";
 
-    const decision =
-      new RecoveryDecision({
-        decisionId:
-          source.decisionId,
+    const decisionData = {
+      decisionId:
+        source.decisionId,
 
-        organizationId,
+      organizationId,
 
-        environmentId,
+      environmentId,
 
-        incidentId,
+      incidentId,
 
-        diagnosisId,
+      diagnosisId,
 
-        diagnosisRevision,
+      diagnosisRevision,
 
-        runId:
-          run.runId,
+      runId:
+        run.runId,
 
-        revision,
+      revision,
 
-        isCurrent:
-          true,
+      isCurrent:
+        true,
 
-        status,
+      status,
 
-        decision:
-          source.decision,
+      decision:
+        source.decision,
 
-        selectedCandidateId:
-          source
-            .selectedCandidateId,
+      selectedCandidateId:
+        source
+          .selectedCandidateId,
 
-        selectedPlaybookId:
-          source
-            .selectedPlaybookId,
+      selectedPlaybookId:
+        source
+          .selectedPlaybookId,
 
-        confidence:
-          source.confidence,
+      confidence:
+        source.confidence,
 
-        candidates:
-          source.candidates ||
-          [],
+      candidates:
+        source.candidates ||
+        [],
 
-        rejectedCandidates:
-          source
-            .rejectedCandidates ||
-          [],
+      rejectedCandidates:
+        source
+          .rejectedCandidates ||
+        [],
 
-        reasons:
-          source.reasons ||
-          [],
+      reasons:
+        source.reasons ||
+        [],
 
-        unknowns:
-          source.unknowns ||
-          [],
+      unknowns:
+        source.unknowns ||
+        [],
 
-        policyStatus:
-          source.policyStatus,
+      policyStatus:
+        source.policyStatus,
 
-        riskLevel:
-          source.riskLevel,
+      riskLevel:
+        source.riskLevel,
 
-        approvalRequired:
-          source.approvalRequired,
+      approvalRequired:
+        source.approvalRequired,
 
-        approvalMode:
-          source.approvalMode,
+      approvalMode:
+        source.approvalMode,
 
-        rollbackAvailable:
-          source.rollbackAvailable,
+      rollbackAvailable:
+        source.rollbackAvailable,
 
-        reversibility:
-          source.reversibility,
+      reversibility:
+        source.reversibility,
 
-        criticResult,
+      criticResult,
 
-        supersedesDecisionId:
-          previousDecision
-            ?._id ||
+      supersedesDecisionId:
+        previousDecision
+          ?._id ||
+        null,
+
+      generatedAt:
+        source.generatedAt ||
+        new Date(),
+
+      executionAuthorized:
+        false,
+
+      metadata: {
+        ...(
+          source.metadata ||
+          {}
+        ),
+
+        criticVersion:
+          criticResult
+            ?.criticVersion ||
           null,
 
-        generatedAt:
-          source.generatedAt ||
-          new Date(),
+        persistenceVersion:
+          "phase13-repository-v1",
+      },
+    };
 
-        executionAuthorized:
-          false,
-
-        metadata: {
-          ...(
-            source.metadata ||
-            {}
-          ),
-
-          criticVersion:
-            criticResult
-              ?.criticVersion ||
-            null,
-        },
-      });
-
-    await decision.save({
-      session,
-    });
-
-    return decision;
+    return recoveryDecisionRepository
+      .createDecision(
+        decisionData,
+        transaction
+      );
   }
 
   // ==========================================================================
@@ -497,6 +503,10 @@ class RecoveryDecisionPersistenceService {
       );
     }
 
+    /*
+     * Recovery persistence must never become an execution-authority
+     * boundary.
+     */
     if (
       engineResult
         ?.executionAuthorized ===

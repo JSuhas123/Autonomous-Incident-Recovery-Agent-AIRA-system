@@ -1,12 +1,18 @@
 "use strict";
 
-const mongoose = require("mongoose");
+const {
+  decisionTraceRepository,
 
-const DecisionTrace =
-  require("../../models/DecisionTrace");
+  persistenceIdentifierPolicy,
+} =
+  require(
+    "../../persistence/repositories"
+  );
 
 /**
  * Decision Trace Service
+ *
+ * Phase 13 — Enterprise Data Architecture
  *
  * Canonical runtime scope:
  *
@@ -17,8 +23,20 @@ const DecisionTrace =
  *   incidentId?
  * }
  *
- * Every operational read/write is scoped by
- * organizationId + environmentId.
+ * Every operational read/write is scoped by:
+ *
+ * tenantId
+ * organizationId
+ * environmentId
+ *
+ * Persistence is accessed exclusively through repository abstractions.
+ *
+ * SAFETY:
+ *
+ * - decisionId alone is never sufficient for scoped operations
+ * - ownership fields cannot be overridden by caller search filters
+ * - persistence-specific identifier validation is abstracted
+ * - no infrastructure execution authority is granted here
  */
 
 class DecisionTraceService {
@@ -26,26 +44,33 @@ class DecisionTraceService {
   // CONTEXT HELPERS
   // ==========================================================================
 
-  _normalizeContext(context = {}) {
+  _normalizeContext(
+    context = {}
+  ) {
     return {
       tenantId:
-        context.tenantId || null,
+        context.tenantId ||
+        null,
 
       organizationId:
-        context.organizationId || null,
+        context.organizationId ||
+        null,
 
       environmentId:
-        context.environmentId || null,
+        context.environmentId ||
+        null,
 
       incidentId:
-        context.incidentId || null,
+        context.incidentId ||
+        null,
     };
   }
 
   _assertContext(
     context,
     {
-      requireIncident = false,
+      requireIncident =
+        false,
     } = {}
   ) {
     const normalized =
@@ -61,7 +86,9 @@ class DecisionTraceService {
           "tenantId is required for decision trace operations"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "DECISION_TRACE_TENANT_REQUIRED";
 
@@ -76,7 +103,9 @@ class DecisionTraceService {
           "organizationId is required for decision trace operations"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "DECISION_TRACE_ORGANIZATION_REQUIRED";
 
@@ -91,7 +120,9 @@ class DecisionTraceService {
           "environmentId is required for decision trace operations"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "DECISION_TRACE_ENVIRONMENT_REQUIRED";
 
@@ -107,7 +138,9 @@ class DecisionTraceService {
           "incidentId is required for this decision trace operation"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "DECISION_TRACE_INCIDENT_REQUIRED";
 
@@ -115,8 +148,8 @@ class DecisionTraceService {
     }
 
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
+      !persistenceIdentifierPolicy
+        .isValidOrganizationId(
           normalized.organizationId
         )
     ) {
@@ -125,7 +158,9 @@ class DecisionTraceService {
           "Invalid organizationId"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "INVALID_ORGANIZATION_ID";
 
@@ -133,8 +168,8 @@ class DecisionTraceService {
     }
 
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
+      !persistenceIdentifierPolicy
+        .isValidEnvironmentId(
           normalized.environmentId
         )
     ) {
@@ -143,7 +178,9 @@ class DecisionTraceService {
           "Invalid environmentId"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "INVALID_ENVIRONMENT_ID";
 
@@ -152,8 +189,8 @@ class DecisionTraceService {
 
     if (
       normalized.incidentId &&
-      !mongoose.Types.ObjectId
-        .isValid(
+      !persistenceIdentifierPolicy
+        .isValidIncidentId(
           normalized.incidentId
         )
     ) {
@@ -162,7 +199,9 @@ class DecisionTraceService {
           "Invalid incidentId"
         );
 
-      error.status = 400;
+      error.status =
+        400;
+
       error.code =
         "INVALID_INCIDENT_ID";
 
@@ -200,7 +239,9 @@ class DecisionTraceService {
         `Decision trace not found: ${decisionId}`
       );
 
-    error.status = 404;
+    error.status =
+      404;
+
     error.code =
       "DECISION_TRACE_NOT_FOUND";
 
@@ -251,7 +292,9 @@ class DecisionTraceService {
             "decisionId is required"
           );
 
-        error.status = 400;
+        error.status =
+          400;
+
         error.code =
           "DECISION_ID_REQUIRED";
 
@@ -259,64 +302,63 @@ class DecisionTraceService {
       }
 
       const trace =
-        new DecisionTrace({
-          decisionId:
-            traceData.decisionId,
+        await decisionTraceRepository
+          .create({
+            decisionId:
+              traceData.decisionId,
 
-          tenantId:
-            context.tenantId,
+            tenantId:
+              context.tenantId,
 
-          organizationId:
-            context.organizationId,
+            organizationId:
+              context.organizationId,
 
-          environmentId:
-            context.environmentId,
+            environmentId:
+              context.environmentId,
 
-          incidentId:
-            context.incidentId,
+            incidentId:
+              context.incidentId,
 
-          correlationId:
-            traceData.correlationId,
+            correlationId:
+              traceData.correlationId,
 
-          inputs:
-            traceData.inputs,
+            inputs:
+              traceData.inputs,
 
-          reasoning:
-            traceData.reasoning,
+            reasoning:
+              traceData.reasoning,
 
-          rulesTriggered:
-            traceData.rulesTriggered,
+            rulesTriggered:
+              traceData.rulesTriggered,
 
-          alternatives:
-            traceData.alternatives,
+            alternatives:
+              traceData.alternatives,
 
-          decision:
-            traceData.decision,
+            decision:
+              traceData.decision,
 
-          recommendedAction:
-            traceData.recommendedAction,
+            recommendedAction:
+              traceData.recommendedAction,
 
-          tier:
-            traceData.tier,
+            tier:
+              traceData.tier,
 
-          actionRisk:
-            traceData.actionRisk,
+            actionRisk:
+              traceData.actionRisk,
 
-          auditTrail: [
-            {
-              stage:
-                "decision_made",
+            auditTrail: [
+              {
+                stage:
+                  "decision_made",
 
-              timestamp:
-                new Date(),
+                timestamp:
+                  new Date(),
 
-              status:
-                "SUCCESS",
-            },
-          ],
-        });
-
-      await trace.save();
+                status:
+                  "SUCCESS",
+              },
+            ],
+          });
 
       console.log(
         `[decision-trace] Created trace: ${traceData.decisionId}`,
@@ -341,7 +383,9 @@ class DecisionTraceService {
       );
 
       return trace;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error creating trace:",
         error.message
@@ -372,8 +416,8 @@ class DecisionTraceService {
         );
 
       const trace =
-        await DecisionTrace
-          .findOneAndUpdate(
+        await decisionTraceRepository
+          .updateOne(
             {
               decisionId,
 
@@ -425,10 +469,6 @@ class DecisionTraceService {
                       .verdict,
                 },
               },
-            },
-            {
-              new:
-                true,
             }
           );
 
@@ -443,7 +483,9 @@ class DecisionTraceService {
       );
 
       return trace;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error updating policy check:",
         error.message
@@ -469,8 +511,8 @@ class DecisionTraceService {
         );
 
       const trace =
-        await DecisionTrace
-          .findOneAndUpdate(
+        await decisionTraceRepository
+          .updateOne(
             {
               decisionId,
 
@@ -526,10 +568,6 @@ class DecisionTraceService {
                       .status,
                 },
               },
-            },
-            {
-              new:
-                true,
             }
           );
 
@@ -544,7 +582,9 @@ class DecisionTraceService {
       );
 
       return trace;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error updating action result:",
         error.message
@@ -570,8 +610,8 @@ class DecisionTraceService {
         );
 
       const trace =
-        await DecisionTrace
-          .findOneAndUpdate(
+        await decisionTraceRepository
+          .updateOne(
             {
               decisionId,
 
@@ -618,10 +658,6 @@ class DecisionTraceService {
                     "SUCCESS",
                 },
               },
-            },
-            {
-              new:
-                true,
             }
           );
 
@@ -636,7 +672,9 @@ class DecisionTraceService {
       );
 
       return trace;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error updating memory:",
         error.message
@@ -656,7 +694,7 @@ class DecisionTraceService {
   ) {
     try {
       const trace =
-        await DecisionTrace
+        await decisionTraceRepository
           .findOne({
             decisionId,
 
@@ -672,7 +710,9 @@ class DecisionTraceService {
       }
 
       return trace;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error retrieving trace:",
         error.message
@@ -711,7 +751,8 @@ class DecisionTraceService {
             Number.parseInt(
               limit,
               10
-            ) || 50,
+            ) ||
+            50,
             1
           ),
           200
@@ -742,16 +783,22 @@ class DecisionTraceService {
       query.environmentId =
         scope.environmentId;
 
-      return DecisionTrace
-        .find(query)
-        .sort({
-          createdAt:
-            -1,
-        })
-        .limit(
-          safeLimit
+      return decisionTraceRepository
+        .list(
+          query,
+          {
+            sort: {
+              createdAt:
+                -1,
+            },
+
+            limit:
+              safeLimit,
+          }
         );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error retrieving recent traces:",
         error.message
@@ -767,7 +814,8 @@ class DecisionTraceService {
 
   async getDecisionSummary(
     context,
-    timeWindowMs = 86400000
+    timeWindowMs =
+      86400000
   ) {
     try {
       const since =
@@ -797,17 +845,28 @@ class DecisionTraceService {
       };
 
       const traces =
-        await DecisionTrace
-          .find({
-            ...this._scopeFilter(
-              context
-            ),
+        await decisionTraceRepository
+          .list(
+            {
+              ...this._scopeFilter(
+                context
+              ),
 
-            createdAt: {
-              $gte:
-                since,
+              createdAt: {
+                $gte:
+                  since,
+              },
             },
-          });
+            {
+              sort: {
+                createdAt:
+                  -1,
+              },
+
+              limit:
+                200,
+            }
+          );
 
       if (
         traces.length ===
@@ -918,7 +977,9 @@ class DecisionTraceService {
         traces.length;
 
       return summary;
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error computing summary:",
         error.message
@@ -979,8 +1040,8 @@ class DecisionTraceService {
         query.incidentId
       ) {
         if (
-          !mongoose.Types.ObjectId
-            .isValid(
+          !persistenceIdentifierPolicy
+            .isValidIncidentId(
               query.incidentId
             )
         ) {
@@ -1038,22 +1099,29 @@ class DecisionTraceService {
             Number.parseInt(
               query.limit,
               10
-            ) || 50,
+            ) ||
+            50,
             1
           ),
           200
         );
 
-      return DecisionTrace
-        .find(filter)
-        .sort({
-          createdAt:
-            -1,
-        })
-        .limit(
-          safeLimit
+      return decisionTraceRepository
+        .list(
+          filter,
+          {
+            sort: {
+              createdAt:
+                -1,
+            },
+
+            limit:
+              safeLimit,
+          }
         );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[decision-trace] Error searching traces:",
         error.message
@@ -1066,3 +1134,7 @@ class DecisionTraceService {
 
 module.exports =
   new DecisionTraceService();
+
+module.exports
+  .DecisionTraceService =
+  DecisionTraceService;

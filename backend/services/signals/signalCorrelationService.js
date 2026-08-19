@@ -1,26 +1,17 @@
 "use strict";
 
 const crypto =
-  require("node:crypto");
-
-const mongoose =
-  require("mongoose");
+  require(
+    "node:crypto"
+  );
 
 const {
-  Signal,
+  signalRepository,
+
+  correlationTopologyRepository,
 } =
   require(
-    "../../models/Signal"
-  );
-
-const ResourceRelationship =
-  require(
-    "../../models/ResourceRelationship"
-  );
-
-const ServiceDependency =
-  require(
-    "../../models/ServiceDependency"
+    "../../persistence/repositories"
   );
 
 class SignalCorrelationService {
@@ -118,38 +109,41 @@ class SignalCorrelationService {
       );
 
     const candidates =
-      await Signal
-        .find({
-          ...scope,
+      await signalRepository
+        .list(
+          {
+            ...scope,
 
-          _id: {
-            $ne:
-              signal._id,
+            _id: {
+              $ne:
+                signal._id,
+            },
+
+            observedAt: {
+              $gte:
+                windowStart,
+
+              $lte:
+                windowEnd,
+            },
+
+            processingStatus: {
+              $nin: [
+                "failed",
+                "ignored",
+              ],
+            },
           },
+          {
+            sort: {
+              observedAt:
+                -1,
+            },
 
-          observedAt: {
-            $gte:
-              windowStart,
-
-            $lte:
-              windowEnd,
-          },
-
-          processingStatus: {
-            $nin: [
-              "failed",
-              "ignored",
-            ],
-          },
-        })
-        .sort({
-          observedAt:
-            -1,
-        })
-        .limit(
-          this.maxCandidates
-        )
-        .lean();
+            limit:
+              this.maxCandidates,
+          }
+        );
 
     if (
       candidates.length ===
@@ -259,13 +253,9 @@ class SignalCorrelationService {
       new Date();
 
     if (
-      signal._id &&
-      mongoose.Types.ObjectId
-        .isValid(
-          signal._id
-        )
+      signal._id
     ) {
-      await Signal
+      await signalRepository
         .updateOne(
           {
             _id:
@@ -311,7 +301,7 @@ class SignalCorrelationService {
       candidateMongoIds.length >
       0
     ) {
-      await Signal
+      await signalRepository
         .updateMany(
           {
             ...scope,
@@ -605,50 +595,29 @@ class SignalCorrelationService {
     first,
     second
   ) {
+    const scope = {
+      organizationId:
+        first.organizationId,
+
+      environmentId:
+        first.environmentId,
+    };
+
     if (
       first.serviceId &&
-      second.serviceId &&
-      mongoose.Types.ObjectId
-        .isValid(
-          first.serviceId
-        ) &&
-      mongoose.Types.ObjectId
-        .isValid(
-          second.serviceId
-        )
+      second.serviceId
     ) {
       const dependency =
-        await ServiceDependency
-          .exists({
-            organizationId:
-              first.organizationId,
+        await correlationTopologyRepository
+          .hasServiceDependency(
+            scope,
+            first.serviceId,
+            second.serviceId
+          );
 
-            environmentId:
-              first.environmentId,
-
-            active:
-              true,
-
-            $or: [
-              {
-                sourceServiceId:
-                  first.serviceId,
-
-                targetServiceId:
-                  second.serviceId,
-              },
-
-              {
-                sourceServiceId:
-                  second.serviceId,
-
-                targetServiceId:
-                  first.serviceId,
-              },
-            ],
-          });
-
-      if (dependency) {
+      if (
+        dependency
+      ) {
         return {
           related:
             true,
@@ -708,47 +677,12 @@ class SignalCorrelationService {
     }
 
     const relationship =
-      await ResourceRelationship
-        .exists({
-          organizationId:
-            first.organizationId,
-
-          environmentId:
-            first.environmentId,
-
-          active:
-            true,
-
-          $or: [
-            {
-              sourceType:
-                firstNode.type,
-
-              sourceId:
-                firstNode.id,
-
-              targetType:
-                secondNode.type,
-
-              targetId:
-                secondNode.id,
-            },
-
-            {
-              sourceType:
-                secondNode.type,
-
-              sourceId:
-                secondNode.id,
-
-              targetType:
-                firstNode.type,
-
-              targetId:
-                firstNode.id,
-            },
-          ],
-        });
+      await correlationTopologyRepository
+        .hasResourceRelationship(
+          scope,
+          firstNode,
+          secondNode
+        );
 
     if (
       relationship
@@ -780,13 +714,7 @@ class SignalCorrelationService {
     if (
       signal.attributes
         ?.airaInfrastructureResource
-        ?.id &&
-      mongoose.Types.ObjectId
-        .isValid(
-          signal.attributes
-            .airaInfrastructureResource
-            .id
-        )
+        ?.id
     ) {
       return {
         type:
@@ -800,11 +728,7 @@ class SignalCorrelationService {
     }
 
     if (
-      signal.serviceId &&
-      mongoose.Types.ObjectId
-        .isValid(
-          signal.serviceId
-        )
+      signal.serviceId
     ) {
       return {
         type:
@@ -895,19 +819,25 @@ class SignalCorrelationService {
       return [];
     }
 
-    return Signal
-      .find({
-        ...scope,
+    return signalRepository
+      .list(
+        {
+          ...scope,
 
-        correlationGroupId:
-          signal
-            .correlationGroupId,
-      })
-      .sort({
-        observedAt:
-          1,
-      })
-      .lean();
+          correlationGroupId:
+            signal
+              .correlationGroupId,
+        },
+        {
+          sort: {
+            observedAt:
+              1,
+          },
+
+          limit:
+            this.maxCandidates,
+        }
+      );
   }
 
   normalizeString(

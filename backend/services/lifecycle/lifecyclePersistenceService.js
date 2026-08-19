@@ -3,9 +3,9 @@
 /**
  * AIRA Lifecycle Persistence Service
  *
- * Phase 10.12
+ * Phase 13 — Enterprise Data Architecture
  *
- * Persists:
+ * Persists through IncidentLifecycleRepository:
  *
  * - current lifecycle snapshot
  * - immutable transition history
@@ -16,10 +16,12 @@
  *
  * SAFETY:
  *
- * - validates state transition identity
- * - revision-based updates
+ * - validates transition identity
+ * - preserves revision semantics
+ * - keeps transition history immutable
  * - does not execute recovery actions
  * - does not grant execution authorization
+ * - contains no Mongo/Mongoose persistence dependency
  */
 
 const crypto =
@@ -27,14 +29,11 @@ const crypto =
     "node:crypto"
   );
 
-const IncidentLifecycle =
+const {
+  incidentLifecycleRepository,
+} =
   require(
-    "../../models/IncidentLifecycle"
-  );
-
-const IncidentLifecycleTransition =
-  require(
-    "../../models/IncidentLifecycleTransition"
+    "../../persistence/repositories"
   );
 
 const {
@@ -49,13 +48,13 @@ class LifecyclePersistenceService {
   constructor(
     options = {}
   ) {
-    this.IncidentLifecycle =
-      options.IncidentLifecycle ||
-      IncidentLifecycle;
-
-    this.IncidentLifecycleTransition =
-      options.IncidentLifecycleTransition ||
-      IncidentLifecycleTransition;
+    /*
+     * Repository injection remains available for isolated tests and
+     * future PostgreSQL adapter validation.
+     */
+    this.repository =
+      options.repository ||
+      incidentLifecycleRepository;
   }
 
   async persistTransition(
@@ -68,18 +67,16 @@ class LifecyclePersistenceService {
     const transition =
       input.transition;
 
+    const scope =
+      this.buildScope(
+        input
+      );
+
     const existing =
-      await this.IncidentLifecycle
-        .findOne({
-          organizationId:
-            input.organizationId,
-
-          environmentId:
-            input.environmentId,
-
-          incidentId:
-            input.incidentId,
-        });
+      await this.repository
+        .findCurrent(
+          scope
+        );
 
     const currentRevision =
       existing
@@ -89,6 +86,13 @@ class LifecyclePersistenceService {
           )
         : 0;
 
+    /*
+     * The persisted lifecycle snapshot is authoritative for the
+     * current lifecycle state.
+     *
+     * Never allow a transition to continue from a state different
+     * from the durable snapshot.
+     */
     if (
       existing &&
       existing.lifecycleState !==
@@ -188,8 +192,16 @@ class LifecyclePersistenceService {
         new Date(),
     };
 
-    await this.IncidentLifecycleTransition
-      .create(
+    /*
+     * Transition history is written before the current snapshot.
+     *
+     * This preserves the behaviour of the existing implementation.
+     *
+     * Phase 13 PostgreSQL will later place both operations inside one
+     * database transaction.
+     */
+    await this.repository
+      .createTransition(
         transitionDocument
       );
 
@@ -255,8 +267,12 @@ class LifecyclePersistenceService {
           {}
         ),
 
+        /*
+         * Phase 13 identifies records written through the repository
+         * persistence boundary while preserving legacy metadata.
+         */
         persistenceVersion:
-          "phase10.12-v1",
+          "phase13-repository-v1",
       },
     };
 
@@ -321,45 +337,10 @@ class LifecyclePersistenceService {
     }
 
     const lifecycle =
-      await this.IncidentLifecycle
-        .findOneAndUpdate(
-          {
-            organizationId:
-              input.organizationId,
-
-            environmentId:
-              input.environmentId,
-
-            incidentId:
-              input.incidentId,
-          },
-
-          {
-            $set:
-              update,
-
-            $setOnInsert: {
-              organizationId:
-                input.organizationId,
-
-              environmentId:
-                input.environmentId,
-
-              incidentId:
-                input.incidentId,
-            },
-          },
-
-          {
-            new:
-              true,
-
-            upsert:
-              true,
-
-            setDefaultsOnInsert:
-              true,
-          }
+      await this.repository
+        .upsertCurrent(
+          scope,
+          update
         );
 
     return {
@@ -397,31 +378,16 @@ class LifecyclePersistenceService {
     );
 
     const lifecycle =
-      await this.IncidentLifecycle
-        .findOneAndUpdate(
+      await this.repository
+        .updateCurrent(
+          this.buildScope(
+            input
+          ),
           {
-            organizationId:
-              input.organizationId,
-
-            environmentId:
-              input.environmentId,
-
-            incidentId:
-              input.incidentId,
-          },
-
-          {
-            $set: {
-              stabilityObservation:
-                clone(
-                  input.stabilityObservation
-                ),
-            },
-          },
-
-          {
-            new:
-              true,
+            stabilityObservation:
+              clone(
+                input.stabilityObservation
+              ),
           }
         );
 
@@ -457,17 +423,12 @@ class LifecyclePersistenceService {
       input
     );
 
-    return this.IncidentLifecycle
-      .findOne({
-        organizationId:
-          input.organizationId,
-
-        environmentId:
-          input.environmentId,
-
-        incidentId:
-          input.incidentId,
-      });
+    return this.repository
+      .findCurrent(
+        this.buildScope(
+          input
+        )
+      );
   }
 
   async getHistory(
@@ -489,25 +450,28 @@ class LifecyclePersistenceService {
         )
       );
 
-    return this
-      .IncidentLifecycleTransition
-      .find({
-        organizationId:
-          input.organizationId,
-
-        environmentId:
-          input.environmentId,
-
-        incidentId:
-          input.incidentId,
-      })
-      .sort({
-        revision:
-          1,
-      })
-      .limit(
+    return this.repository
+      .getHistory(
+        this.buildScope(
+          input
+        ),
         limit
       );
+  }
+
+  buildScope(
+    input = {}
+  ) {
+    return {
+      organizationId:
+        input.organizationId,
+
+      environmentId:
+        input.environmentId,
+
+      incidentId:
+        input.incidentId,
+    };
   }
 
   generateTransitionId(
@@ -591,6 +555,9 @@ class LifecyclePersistenceService {
       );
     }
 
+    /*
+     * Persistence never becomes execution authority.
+     */
     if (
       input.executionAuthorized ===
       true
@@ -651,9 +618,9 @@ class LifecyclePersistenceService {
 function clone(
   value
 ) {
-    if (
-      value ===
-      undefined
+  if (
+    value ===
+    undefined
   ) {
     return null;
   }

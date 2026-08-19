@@ -174,6 +174,21 @@ const {
     "./services/monitoring/monitorScheduler"
   );
 
+  const {
+  getPostgresConfig,
+} =
+  require(
+    "./config/postgres"
+  );
+
+const {
+  checkPostgresHealth,
+  closePostgresPool,
+} =
+  require(
+    "./persistence/postgres"
+  );
+
 // PHASE 1 SAFETY: Import kill switch and sanitization middleware
 const {
   sanitizationMiddleware,
@@ -903,10 +918,66 @@ app.get(
 
 app.get(
   "/health/ready",
-  (
+  async (
     req,
     res
   ) => {
+    let postgres;
+
+    try {
+      postgres =
+        await refreshPostgresHealth();
+    } catch (
+      error
+    ) {
+      postgres = {
+        enabled:
+          postgresRuntimeStatus
+            .enabled,
+
+        required:
+          postgresRuntimeStatus
+            .enabled,
+
+        initialized:
+          true,
+
+        healthy:
+          false,
+
+        status:
+          "unhealthy",
+
+        error: {
+          code:
+            error.code ||
+            "POSTGRES_READINESS_FAILED",
+
+          message:
+            error.message,
+        },
+
+        executionAuthorized:
+          false,
+      };
+
+      postgresRuntimeStatus
+        .initialized =
+        true;
+
+      postgresRuntimeStatus
+        .healthy =
+        false;
+
+      postgresRuntimeStatus
+        .checkedAt =
+        new Date();
+
+      postgresRuntimeStatus
+        .lastError =
+        error.message;
+    }
+
     const ready =
       isApplicationReady();
 
@@ -924,6 +995,8 @@ app.get(
 
         lifecycle:
           getApplicationLifecycleStatus(),
+
+        postgres,
 
         replayRecovery: {
           initialized:
@@ -960,13 +1033,62 @@ app.get(
 // Health check for orchestration
 app.get(
   "/health",
-  (
+  async (
     req,
     res
   ) => {
     const systemHealth =
       systemHealthService
         .getHealthStatus();
+
+    let postgres;
+
+    try {
+      postgres =
+        await refreshPostgresHealth();
+    } catch (
+      error
+    ) {
+      postgres = {
+        enabled:
+          postgresRuntimeStatus
+            .enabled,
+
+        required:
+          postgresRuntimeStatus
+            .enabled,
+
+        healthy:
+          false,
+
+        status:
+          "unhealthy",
+
+        error: {
+          code:
+            error.code ||
+            "POSTGRES_HEALTH_FAILED",
+
+          message:
+            error.message,
+        },
+
+        executionAuthorized:
+          false,
+      };
+
+      postgresRuntimeStatus
+        .healthy =
+        false;
+
+      postgresRuntimeStatus
+        .checkedAt =
+        new Date();
+
+      postgresRuntimeStatus
+        .lastError =
+        error.message;
+    }
 
     const applicationReady =
       isApplicationReady();
@@ -978,7 +1100,7 @@ app.get(
         ? 503
         : 200;
 
-    res
+    return res
       .status(
         statusCode
       )
@@ -1005,6 +1127,8 @@ app.get(
         safeMode:
           systemHealth
             .safeMode,
+
+        postgres,
 
         redis: {
           connected:
@@ -2574,6 +2698,25 @@ let workflowOutboxConsumers =
 let serverInstance =
   null;
 
+  const postgresRuntimeStatus = {
+  enabled:
+    false,
+
+  initialized:
+    false,
+
+  healthy:
+    null,
+
+  checkedAt:
+    null,
+
+  lastError:
+    null,
+
+  health:
+    null,
+};
 // ============================================================================
 // PHASE 11.4 — REPLAY RECOVERY STATE
 // ============================================================================
@@ -2745,7 +2888,230 @@ function transitionApplicationState(
   );
 }
 
+async function refreshPostgresHealth() {
+  const config =
+    getPostgresConfig();
+
+  postgresRuntimeStatus
+    .enabled =
+    config.enabled;
+
+  if (
+    !config.enabled
+  ) {
+    postgresRuntimeStatus
+      .initialized =
+      true;
+
+    postgresRuntimeStatus
+      .healthy =
+      null;
+
+    postgresRuntimeStatus
+      .checkedAt =
+      new Date();
+
+    postgresRuntimeStatus
+      .lastError =
+      null;
+
+    postgresRuntimeStatus
+      .health =
+      null;
+
+    return {
+      enabled:
+        false,
+
+      required:
+        false,
+
+      initialized:
+        true,
+
+      healthy:
+        null,
+
+      status:
+        "disabled",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  const health =
+    await checkPostgresHealth();
+
+  postgresRuntimeStatus
+    .initialized =
+    true;
+
+  postgresRuntimeStatus
+    .healthy =
+    health.healthy ===
+    true;
+
+  postgresRuntimeStatus
+    .checkedAt =
+    new Date();
+
+  postgresRuntimeStatus
+    .lastError =
+    health.healthy
+      ? null
+      : (
+          health.error
+            ?.message ||
+          "PostgreSQL health check failed"
+        );
+
+  postgresRuntimeStatus
+    .health =
+    health;
+
+  return {
+    enabled:
+      true,
+
+    required:
+      true,
+
+    initialized:
+      true,
+
+    healthy:
+      health.healthy ===
+      true,
+
+    status:
+      health.healthy
+        ? "healthy"
+        : "unhealthy",
+
+    latencyMs:
+      health.latencyMs ??
+      null,
+
+    database:
+      health.database ||
+      null,
+
+    username:
+      health.username ||
+      null,
+
+    pool:
+      health.pool ||
+      null,
+
+    error:
+      health.error ||
+      null,
+
+    checkedAt:
+      postgresRuntimeStatus
+        .checkedAt,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+async function initializePostgresFoundation() {
+  const config =
+    getPostgresConfig();
+
+  postgresRuntimeStatus
+    .enabled =
+    config.enabled;
+
+  if (
+    !config.enabled
+  ) {
+    postgresRuntimeStatus
+      .initialized =
+      true;
+
+    postgresRuntimeStatus
+      .healthy =
+      null;
+
+    postgresRuntimeStatus
+      .checkedAt =
+      new Date();
+
+    postgresRuntimeStatus
+      .lastError =
+      null;
+
+    postgresRuntimeStatus
+      .health =
+      null;
+
+    console.log(
+      "[postgres] PostgreSQL foundation disabled — MongoDB remains authoritative"
+    );
+
+    return {
+      enabled:
+        false,
+
+      healthy:
+        null,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  console.log(
+    "[postgres] Initializing PostgreSQL foundation..."
+  );
+
+  const health =
+    await refreshPostgresHealth();
+
+  if (
+    health.healthy !==
+    true
+  ) {
+    throw Object.assign(
+      new Error(
+        health.error
+          ?.message ||
+        "PostgreSQL health check failed during startup"
+      ),
+      {
+        code:
+          health.error
+            ?.code ||
+          "POSTGRES_STARTUP_HEALTH_FAILED",
+      }
+    );
+  }
+
+  console.log(
+    `[postgres] ✓ PostgreSQL healthy database=${health.database || "unknown"} latency=${health.latencyMs}ms`
+  );
+
+  return health;
+}
+
 function isApplicationReady() {
+  const postgresReady =
+    postgresRuntimeStatus
+      .enabled !==
+      true ||
+    (
+      postgresRuntimeStatus
+        .initialized ===
+        true &&
+      postgresRuntimeStatus
+        .healthy ===
+        true
+    );
+
   return (
     applicationLifecycle
       .state ===
@@ -2756,7 +3122,8 @@ function isApplicationReady() {
       true &&
     applicationLifecycle
       .startupRecoveryFailed !==
-      true
+      true &&
+    postgresReady
   );
 }
 
@@ -2806,12 +3173,34 @@ function getApplicationLifecycleStatus() {
       applicationLifecycle
         .lastError,
 
+    postgres: {
+      enabled:
+        postgresRuntimeStatus
+          .enabled,
+
+      initialized:
+        postgresRuntimeStatus
+          .initialized,
+
+      healthy:
+        postgresRuntimeStatus
+          .healthy,
+
+      checkedAt:
+        postgresRuntimeStatus
+          .checkedAt,
+
+      lastError:
+        postgresRuntimeStatus
+          .lastError,
+    },
+
     ready:
       isApplicationReady(),
 
     /*
-     * Lifecycle state can constrain admission but can never
-     * grant infrastructure execution authority.
+     * Lifecycle state and persistence availability can restrict
+     * admission but can never grant infrastructure execution.
      */
     executionAuthorized:
       false,
@@ -3775,34 +4164,36 @@ async function startServer() {
 
   try {
     /*
-     * Start the listener first so orchestration can observe
-     * /health/live and /health/ready during recovery.
-     *
-     * The global admission gate prevents operational writes
-     * until lifecycle reaches READY.
+     * Start listener first so orchestration platforms can observe
+     * liveness/readiness while dependency initialization proceeds.
      */
     await startHttpServer();
 
     /*
-     * Initialize the existing infrastructure, queues, workers,
-     * persistence and Phase 1-11 runtime.
+     * Existing Phase 1-12 infrastructure.
+     *
+     * MongoDB remains authoritative during Phase 13.2.
      */
     await initializeServices();
+
+    // =========================================================================
+    // PHASE 13.2 — POSTGRESQL FOUNDATION
+    // =========================================================================
+
+    /*
+     * PostgreSQL is optional until explicitly enabled.
+     *
+     * If enabled, startup fails closed when PostgreSQL is unavailable.
+     *
+     * We intentionally do NOT run schema migrations automatically here.
+     * Production migrations remain an explicit deployment operation.
+     */
+    await initializePostgresFoundation();
 
     // =========================================================================
     // PHASE 12.1 — AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
     // =========================================================================
 
-    /*
-     * Production routes must never create their own AgentOrchestrator.
-     *
-     * Initialize the single production runtime here after the core services
-     * have been initialized but before startup recovery marks AIRA READY.
-     *
-     * If this throws, startup fails. We intentionally do NOT swallow the
-     * exception because accepting production intelligence traffic while the
-     * authoritative runtime is unavailable would create an ambiguous state.
-     */
     initializeAgentOrchestrator(
       {
         incidentPlaybookService,
@@ -3826,11 +4217,14 @@ async function startServer() {
     );
 
     /*
-     * Startup recovery stays after runtime initialization.
+     * Startup recovery remains the final operational-readiness gate.
      *
-     * AIRA must not transition to operational readiness before both the
-     * existing Phase 1-11 recovery system and the authoritative agent runtime
-     * are available.
+     * AIRA cannot become READY unless:
+     *
+     * - core infrastructure initialized
+     * - PostgreSQL is healthy when enabled
+     * - authoritative agent runtime initialized
+     * - durable recovery completed
      */
     await runStartupRecovery();
 
@@ -3862,9 +4256,6 @@ async function startServer() {
 
     /*
      * Best-effort cleanup.
-     *
-     * Do not leave partially initialized resources alive after a hard
-     * startup failure.
      */
     try {
       await shutdown(
@@ -3890,7 +4281,6 @@ async function startServer() {
       1;
   }
 }
-
 // ============================================================================
 // PHASE 11.10 — GRACEFUL SHUTDOWN
 // ============================================================================
@@ -3946,14 +4336,6 @@ async function shutdown(
         `signal_${signal}`
       );
 
-      /*
-       * The lifecycle admission gate immediately rejects new
-       * state-changing operational traffic after DRAINING begins.
-       *
-       * Existing requests can complete while the HTTP server
-       * is closed below.
-       */
-
       // ======================================================================
       // 1. STOP ACCEPTING NEW HTTP CONNECTIONS
       // ======================================================================
@@ -4002,11 +4384,6 @@ async function shutdown(
                       finish
                     );
 
-                  /*
-                   * Node versions that expose closeIdleConnections()
-                   * can proactively close keep-alive sockets that
-                   * are not serving active requests.
-                   */
                   if (
                     typeof serverInstance
                       .closeIdleConnections ===
@@ -4042,7 +4419,7 @@ async function shutdown(
       );
 
       // ======================================================================
-      // 2. STOP DURABLE OUTBOX DRAINING
+      // 2. STOP DURABLE OUTBOX
       // ======================================================================
 
       if (
@@ -4201,7 +4578,7 @@ async function shutdown(
       );
 
       // ======================================================================
-      // 8. RELEASE / DISCONNECT DISTRIBUTED LOCK INFRASTRUCTURE
+      // 8. RELEASE DISTRIBUTED LOCKS
       // ======================================================================
 
       if (
@@ -4256,7 +4633,7 @@ async function shutdown(
       }
 
       // ======================================================================
-      // 10. DISCONNECT IDEMPOTENCY / REDIS
+      // 10. DISCONNECT REDIS-BASED SERVICES
       // ======================================================================
 
       if (
@@ -4274,10 +4651,6 @@ async function shutdown(
         );
       }
 
-      /*
-       * Rate limiting owns its own Redis client. Disconnect it
-       * after HTTP admission has stopped.
-       */
       try {
         const rateLimitService =
           getRateLimitService();
@@ -4306,11 +4679,40 @@ async function shutdown(
       }
 
       // ======================================================================
-      // 11. DISCONNECT DATABASE LAST
+      // 11. CLOSE POSTGRESQL
       // ======================================================================
 
       await safeShutdownStep(
-        "Database disconnected",
+        "PostgreSQL pool closed",
+        async () => {
+          await closePostgresPool();
+
+          postgresRuntimeStatus
+            .initialized =
+            false;
+
+          postgresRuntimeStatus
+            .healthy =
+            null;
+
+          postgresRuntimeStatus
+            .health =
+            null;
+        }
+      );
+
+      // ======================================================================
+      // 12. DISCONNECT CURRENT AUTHORITATIVE MONGODB DATABASE
+      // ======================================================================
+
+      /*
+       * Mongo remains authoritative during Phase 13.2.
+       *
+       * After PostgreSQL cutover, this step is removed during the Mongo
+       * retirement stage.
+       */
+      await safeShutdownStep(
+        "MongoDB disconnected",
         async () => {
           await disconnectDatabase();
         }
@@ -4349,9 +4751,6 @@ async function shutdown(
 
   /*
    * Hard shutdown deadline.
-   *
-   * A graceful shutdown should never hang forever because one
-   * dependency refuses to close.
    */
   if (
     exitProcess

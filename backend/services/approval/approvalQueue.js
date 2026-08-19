@@ -14,8 +14,12 @@
  * from another environment cannot be returned accidentally.
  */
 
-const ApprovalRequest =
-  require("../../models/ApprovalRequest");
+const {
+  approvalRepository,
+} =
+  require(
+    "../../persistence/repositories"
+  );
 
 const {
   loggingService,
@@ -41,7 +45,7 @@ class ApprovalQueue {
       );
 
     console.log(
-      "[ApprovalQueue] Initialized — primary store: MongoDB, in-memory cache:",
+      "[ApprovalQueue] Initialized — primary store: persistence repository, in-memory cache:",
       this.backedBy === "memory"
         ? "enabled"
         : "disabled"
@@ -199,8 +203,8 @@ class ApprovalQueue {
 
     try {
       const approvalRequest =
-        await ApprovalRequest
-          .createApprovalRequest({
+        await approvalRepository
+          .createRequest({
             tenantId,
 
             organizationId:
@@ -256,8 +260,9 @@ class ApprovalQueue {
       this.memoryStore.set(
         cacheKey,
         {
-          ...approvalRequest
-            .toObject(),
+          ...toPlain(
+            approvalRequest
+          ),
 
           addedAt:
             Date.now(),
@@ -343,8 +348,8 @@ class ApprovalQueue {
           context
         );
 
-      return ApprovalRequest
-        .findPendingApprovals({
+      return approvalRepository
+        .findPending({
           organizationId:
             scope.organizationId,
 
@@ -394,7 +399,7 @@ class ApprovalQueue {
       }
 
       const request =
-        await ApprovalRequest
+        await approvalRepository
           .findByApprovalId(
             approvalId,
             {
@@ -411,8 +416,9 @@ class ApprovalQueue {
           .set(
             cacheKey,
             {
-              ...request
-                .toObject(),
+              ...toPlain(
+                request
+              ),
 
               addedAt:
                 Date.now(),
@@ -448,7 +454,7 @@ class ApprovalQueue {
         );
 
       const request =
-        await ApprovalRequest
+        await approvalRepository
           .findByApprovalId(
             approvalId,
             {
@@ -466,10 +472,13 @@ class ApprovalQueue {
         );
       }
 
-      await request.approve(
-        approvedBy,
-        metadata
-      );
+      const approvedRequest =
+        await approvalRepository
+          .approve(
+            request,
+            approvedBy,
+            metadata
+          );
 
       this.memoryStore.delete(
         this._cacheKey(
@@ -486,7 +495,7 @@ class ApprovalQueue {
           approvedBy,
 
           action:
-            request.action,
+            approvedRequest.action,
 
           environmentId:
             String(
@@ -508,7 +517,7 @@ class ApprovalQueue {
               approvedBy,
 
               action:
-                request.action,
+                approvedRequest.action,
 
               organizationId:
                 String(
@@ -523,7 +532,7 @@ class ApprovalQueue {
           );
       }
 
-      return request;
+      return approvedRequest;
     } catch (error) {
       console.error(
         "[ApprovalQueue] Error approving request:",
@@ -552,7 +561,7 @@ class ApprovalQueue {
         );
 
       const request =
-        await ApprovalRequest
+        await approvalRepository
           .findByApprovalId(
             approvalId,
             {
@@ -570,11 +579,14 @@ class ApprovalQueue {
         );
       }
 
-      await request.reject(
-        rejectedBy,
-        reason,
-        metadata
-      );
+      const rejectedRequest =
+        await approvalRepository
+          .reject(
+            request,
+            rejectedBy,
+            reason,
+            metadata
+          );
 
       this.memoryStore.delete(
         this._cacheKey(
@@ -593,7 +605,7 @@ class ApprovalQueue {
           reason,
 
           action:
-            request.action,
+            rejectedRequest.action,
 
           environmentId:
             String(
@@ -617,7 +629,7 @@ class ApprovalQueue {
               reason,
 
               action:
-                request.action,
+                rejectedRequest.action,
 
               organizationId:
                 String(
@@ -632,7 +644,7 @@ class ApprovalQueue {
           );
       }
 
-      return request;
+      return rejectedRequest;
     } catch (error) {
       console.error(
         "[ApprovalQueue] Error rejecting request:",
@@ -726,17 +738,6 @@ class ApprovalQueue {
           context
         );
 
-      const filter =
-        (status) => ({
-          organizationId:
-            scope.organizationId,
-
-          environmentId:
-            scope.environmentId,
-
-          status,
-        });
-
       const [
         pending,
         approved,
@@ -744,32 +745,52 @@ class ApprovalQueue {
         expired,
       ] =
         await Promise.all([
-          ApprovalRequest
-            .countDocuments(
-              filter(
-                "pending"
-              )
+          approvalRepository
+            .countByStatus(
+              {
+                organizationId:
+                  scope.organizationId,
+
+                environmentId:
+                  scope.environmentId,
+              },
+              "pending"
             ),
 
-          ApprovalRequest
-            .countDocuments(
-              filter(
-                "approved"
-              )
+          approvalRepository
+            .countByStatus(
+              {
+                organizationId:
+                  scope.organizationId,
+
+                environmentId:
+                  scope.environmentId,
+              },
+              "approved"
             ),
 
-          ApprovalRequest
-            .countDocuments(
-              filter(
-                "rejected"
-              )
+          approvalRepository
+            .countByStatus(
+              {
+                organizationId:
+                  scope.organizationId,
+
+                environmentId:
+                  scope.environmentId,
+              },
+              "rejected"
             ),
 
-          ApprovalRequest
-            .countDocuments(
-              filter(
-                "expired"
-              )
+          approvalRepository
+            .countByStatus(
+              {
+                organizationId:
+                  scope.organizationId,
+
+                environmentId:
+                  scope.environmentId,
+              },
+              "expired"
             ),
         ]);
 
@@ -809,6 +830,32 @@ class ApprovalQueue {
       "[ApprovalQueue] Memory store cleared"
     );
   }
+}
+
+function toPlain(
+  value
+) {
+  if (
+    value &&
+    typeof value.toObject ===
+      "function"
+  ) {
+    return value
+      .toObject();
+  }
+
+  if (
+    value &&
+    typeof value.toJSON ===
+      "function"
+  ) {
+    return value
+      .toJSON();
+  }
+
+  return {
+    ...(value || {}),
+  };
 }
 
 // ============================================================================
