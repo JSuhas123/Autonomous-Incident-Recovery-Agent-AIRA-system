@@ -42,17 +42,67 @@ class PostgresIdentityRepositoryBase {
     return result.rows[0].id;
   }
 
-  async mapForeignKey(transaction, column, value) {
-    if (value === null || value === undefined || !this.foreignKeyColumns[column]) return value;
-    const table = this.foreignKeyColumns[column];
-    const result = await this.support.query(
-      transaction,
-      `SELECT id, public_id, legacy_mongo_id FROM ${table} WHERE id = $1 OR public_id = $1 OR legacy_mongo_id = $1 LIMIT 1`,
-      [value]
-    );
-    const row = result.rows[0];
-    return row ? row.public_id || row.legacy_mongo_id || String(row.id) : value;
+  async mapForeignKey(
+  transaction,
+  column,
+  value
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined ||
+    !this.foreignKeyColumns[
+      column
+    ]
+  ) {
+    return value;
   }
+
+  const table =
+    this.foreignKeyColumns[
+      column
+    ];
+
+  const identifier =
+    PostgresIdentityRepositorySupport
+      .identifier(
+        value
+      );
+
+  const result =
+    await this.support.query(
+      transaction,
+      `
+        SELECT
+          id,
+          public_id,
+          legacy_mongo_id
+        FROM ${table}
+        WHERE
+          id::text = $1
+          OR public_id = $1
+          OR legacy_mongo_id = $1
+        LIMIT 1
+      `,
+      [
+        identifier,
+      ]
+    );
+
+  const row =
+    result.rows[0];
+
+  return row
+    ? (
+        row.public_id ||
+        row.legacy_mongo_id ||
+        String(
+          row.id
+        )
+      )
+    : value;
+}
 
   async mapRow(row, options = {}, transaction = null) {
     if (!row) return null;

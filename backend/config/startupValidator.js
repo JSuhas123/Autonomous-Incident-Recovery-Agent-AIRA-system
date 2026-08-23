@@ -1849,6 +1849,69 @@ function inspectEnvironment(
         ENVIRONMENT.PRODUCTION;
 
 
+  /*
+   * ==========================================================================
+   * PHASE 13 — PERSISTENCE PROVIDER
+   * ==========================================================================
+   *
+   * MongoDB must only be required when Mongo participates in the selected
+   * runtime/migration path.
+   *
+   * This allows the final Phase 13 target:
+   *
+   *   NODE_ENV=production
+   *   PERSISTENCE_PROVIDER=postgres
+   *   POSTGRES_ENABLED=true
+   *   MIGRATION_MODE=disabled
+   *   MONGODB_URI=<absent>
+   *
+   * to start without MongoDB.
+   */
+
+  const persistenceProvider =
+    String(
+      env
+        .PERSISTENCE_PROVIDER ||
+      "mongo"
+    )
+      .trim()
+      .toLowerCase();
+
+
+  const migrationMode =
+    String(
+      env
+        .MIGRATION_MODE ||
+      "disabled"
+    )
+      .trim()
+      .toLowerCase();
+
+
+  /*
+   * Mongo is still required while it participates in:
+   *
+   * - normal Mongo-primary runtime
+   * - historical backfill
+   * - shadow comparison
+   * - migration verification
+   *
+   * Once PostgreSQL becomes authoritative and migration mode is disabled,
+   * Mongo must not be a startup dependency.
+   */
+
+  const mongoRequired =
+    persistenceProvider ===
+      "mongo" ||
+    [
+      "backfill",
+      "shadow",
+      "verify",
+    ].includes(
+      migrationMode
+    );
+
+
   const errors =
     [];
 
@@ -1874,6 +1937,74 @@ function inspectEnvironment(
       "CONFIG_NODE_ENV_INVALID",
       "NODE_ENV",
       `NODE_ENV must be one of ${Object.values(ENVIRONMENT).join(", ")}`
+    );
+  }
+
+
+  // ==========================================================================
+  // PHASE 13 — PERSISTENCE PROVIDER VALIDATION
+  // ==========================================================================
+
+  if (
+    ![
+      "mongo",
+      "postgres",
+    ].includes(
+      persistenceProvider
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_PERSISTENCE_PROVIDER_INVALID",
+      "PERSISTENCE_PROVIDER",
+      "PERSISTENCE_PROVIDER must be either mongo or postgres"
+    );
+  }
+
+
+  // ==========================================================================
+  // PHASE 13 — MIGRATION MODE VALIDATION
+  // ==========================================================================
+
+  if (
+    ![
+      "disabled",
+      "backfill",
+      "shadow",
+      "verify",
+      "cutover",
+    ].includes(
+      migrationMode
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_MIGRATION_MODE_INVALID",
+      "MIGRATION_MODE",
+      "MIGRATION_MODE must be one of disabled, backfill, shadow, verify or cutover"
+    );
+  }
+
+
+  /*
+   * Selecting PostgreSQL as the persistence provider while PostgreSQL is
+   * disabled is always contradictory configuration.
+   */
+
+  if (
+    persistenceProvider ===
+      "postgres" &&
+    !parseBoolean(
+      env
+        .POSTGRES_ENABLED,
+      false
+    )
+  ) {
+    addError(
+      errors,
+      "CONFIG_POSTGRES_PROVIDER_DISABLED",
+      "POSTGRES_ENABLED",
+      "POSTGRES_ENABLED must be true when PERSISTENCE_PROVIDER=postgres"
     );
   }
 
@@ -1910,6 +2041,7 @@ function inspectEnvironment(
    * If absent, the application may intentionally use AUDIT_SECRET,
    * depending on the service implementation.
    */
+
   if (
     hasValue(
       env
@@ -2014,6 +2146,15 @@ function inspectEnvironment(
   // DEPENDENCY URLS
   // ==========================================================================
 
+  /*
+   * PHASE 13:
+   *
+   * MongoDB is no longer universally required in production.
+   *
+   * It is required only while Mongo participates in the selected runtime or
+   * migration mode.
+   */
+
   validateDependencyUrl({
     env,
 
@@ -2033,7 +2174,8 @@ function inspectEnvironment(
       isProduction,
 
     required:
-      isProduction,
+      isProduction &&
+      mongoRequired,
   });
 
 
@@ -2206,6 +2348,17 @@ function inspectEnvironment(
     production:
       isProduction,
 
+    /*
+     * Expose these in the report because Phase 13 status/startup diagnostics
+     * need to know which persistence contract was validated.
+     */
+
+    persistenceProvider,
+
+    migrationMode,
+
+    mongoRequired,
+
     errors,
 
     warnings,
@@ -2213,6 +2366,10 @@ function inspectEnvironment(
     checkedAt:
       new Date()
         .toISOString(),
+
+    /*
+     * Configuration validation can never grant execution authority.
+     */
 
     executionAuthorized:
       false,
@@ -2277,20 +2434,27 @@ function validateEnvironment(
     options.env ||
     process.env;
 
+
   const report =
     inspectEnvironment(
       options
     );
 
+
   /*
-   * Phase 13.2 PostgreSQL validation is deliberately layered on top
-   * of the established Phase 11.14 configuration validator.
+   * ==========================================================================
+   * PHASE 13 — POSTGRESQL CONFIGURATION
+   * ==========================================================================
    *
-   * PostgreSQL is optional during migration.
+   * PostgreSQL validation remains layered on top of the established startup
+   * configuration validator.
    *
-   * Once POSTGRES_ENABLED=true, its configuration becomes part of
-   * AIRA's fail-closed startup contract.
+   * PostgreSQL may be disabled while Mongo remains authoritative.
+   *
+   * Once POSTGRES_ENABLED=true, PostgreSQL configuration becomes part of the
+   * fail-closed startup contract.
    */
+
   validatePostgresConfiguration({
     env,
 
@@ -2304,13 +2468,16 @@ function validateEnvironment(
       report.production,
   });
 
+
   /*
-   * inspectEnvironment() calculated validity before PostgreSQL
-   * validation was appended, so recompute it here.
+   * inspectEnvironment() calculated validity before PostgreSQL validation was
+   * appended, therefore recompute the final result here.
    */
+
   report.valid =
     report.errors.length ===
     0;
+
 
   if (
     report.warnings.length >
@@ -2330,6 +2497,7 @@ function validateEnvironment(
         );
     }
   }
+
 
   if (
     !report.valid
@@ -2358,6 +2526,7 @@ function validateEnvironment(
         "",
       ];
 
+
       process.stderr
         .write(
           lines.join(
@@ -2366,10 +2535,12 @@ function validateEnvironment(
         );
     }
 
+
     throw new StartupConfigurationError(
       report
     );
   }
+
 
   return report;
 }
@@ -2388,17 +2559,35 @@ function getSafeConfigurationSnapshot(
     "NODE_INSTANCE_ID",
     "PORT",
 
+    // ========================================================================
+    // PHASE 13 — PERSISTENCE SELECTION
+    // ========================================================================
+
+    "PERSISTENCE_PROVIDER",
+    "MIGRATION_MODE",
+
+    // ========================================================================
+    // MONGODB
+    // ========================================================================
+
     "MONGODB_URI",
+
+    // ========================================================================
+    // INFRASTRUCTURE
+    // ========================================================================
+
     "REDIS_URL",
     "RABBITMQ_URL",
 
     // ========================================================================
-    // PHASE 13.2 — POSTGRESQL
+    // PHASE 13 — POSTGRESQL
     // ========================================================================
 
     "POSTGRES_ENABLED",
+
     "DATABASE_URL",
     "POSTGRES_URL",
+
     "POSTGRES_HOST",
     "POSTGRES_PORT",
     "POSTGRES_DATABASE",
@@ -2421,6 +2610,8 @@ function getSafeConfigurationSnapshot(
     "POSTGRES_MIGRATION_LOCK_ID",
 
     // ========================================================================
+    // APPLICATION SECURITY
+    // ========================================================================
 
     "CORS_ORIGINS",
 
@@ -2429,24 +2620,45 @@ function getSafeConfigurationSnapshot(
     "INTEGRATION_SECRET_KEY",
     "IP_HASH_SALT",
 
+    // ========================================================================
+    // SESSION
+    // ========================================================================
+
     "SESSION_IDLE_TIMEOUT_MS",
     "SESSION_ABSOLUTE_TIMEOUT_MS",
     "SESSION_REMEMBER_ME_TIMEOUT_MS",
+
+    // ========================================================================
+    // SHUTDOWN
+    // ========================================================================
 
     "SERVER_SHUTDOWN_TIMEOUT_MS",
     "APPLICATION_SHUTDOWN_TIMEOUT_MS",
     "WORKFLOW_OUTBOX_SHUTDOWN_TIMEOUT_MS",
 
+    // ========================================================================
+    // QUEUE
+    // ========================================================================
+
     "QUEUE_MAX_IN_FLIGHT_PUBLISHES",
     "QUEUE_PUBLISH_DRAIN_TIMEOUT_MS",
     "QUEUE_PUBLISH_RETRY_AFTER_MS",
 
+    // ========================================================================
+    // RETENTION
+    // ========================================================================
+
     "RETENTION_JOB_INTERVAL_MINUTES",
     "RETENTION_MAX_PATTERN_OCCURRENCES",
+
+    // ========================================================================
+    // LOGGING
+    // ========================================================================
 
     "LOG_LEVEL",
     "LOG_TO_FILE",
   ];
+
 
   return Object.fromEntries(
     names.map(

@@ -1,7 +1,10 @@
 "use strict";
 
-const mongoose = require("mongoose");
-
+const {
+  isDatabaseIdentifier,
+} = require(
+  "../../utils/identifier"
+);
 const { environmentRepository, organizationRepository } = require("../../persistence/repositories");
 
 const EntitlementService = require(
@@ -203,25 +206,35 @@ class EnvironmentService {
    * ---------------------------------------------------------------
    */
   static assertValidId(
-    value,
-    fieldName
+  value,
+  fieldName
+) {
+  const normalized =
+    value === null ||
+    value === undefined
+      ? ""
+      : String(
+          value
+        ).trim();
+
+  if (
+    !isDatabaseIdentifier(
+      normalized
+    )
   ) {
-    if (
-      !mongoose.Types
-        .ObjectId
-        .isValid(value)
-    ) {
-      throw this.createError(
-        `Invalid ${fieldName}`,
-        "INVALID_IDENTIFIER",
-        400,
-        {
-          field:
-            fieldName,
-        }
-      );
-    }
+    throw this.createError(
+      `Invalid ${fieldName}`,
+      "INVALID_IDENTIFIER",
+      400,
+      {
+        field:
+          fieldName,
+      }
+    );
   }
+
+  return normalized;
+}
 
   /**
    * ---------------------------------------------------------------
@@ -1037,73 +1050,97 @@ class EnvironmentService {
       environment._id
         .toString()
     ) {
-      const replacement =
-        await environmentRepository.findOne({
+      const activeCandidates =
+  await environmentRepository.findMany({
+    organizationId,
+
+    status:
+      "active",
+
+    _id: {
+      $ne:
+        environment._id,
+    },
+  });
+
+const replacement =
+  activeCandidates
+    .sort(
+      (
+        left,
+        right
+      ) =>
+        new Date(
+          left.createdAt
+        ) -
+        new Date(
+          right.createdAt
+        )
+    )[0] ||
+  null;
+
+if (
+  replacement
+) {
+  await organizationRepository.updateOne(
+    {
+      _id:
+        organizationId,
+    },
+    {
+      $set: {
+        "settings.defaultEnvironmentId":
+          replacement._id,
+      },
+    }
+  );
+} else {
+  const maintenanceCandidates =
+    await environmentRepository.findMany({
+      organizationId,
+
+      status:
+        "maintenance",
+
+      _id: {
+        $ne:
+          environment._id,
+      },
+    });
+
+  const maintenanceReplacement =
+    maintenanceCandidates
+      .sort(
+        (
+          left,
+          right
+        ) =>
+          new Date(
+            left.createdAt
+          ) -
+          new Date(
+            right.createdAt
+          )
+      )[0] ||
+    null;
+
+  if (
+    maintenanceReplacement
+  ) {
+    await organizationRepository.updateOne(
+      {
+        _id:
           organizationId,
-
-          status:
-            "active",
-
-          _id: {
-            $ne:
-              environment._id,
-          },
-        }).sort({
-          createdAt:
-            1,
-        });
-
-      if (!replacement) {
-        /*
-         * Maintenance environment may be the only remaining
-         * valid environment.
-         */
-        const maintenanceReplacement =
-          await environmentRepository.findOne({
-            organizationId,
-
-            status:
-              "maintenance",
-
-            _id: {
-              $ne:
-                environment._id,
-            },
-          }).sort({
-            createdAt:
-              1,
-          });
-
-        if (
-          maintenanceReplacement
-        ) {
-          await organizationRepository.updateOne(
-            {
-              _id:
-                organizationId,
-            },
-            {
-              $set: {
-                "settings.defaultEnvironmentId":
-                  maintenanceReplacement._id,
-              },
-            }
-          );
-        }
-      } else {
-        await organizationRepository.updateOne(
-          {
-            _id:
-              organizationId,
-          },
-          {
-            $set: {
-              "settings.defaultEnvironmentId":
-                replacement._id,
-            },
-          }
-        );
+      },
+      {
+        $set: {
+          "settings.defaultEnvironmentId":
+            maintenanceReplacement._id,
+        },
       }
+    );
+  }
+}
     }
 
     return environment;

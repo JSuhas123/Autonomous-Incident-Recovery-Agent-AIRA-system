@@ -1,10 +1,19 @@
 "use strict";
 
-const Subscription = require("../../models/Subscription");
+const {
+  subscriptionRepository,
+} =
+  require(
+    "../../persistence/repositories"
+  );
 
 const {
   PLAN_ENTITLEMENTS,
-} = require("../../constants/entitlements");
+} =
+  require(
+    "../../constants/entitlements"
+  );
+
 
 class EntitlementService {
   static createError(
@@ -14,7 +23,9 @@ class EntitlementService {
     metadata = {}
   ) {
     const error =
-      new Error(message);
+      new Error(
+        message
+      );
 
     error.code =
       code;
@@ -30,32 +41,48 @@ class EntitlementService {
     return error;
   }
 
+
   static async getSubscription(
     organizationId
   ) {
     let subscription =
-      await Subscription.findOne({
-        organizationId,
-      });
-
-    if (!subscription) {
-      subscription =
-        await Subscription.create({
+      await subscriptionRepository
+        .findOne({
           organizationId,
-          plan:
-            "developer",
-          status:
-            "active",
         });
+
+    if (
+      !subscription
+    ) {
+      subscription =
+        await subscriptionRepository
+          .create({
+            organizationId,
+
+            plan:
+              "developer",
+
+            status:
+              "active",
+
+            startedAt:
+              new Date(),
+
+            metadata:
+              {},
+          });
     }
 
     return subscription;
   }
 
+
   static assertSubscriptionUsable(
     subscription
   ) {
-    if (!subscription) {
+    if (
+      !subscription
+    ) {
       throw this.createError(
         "Subscription unavailable",
         "SUBSCRIPTION_NOT_FOUND",
@@ -83,32 +110,39 @@ class EntitlementService {
     return true;
   }
 
+
   static async getPlan(
     organizationId
   ) {
     const subscription =
-      await this.getSubscription(
-        organizationId
+      await this
+        .getSubscription(
+          organizationId
+        );
+
+    this
+      .assertSubscriptionUsable(
+        subscription
       );
 
-    this.assertSubscriptionUsable(
-      subscription
-    );
-
-    return subscription.plan;
+    return subscription
+      .plan;
   }
+
 
   static async getEntitlements(
     organizationId
   ) {
     const subscription =
-      await this.getSubscription(
-        organizationId
-      );
+      await this
+        .getSubscription(
+          organizationId
+        );
 
-    this.assertSubscriptionUsable(
-      subscription
-    );
+    this
+      .assertSubscriptionUsable(
+        subscription
+      );
 
     return (
       PLAN_ENTITLEMENTS[
@@ -119,45 +153,53 @@ class EntitlementService {
     );
   }
 
+
   static async getEntitlement(
     organizationId,
     entitlementKey
   ) {
     const entitlements =
-      await this.getEntitlements(
-        organizationId
-      );
+      await this
+        .getEntitlements(
+          organizationId
+        );
 
     return entitlements[
       entitlementKey
     ];
   }
 
+
   static async isEnabled(
     organizationId,
     entitlementKey
   ) {
     const value =
-      await this.getEntitlement(
-        organizationId,
-        entitlementKey
-      );
+      await this
+        .getEntitlement(
+          organizationId,
+          entitlementKey
+        );
 
-    return value === true;
+    return value ===
+      true;
   }
+
 
   static async assertEnabled(
     organizationId,
     entitlementKey
   ) {
     const subscription =
-      await this.getSubscription(
-        organizationId
-      );
+      await this
+        .getSubscription(
+          organizationId
+        );
 
-    this.assertSubscriptionUsable(
-      subscription
-    );
+    this
+      .assertSubscriptionUsable(
+        subscription
+      );
 
     const entitlements =
       PLAN_ENTITLEMENTS[
@@ -169,9 +211,12 @@ class EntitlementService {
     const enabled =
       entitlements[
         entitlementKey
-      ] === true;
+      ] ===
+      true;
 
-    if (!enabled) {
+    if (
+      !enabled
+    ) {
       throw this.createError(
         "This feature is not available on the current plan",
         "ENTITLEMENT_REQUIRED",
@@ -189,6 +234,7 @@ class EntitlementService {
     return true;
   }
 
+
   static async assertWithinLimit(
     organizationId,
     entitlementKey,
@@ -196,13 +242,15 @@ class EntitlementService {
     requestedIncrease = 1
   ) {
     const subscription =
-      await this.getSubscription(
-        organizationId
-      );
+      await this
+        .getSubscription(
+          organizationId
+        );
 
-    this.assertSubscriptionUsable(
-      subscription
-    );
+    this
+      .assertSubscriptionUsable(
+        subscription
+      );
 
     const entitlements =
       PLAN_ENTITLEMENTS[
@@ -217,8 +265,10 @@ class EntitlementService {
       ];
 
     if (
-      limit === null ||
-      limit === undefined
+      limit ===
+        null ||
+      limit ===
+        undefined
     ) {
       return true;
     }
@@ -322,17 +372,20 @@ class EntitlementService {
     return true;
   }
 
+
   static async getEntitlementSnapshot(
     organizationId
   ) {
     const subscription =
-      await this.getSubscription(
-        organizationId
-      );
+      await this
+        .getSubscription(
+          organizationId
+        );
 
-    this.assertSubscriptionUsable(
-      subscription
-    );
+    this
+      .assertSubscriptionUsable(
+        subscription
+      );
 
     const entitlements =
       PLAN_ENTITLEMENTS[
@@ -353,13 +406,16 @@ class EntitlementService {
       },
 
       startedAt:
-        subscription.startedAt,
+        subscription
+          .startedAt,
 
       endsAt:
-        subscription.endsAt,
+        subscription
+          .endsAt,
     };
   }
 }
+
 
 module.exports =
   EntitlementService;

@@ -9,12 +9,47 @@ const {
   organizationRepository,
   tenantConfigRepository,
   persistenceTransactionManager,
-} = require("../../persistence/repositories");
-const { hashPassword, verifyPassword, needsRehash } = require("./passwordService");
-const { createSession } = require("./sessionService");
-const { record: auditRecord } = require("./identityAuditService");
-const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
-const { ORGANIZATION_ROLES } = require("../../constants/roles");
+} = require(
+  "../../persistence/repositories"
+);
+
+const OrganizationBootstrapService =
+  require(
+    "../core/organizationBootstrapService"
+  );
+
+const {
+  hashPassword,
+  verifyPassword,
+  needsRehash,
+} = require(
+  "./passwordService"
+);
+
+const {
+  createSession,
+} = require(
+  "./sessionService"
+);
+
+const {
+  record: auditRecord,
+} = require(
+  "./identityAuditService"
+);
+
+const {
+  AUTH_EVENT_TYPES,
+  AUTH_EVENT_OUTCOMES,
+} = require(
+  "../../constants/authEvents"
+);
+
+const {
+  ORGANIZATION_ROLES,
+} = require(
+  "../../constants/roles"
+);
 
 function generateSlug(name) {
   const base =
@@ -39,181 +74,883 @@ function slugToTenantId(slug) {
 // without creating duplicate identity records. Only called when the user already
 // exists but their organization never finished provisioning.
 // ---------------------------------------------------------------------------
-async function _retryProvisionTenantConfig(user, organization, ip, userAgent) {
-  const { tenantId, name: organizationName } = organization;
+async function _retryProvisionTenantConfig(
+  user,
+  organization,
+  ip,
+  userAgent
+) {
+  const {
+    tenantId,
+    name:
+      organizationName,
+  } =
+    organization;
 
   try {
-    const existing = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
-    if (!existing) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
-    await organizationRepository.updateOne({ _id: organization._id }, { status: "active" });
-  } catch (tenantErr) {
-    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
-      userId: user._id,
-      organizationId: organization._id,
-      reasonCode: "TENANT_PROVISIONING_RETRY_FAILED",
-      metadata: { message: tenantErr.message },
-    });
-    const err = new Error("Organization provisioning is still failing. Please contact support.");
-    err.status = 503;
-    err.code = "TENANT_PROVISIONING_FAILED";
-    throw err;
+    const existing =
+      await tenantConfigRepository
+        .findOne(
+          {
+            tenantId,
+          },
+          {
+            includeSecrets:
+              true,
+          }
+        );
+
+    if (
+      !existing
+    ) {
+      await tenantConfigRepository
+        .create({
+          tenantId,
+
+          name:
+            organizationName,
+
+          status:
+            "active",
+
+          settings:
+            {},
+
+          apiKeys:
+            [],
+
+          admins:
+            [],
+        });
+    }
+
+    /*
+     * Repair the whole organization foundation.
+     *
+     * The bootstrap operation must be idempotent:
+     *
+     * - Development environment
+     * - Subscription
+     * - defaultEnvironmentId
+     */
+    await OrganizationBootstrapService
+      .bootstrapOrganization(
+        organization,
+        user._id
+      );
+
+    /*
+     * Activate only after every provisioning component exists.
+     */
+    await organizationRepository
+      .updateOne(
+        {
+          _id:
+            organization._id,
+        },
+        {
+          status:
+            "active",
+        }
+      );
+
+    organization.status =
+      "active";
+  } catch (
+    provisioningError
+  ) {
+    await organizationRepository
+      .updateOne(
+        {
+          _id:
+            organization._id,
+        },
+        {
+          status:
+            "provisioning_failed",
+        }
+      )
+      .catch(
+        () => {}
+      );
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .REGISTRATION_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        organizationId:
+          organization._id,
+
+        reasonCode:
+          "TENANT_PROVISIONING_RETRY_FAILED",
+
+        metadata: {
+          message:
+            provisioningError
+              .message,
+        },
+      }
+    );
+
+    const error =
+      new Error(
+        "Organization provisioning is still failing. Please contact support."
+      );
+
+    error.status =
+      503;
+
+    error.code =
+      "TENANT_PROVISIONING_FAILED";
+
+    throw error;
   }
 
-  const membership = await organizationMembershipRepository.findOne({ userId: user._id, organizationId: organization._id });
-  const { session, rawToken, csrfToken } = await createSession({
-    userId: user._id,
-    organizationId: organization._id,
-    rememberMe: false,
-    ip,
-    userAgent,
-  });
+  const membership =
+    await organizationMembershipRepository
+      .findOne({
+        userId:
+          user._id,
 
-  await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_SUCCEEDED, AUTH_EVENT_OUTCOMES.SUCCESS, {
-    userId: user._id,
-    organizationId: organization._id,
-    sessionId: session._id,
-    metadata: { retried: true },
-  });
+        organizationId:
+          organization._id,
+      });
+
+  const {
+    session,
+    rawToken,
+    csrfToken,
+  } =
+    await createSession({
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      rememberMe:
+        false,
+
+      ip,
+
+      userAgent,
+    });
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .REGISTRATION_SUCCEEDED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      sessionId:
+        session._id,
+
+      metadata: {
+        retried:
+          true,
+      },
+    }
+  );
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .SESSION_CREATED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      sessionId:
+        session._id,
+    }
+  );
 
   return {
     rawToken,
+
     session,
+
     csrfToken,
-    user: safeUser(user),
-    organization: safeOrg(organization),
-    membership: membership ? safeMembership(membership) : null,
+
+    user:
+      safeUser(
+        user
+      ),
+
+    organization:
+      safeOrg(
+        organization
+      ),
+
+    membership:
+      membership
+        ? safeMembership(
+            membership
+          )
+        : null,
   };
 }
 
-async function register(data, { ip = null, userAgent = null } = {}) {
-  const { fullName, email, password, organizationName } = data;
-  const normalizedEmail = email.toLowerCase().trim();
+async function register(
+  data,
+  {
+    ip =
+      null,
 
-  const existing = await userRepository.findOne({ normalizedEmail });
-  if (existing) {
-    // Allow retry: if the user exists but their organization is provisioning_failed,
-    // attempt to re-provision TenantConfig and re-activate without duplicating records.
-    if (existing.primaryOrganizationId) {
-      const existingOrg = await organizationRepository.findById(existing.primaryOrganizationId);
-      if (existingOrg && existingOrg.status === "provisioning_failed") {
-        return _retryProvisionTenantConfig(existing, existingOrg, ip, userAgent);
+    userAgent =
+      null,
+  } = {}
+) {
+  const {
+    fullName,
+    email,
+    password,
+    organizationName,
+  } =
+    data;
+
+  const normalizedEmail =
+    String(
+      email ||
+      ""
+    )
+      .toLowerCase()
+      .trim();
+
+  /*
+   * -----------------------------------------------------------------------
+   * EXISTING ACCOUNT / PROVISIONING RETRY
+   * -----------------------------------------------------------------------
+   */
+
+  const existing =
+    await userRepository
+      .findOne({
+        normalizedEmail,
+      });
+
+  if (
+    existing
+  ) {
+    if (
+      existing
+        .primaryOrganizationId
+    ) {
+      const existingOrganization =
+        await organizationRepository
+          .findById(
+            existing
+              .primaryOrganizationId
+          );
+
+      if (
+        existingOrganization &&
+        existingOrganization
+          .status ===
+          "provisioning_failed"
+      ) {
+        return _retryProvisionTenantConfig(
+          existing,
+          existingOrganization,
+          ip,
+          userAgent
+        );
       }
     }
-    const err = new Error("An account with this email address already exists");
-    err.status = 409;
-    err.code = "EMAIL_IN_USE";
-    throw err;
+
+    const error =
+      new Error(
+        "An account with this email address already exists"
+      );
+
+    error.status =
+      409;
+
+    error.code =
+      "EMAIL_IN_USE";
+
+    throw error;
   }
 
-  const passwordHash = await hashPassword(password);
+  /*
+   * -----------------------------------------------------------------------
+   * PASSWORD
+   * -----------------------------------------------------------------------
+   */
 
-  // Generate unique slug/tenantId with up to 3 retries
-  let slug = generateSlug(organizationName);
-  let tenantId = slugToTenantId(slug);
-  for (let i = 0; i < 3; i++) {
-    const [bySlug, byTenant] = await Promise.all([
-      organizationRepository.findOne({ slug }),
-      organizationRepository.findOne({ tenantId }),
-    ]);
-    if (!bySlug && !byTenant) break;
-    slug = generateSlug(organizationName);
-    tenantId = slugToTenantId(slug);
+  const passwordHash =
+    await hashPassword(
+      password
+    );
+
+  /*
+   * -----------------------------------------------------------------------
+   * ORGANIZATION IDENTITY
+   * -----------------------------------------------------------------------
+   */
+
+  let slug =
+    generateSlug(
+      organizationName
+    );
+
+  let tenantId =
+    slugToTenantId(
+      slug
+    );
+
+  for (
+    let attempt = 0;
+    attempt < 3;
+    attempt += 1
+  ) {
+    const [
+      existingSlug,
+      existingTenant,
+    ] =
+      await Promise.all([
+        organizationRepository
+          .findOne({
+            slug,
+          }),
+
+        organizationRepository
+          .findOne({
+            tenantId,
+          }),
+      ]);
+
+    if (
+      !existingSlug &&
+      !existingTenant
+    ) {
+      break;
+    }
+
+    slug =
+      generateSlug(
+        organizationName
+      );
+
+    tenantId =
+      slugToTenantId(
+        slug
+      );
   }
+
+  /*
+   * -----------------------------------------------------------------------
+   * TRANSACTIONAL IDENTITY FOUNDATION
+   * -----------------------------------------------------------------------
+   *
+   * This uses the provider-selected transaction manager:
+   *
+   * Mongo     -> Mongo transaction
+   * PostgreSQL -> PostgreSQL transaction
+   */
 
   let registrationResult;
+
   try {
-    registrationResult = await persistenceTransactionManager.run(async (transaction) => {
-      const savedUser = await userRepository.create(
-        { fullName, email, normalizedEmail, status: "active" },
-        transaction
+    registrationResult =
+      await persistenceTransactionManager
+        .run(
+          async (
+            transaction
+          ) => {
+            const savedUser =
+              await userRepository
+                .create(
+                  {
+                    fullName,
+
+                    email,
+
+                    normalizedEmail,
+
+                    status:
+                      "active",
+                  },
+                  transaction
+                );
+
+            await passwordCredentialRepository
+              .create(
+                {
+                  userId:
+                    savedUser._id,
+
+                  passwordHash,
+
+                  algorithm:
+                    "argon2id",
+
+                  hashVersion:
+                    1,
+
+                  passwordChangedAt:
+                    new Date(),
+                },
+                transaction
+              );
+
+            const savedOrganization =
+              await organizationRepository
+                .create(
+                  {
+                    name:
+                      organizationName,
+
+                    slug,
+
+                    tenantId,
+
+                    status:
+                      "active",
+
+                    createdByUserId:
+                      savedUser._id,
+                  },
+                  transaction
+                );
+
+            const savedMembership =
+              await organizationMembershipRepository
+                .create(
+                  {
+                    userId:
+                      savedUser._id,
+
+                    organizationId:
+                      savedOrganization
+                        ._id,
+
+                    role:
+                      ORGANIZATION_ROLES
+                        .OWNER,
+
+                    status:
+                      "active",
+
+                    joinedAt:
+                      new Date(),
+                  },
+                  transaction
+                );
+
+            await userRepository
+              .updateOne(
+                {
+                  _id:
+                    savedUser._id,
+                },
+                {
+                  primaryOrganizationId:
+                    savedOrganization
+                      ._id,
+                },
+                {},
+                transaction
+              );
+
+            savedUser
+              .primaryOrganizationId =
+              savedOrganization
+                ._id;
+
+            return {
+              user:
+                savedUser,
+
+              organization:
+                savedOrganization,
+
+              membership:
+                savedMembership,
+            };
+          }
+        );
+  } catch (
+    error
+  ) {
+    /*
+     * Repository-level PostgreSQL uniqueness errors are translated into
+     * Mongo-compatible 11000 where possible.
+     */
+    if (
+      error.code ===
+        11000 &&
+      (
+        error.keyPattern
+          ?.normalizedEmail ||
+        error.constraint
+          ?.includes?.(
+            "normalized_email"
+          )
+      )
+    ) {
+      const conflict =
+        new Error(
+          "An account with this email address already exists"
+        );
+
+      conflict.status =
+        409;
+
+      conflict.code =
+        "EMAIL_IN_USE";
+
+      await auditRecord(
+        AUTH_EVENT_TYPES
+          .REGISTRATION_FAILED,
+
+        AUTH_EVENT_OUTCOMES
+          .FAILURE,
+
+        {
+          reasonCode:
+            "EMAIL_IN_USE",
+
+          ipHash:
+            ip,
+        }
       );
 
-      await passwordCredentialRepository.create(
-        { userId: savedUser._id, passwordHash, algorithm: "argon2id", hashVersion: 1, passwordChangedAt: new Date() },
-        transaction
-      );
-
-      const savedOrg = await organizationRepository.create(
-        { name: organizationName, slug, tenantId, status: "active", createdByUserId: savedUser._id },
-        transaction
-      );
-
-      const savedMembership = await organizationMembershipRepository.create(
-        { userId: savedUser._id, organizationId: savedOrg._id, role: ORGANIZATION_ROLES.OWNER, status: "active", joinedAt: new Date() },
-        transaction
-      );
-
-      await userRepository.updateOne({ _id: savedUser._id }, { primaryOrganizationId: savedOrg._id }, {}, transaction);
-      savedUser.primaryOrganizationId = savedOrg._id;
-
-      return { user: savedUser, organization: savedOrg, membership: savedMembership };
-    });
-  } catch (err) {
-    // Handle MongoDB duplicate key (race condition on normalizedEmail)
-    if (err.code === 11000 && err.keyPattern?.normalizedEmail) {
-      const conflict = new Error("An account with this email address already exists");
-      conflict.status = 409;
-      conflict.code = "EMAIL_IN_USE";
-      await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, { reasonCode: "EMAIL_IN_USE", ipHash: ip });
       throw conflict;
     }
-    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
-      reasonCode: err.code || "REGISTRATION_ERROR",
-      ipHash: ip,
-      metadata: { message: err.message },
-    });
-    throw err;
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .REGISTRATION_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        reasonCode:
+          error.code ||
+          "REGISTRATION_ERROR",
+
+        ipHash:
+          ip,
+
+        metadata: {
+          message:
+            error.message,
+        },
+      }
+    );
+
+    throw error;
   }
 
-  const { user, organization, membership } = registrationResult;
+  const {
+    user,
+    organization,
+    membership,
+  } =
+    registrationResult;
 
-  // Sync TenantConfig (legacy machine-auth entity) outside the transaction to avoid
-  // catalog-change WriteConflict when the collection does not yet exist.
-  // If this fails, mark the organization as provisioning_failed so the user cannot
-  // silently receive a usable session against a broken tenant.
+  /*
+   * -----------------------------------------------------------------------
+   * TENANT CONFIG
+   * -----------------------------------------------------------------------
+   *
+   * Kept outside the identity transaction because Mongo historically
+   * experienced catalog-change conflicts when the collection was created
+   * inside a transaction.
+   *
+   * PostgreSQL repository execution remains safe through the same neutral
+   * persistence contract.
+   */
+
   try {
-    const existingTenantConfig = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
-    if (!existingTenantConfig) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
-  } catch (tenantErr) {
-    await organizationRepository.updateOne({ _id: organization._id }, { status: "provisioning_failed" });
-    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
-      userId: user._id,
-      organizationId: organization._id,
-      reasonCode: "TENANT_PROVISIONING_FAILED",
-      metadata: { message: tenantErr.message },
-    });
-    const err = new Error("Account created but organization provisioning failed. Please contact support or retry.");
-    err.status = 503;
-    err.code = "TENANT_PROVISIONING_FAILED";
-    throw err;
+    const existingTenantConfig =
+      await tenantConfigRepository
+        .findOne(
+          {
+            tenantId,
+          },
+          {
+            includeSecrets:
+              true,
+          }
+        );
+
+    if (
+      !existingTenantConfig
+    ) {
+      await tenantConfigRepository
+        .create({
+          tenantId,
+
+          name:
+            organizationName,
+
+          status:
+            "active",
+
+          settings:
+            {},
+
+          apiKeys:
+            [],
+
+          admins:
+            [],
+        });
+    }
+  } catch (
+    tenantError
+  ) {
+    await organizationRepository
+      .updateOne(
+        {
+          _id:
+            organization._id,
+        },
+        {
+          status:
+            "provisioning_failed",
+        }
+      );
+
+    organization.status =
+      "provisioning_failed";
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .REGISTRATION_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        organizationId:
+          organization._id,
+
+        reasonCode:
+          "TENANT_PROVISIONING_FAILED",
+
+        metadata: {
+          message:
+            tenantError
+              .message,
+        },
+      }
+    );
+
+    const error =
+      new Error(
+        "Account created but organization provisioning failed. Please contact support or retry."
+      );
+
+    error.status =
+      503;
+
+    error.code =
+      "TENANT_PROVISIONING_FAILED";
+
+    throw error;
   }
 
-  const { session, rawToken, csrfToken } = await createSession({
-    userId: user._id,
-    organizationId: organization._id,
-    rememberMe: false,
-    ip,
-    userAgent,
-  });
+  /*
+   * -----------------------------------------------------------------------
+   * ORGANIZATION BOOTSTRAP
+   * -----------------------------------------------------------------------
+   *
+   * Before issuing a usable browser session, guarantee that the organization
+   * has:
+   *
+   * - canonical Development environment
+   * - defaultEnvironmentId
+   * - subscription / entitlement state
+   */
 
-  await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_SUCCEEDED, AUTH_EVENT_OUTCOMES.SUCCESS, {
-    userId: user._id,
-    organizationId: organization._id,
-    sessionId: session._id,
-    ipHash: ip,
-  });
-  await auditRecord(AUTH_EVENT_TYPES.SESSION_CREATED, AUTH_EVENT_OUTCOMES.SUCCESS, {
-    userId: user._id,
-    sessionId: session._id,
-  });
+  try {
+    await OrganizationBootstrapService
+      .bootstrapOrganization(
+        organization,
+        user._id
+      );
+  } catch (
+    bootstrapError
+  ) {
+    await organizationRepository
+      .updateOne(
+        {
+          _id:
+            organization._id,
+        },
+        {
+          status:
+            "provisioning_failed",
+        }
+      );
+
+    organization.status =
+      "provisioning_failed";
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .REGISTRATION_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        organizationId:
+          organization._id,
+
+        reasonCode:
+          "ORGANIZATION_BOOTSTRAP_FAILED",
+
+        metadata: {
+          message:
+            bootstrapError
+              .message,
+        },
+      }
+    );
+
+    const error =
+      new Error(
+        "Account created but organization bootstrap failed. Please retry."
+      );
+
+    error.status =
+      503;
+
+    error.code =
+      "ORGANIZATION_BOOTSTRAP_FAILED";
+
+    throw error;
+  }
+
+  /*
+   * -----------------------------------------------------------------------
+   * SESSION
+   * -----------------------------------------------------------------------
+   *
+   * Session creation happens only after the full organization foundation
+   * exists.
+   */
+
+  const {
+    session,
+    rawToken,
+    csrfToken,
+  } =
+    await createSession({
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      rememberMe:
+        false,
+
+      ip,
+
+      userAgent,
+    });
+
+  /*
+   * -----------------------------------------------------------------------
+   * AUDIT
+   * -----------------------------------------------------------------------
+   */
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .REGISTRATION_SUCCEEDED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      sessionId:
+        session._id,
+
+      ipHash:
+        ip,
+    }
+  );
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .SESSION_CREATED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization._id,
+
+      sessionId:
+        session._id,
+    }
+  );
 
   return {
     rawToken,
+
     session,
+
     csrfToken,
-    user: safeUser(user),
-    organization: safeOrg(organization),
-    membership: safeMembership(membership),
+
+    user:
+      safeUser(
+        user
+      ),
+
+    organization:
+      safeOrg(
+        organization
+      ),
+
+    membership:
+      safeMembership(
+        membership
+      ),
   };
 }
 

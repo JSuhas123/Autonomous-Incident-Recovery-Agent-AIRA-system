@@ -160,7 +160,10 @@ function buildMongoRepositories() {
   const MongoEmailVerificationTokenRepository = require("../mongo/MongoEmailVerificationTokenRepository");
   const MongoPasswordResetTokenRepository = require("../mongo/MongoPasswordResetTokenRepository");
   const MongoAuthenticationAuditEventRepository = require("../mongo/MongoAuthenticationAuditEventRepository");
-
+  const MongoSubscriptionRepository =
+  require(
+    "../mongo/MongoSubscriptionRepository"
+  );
   const MongoIncidentRepository =
     require(
       "../mongo/MongoIncidentRepository"
@@ -271,7 +274,8 @@ function buildMongoRepositories() {
     emailVerificationTokenRepository: new MongoEmailVerificationTokenRepository(),
     passwordResetTokenRepository: new MongoPasswordResetTokenRepository(),
     authenticationAuditEventRepository: new MongoAuthenticationAuditEventRepository(),
-
+    subscriptionRepository:
+  new MongoSubscriptionRepository(),
     incidentRepository:
       new MongoIncidentRepository(),
 
@@ -347,8 +351,11 @@ function buildPostgresRepositories() {
   const PostgresOrganizationMembershipRepository =
     require(
       "../postgres/PostgresOrganizationMembershipRepository"
-    );
-
+    );  
+    const PostgresSubscriptionRepository =
+  require(
+    "../postgres/PostgresSubscriptionRepository"
+  );
   const PostgresOrganizationRepository = require("../postgres/PostgresOrganizationRepository");
   const PostgresEnvironmentRepository = require("../postgres/PostgresEnvironmentRepository");
   const PostgresTenantConfigRepository = require("../postgres/PostgresTenantConfigRepository");
@@ -474,7 +481,8 @@ function buildPostgresRepositories() {
     organizationRepository: new PostgresOrganizationRepository(),
     environmentRepository: new PostgresEnvironmentRepository(),
     tenantConfigRepository: new PostgresTenantConfigRepository(),
-
+    subscriptionRepository:
+  new PostgresSubscriptionRepository(),
     userSessionRepository:
       new PostgresUserSessionRepository(),
 
