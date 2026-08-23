@@ -1,0 +1,345 @@
+﻿npx : FAIL services/infrastructure/__tests__/phase11_11RetentionService.test.js
+At line:4 char:1
++ npx jest `
++ ~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    FAIL services/i...Service.test.js:String)     [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandEr    ror
+ 
+  Phase 11.11 Retention / Cleanup / Archival
+    ΓêÜ returns canonical defaults when tenant policy is absent (7 ms)
+    ΓêÜ tenant retention configuration overrides defaults safely (1 ms)
+    ├ù archives selected documents before hot collection deletion (3 ms)
+    ├ù archive failure prevents source deletion (22 ms)
+    ΓêÜ dry run selects records without writing archive or deleting source (1 ms)
+    ΓêÜ direct deletion is bounded by batch size (1 ms)
+    ├ù tenant cleanup explicitly preserves audit chains (1 ms)
+    ΓêÜ full retention cycle acquires and releases distributed cleanup lock (1 ms)
+    ΓêÜ distributed cleanup lock is released after tenant processing failure (1 ms)
+    ├ù archived document receives integrity checksum (1 ms)
+    ΓêÜ retention status identifies protected collections (1 ms)
+
+  ΓùÅ Phase 11.11 Retention / Cleanup / Archival ΓÇ║ archives selected documents before hot collection deletion
+
+    TypeError: RetentionArchive.bulkWrite is not a function
+
+    [0m [90m 473 |[39m
+     [90m 474 |[39m     [36mawait[39m [33mRetentionArchive[39m
+    [31m[1m>[22m[39m[90m 475 |[39m       [33m.[39mbulkWrite(
+     [90m     |[39m        [31m[1m^[22m[39m
+     [90m 476 |[39m         operations[33m,[39m
+     [90m 477 |[39m         {
+     [90m 478 |[39m           ordered[33m:[39m[0m
+
+      at RetentionService.bulkWrite [as archiveDocuments] (services/infrastructure/retentionService.js:475:8)
+      at RetentionService.archiveDocuments (services/infrastructure/retentionService.js:576:10)
+      at Object.<anonymous> (services/infrastructure/__tests__/phase11_11RetentionService.test.js:272:11)
+
+  ΓùÅ Phase 11.11 Retention / Cleanup / Archival ΓÇ║ archive failure prevents source deletion
+
+    expect(received).rejects.toThrow(expected)
+
+    Expected substring: "archive unavailable"
+    Received message:   "RetentionArchive.bulkWrite is not a function"
+
+        [0m [90m 473 |[39m
+         [90m 474 |[39m     [36mawait[39m [33mRetentionArchive[39m
+        [31m[1m>[22m[39m[90m 475 |[39m       [33m.[39mbulkWrite(
+         [90m     |[39m        [31m[1m^[22m[39m
+         [90m 476 |[39m         operations[33m,[39m
+         [90m 477 |[39m         {
+         [90m 478 |[39m           ordered[33m:[39m[0m
+
+      at RetentionService.bulkWrite [as archiveDocuments] (services/infrastructure/retentionService.js:475:8)
+      at RetentionService.archiveDocuments (services/infrastructure/retentionService.js:576:10)
+      at Object.<anonymous> (services/infrastructure/__tests__/phase11_11RetentionService.test.js:411:9)
+      at Object.toThrow (node_modules/expect/build/index.js:218:22)
+      at Object.toThrow (services/infrastructure/__tests__/phase11_11RetentionService.test.js:450:12)
+
+  ΓùÅ Phase 11.11 Retention / Cleanup / Archival ΓÇ║ tenant cleanup explicitly preserves audit chains
+
+    Operational document operation requires organizationId and environmentId
+
+    [0m [90m 730 |[39m   ) {
+     [90m 731 |[39m     [36mthrow[39m [33mObject[39m[33m.[39massign(
+    [31m[1m>[22m[39m[90m 732 |[39m       [36mnew[39m [33mError[39m(
+     [90m     |[39m       [31m[1m^[22m[39m
+     [90m 733 |[39m         [32m"Operational document operation requires organizationId and environmentId"[39m
+     [90m 734 |[39m       )[33m,[39m
+     [90m 735 |[39m       {[0m
+
+      at requireScope (persistence/postgres/PostgresOperationalDocumentRepository.js:732:7)
+      at PostgresOperationalDocumentRepository.requireScope [as findMany] (persistence/postgres/PostgresOperationalDocumentRepository.js:39:7)
+      at Query.findMany [as exec] (persistence/operational/legacyModels.js:138:10)
+      at Query.exec (persistence/operational/legacyModels.js:111:17)
+      at RetentionService.lean [as archiveAndDelete] (services/infrastructure/retentionService.js:524:10)
+      at RetentionService.archiveAndDelete [as cleanupTenant] (services/infrastructure/retentionService.js:815:10)
+      at Object.cleanupTenant (services/infrastructure/__tests__/phase11_11RetentionService.test.js:730:14)
+
+  ΓùÅ Phase 11.11 Retention / Cleanup / Archival ΓÇ║ archived document receives integrity checksum
+
+    TypeError: RetentionArchive.bulkWrite is not a function
+
+    [0m [90m 473 |[39m
+     [90m 474 |[39m     [36mawait[39m [33mRetentionArchive[39m
+    [31m[1m>[22m[39m[90m 475 |[39m       [33m.[39mbulkWrite(
+     [90m     |[39m        [31m[1m^[22m[39m
+     [90m 476 |[39m         operations[33m,[39m
+     [90m 477 |[39m         {
+     [90m 478 |[39m           ordered[33m:[39m[0m
+
+      at RetentionService.bulkWrite [as archiveDocuments] (services/infrastructure/retentionService.js:475:8)
+      at Object.archiveDocuments (services/infrastructure/__tests__/phase11_11RetentionService.test.js:929:12)
+
+FAIL services/infrastructure/__tests__/dbServiceProviderSelection.test.js
+  dbService provider selection
+    ├ù mongo provider requires Mongo (25 ms)
+    ├ù postgres provider does not require Mongo in normal runtime (14 ms)
+    ├ù postgres provider requires PostgreSQL (16 ms)
+    ├ù shadow migration requires Mongo (13 ms)
+    ├ù backfill migration requires PostgreSQL (14 ms)
+    ├ù invalid persistence provider fails closed (33 ms)
+
+  ΓùÅ dbService provider selection ΓÇ║ mongo provider requires Mongo
+
+    TypeError: dbService.shouldConnectMongo is not a function
+
+    [0m [90m 23 |[39m         expect(
+     [90m 24 |[39m           dbService
+    [31m[1m>[22m[39m[90m 25 |[39m             [33m.[39mshouldConnectMongo({
+     [90m    |[39m              [31m[1m^[22m[39m
+     [90m 26 |[39m               provider[33m:[39m
+     [90m 27 |[39m                 [32m"mongo"[39m[33m,[39m
+     [90m 28 |[39m[0m
+
+      at Object.shouldConnectMongo (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:25:14)
+
+  ΓùÅ dbService provider selection ΓÇ║ postgres provider does not require Mongo in normal runtime
+
+    TypeError: dbService.shouldConnectMongo is not a function
+
+    [0m [90m 42 |[39m         expect(
+     [90m 43 |[39m           dbService
+    [31m[1m>[22m[39m[90m 44 |[39m             [33m.[39mshouldConnectMongo({
+     [90m    |[39m              [31m[1m^[22m[39m
+     [90m 45 |[39m               provider[33m:[39m
+     [90m 46 |[39m                 [32m"postgres"[39m[33m,[39m
+     [90m 47 |[39m[0m
+
+      at Object.shouldConnectMongo (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:44:14)
+
+  ΓùÅ dbService provider selection ΓÇ║ postgres provider requires PostgreSQL
+
+    TypeError: dbService.shouldConnectPostgres is not a function
+
+    [0m [90m 61 |[39m         expect(
+     [90m 62 |[39m           dbService
+    [31m[1m>[22m[39m[90m 63 |[39m             [33m.[39mshouldConnectPostgres({
+     [90m    |[39m              [31m[1m^[22m[39m
+     [90m 64 |[39m               provider[33m:[39m
+     [90m 65 |[39m                 [32m"postgres"[39m[33m,[39m
+     [90m 66 |[39m[0m
+
+      at Object.shouldConnectPostgres (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:63:14)
+
+  ΓùÅ dbService provider selection ΓÇ║ shadow migration requires Mongo
+
+    TypeError: dbService.shouldConnectMongo is not a function
+
+    [0m [90m 80 |[39m         expect(
+     [90m 81 |[39m           dbService
+    [31m[1m>[22m[39m[90m 82 |[39m             [33m.[39mshouldConnectMongo({
+     [90m    |[39m              [31m[1m^[22m[39m
+     [90m 83 |[39m               provider[33m:[39m
+     [90m 84 |[39m                 [32m"mongo"[39m[33m,[39m
+     [90m 85 |[39m[0m
+
+      at Object.shouldConnectMongo (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:82:14)
+
+  ΓùÅ dbService provider selection ΓÇ║ backfill migration requires PostgreSQL
+
+    TypeError: dbService.shouldConnectPostgres is not a function
+
+    [0m [90m  99 |[39m         expect(
+     [90m 100 |[39m           dbService
+    [31m[1m>[22m[39m[90m 101 |[39m             [33m.[39mshouldConnectPostgres({
+     [90m     |[39m              [31m[1m^[22m[39m
+     [90m 102 |[39m               provider[33m:[39m
+     [90m 103 |[39m                 [32m"mongo"[39m[33m,[39m
+     [90m 104 |[39m[0m
+
+      at Object.shouldConnectPostgres (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:101:14)
+
+  ΓùÅ dbService provider selection ΓÇ║ invalid persistence provider fails closed
+
+    expect(received).toThrow(expected)
+
+    Expected substring: "Unsupported persistence provider"
+    Received message:   "dbService.normalizeProvider is not a function"
+
+        [0m [90m 119 |[39m           () [33m=>[39m
+         [90m 120 |[39m             dbService
+        [31m[1m>[22m[39m[90m 121 |[39m               [33m.[39mnormalizeProvider(
+         [90m     |[39m                [31m[1m^[22m[39m
+         [90m 122 |[39m                 [32m"sqlite"[39m
+         [90m 123 |[39m               )
+         [90m 124 |[39m         )[0m
+
+      at normalizeProvider (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:121:16)
+      at Object.<anonymous> (node_modules/expect/build/toThrowMatchers.js:74:11)
+      at Object.throwingMatcher [as toThrow] (node_modules/expect/build/index.js:320:21)
+      at Object.toThrow (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:125:12)
+      at Object.toThrow (services/infrastructure/__tests__/dbServiceProviderSelection.test.js:125:12)
+
+(node:16288) [MONGODB DRIVER] Warning: useNewUrlParser is a deprecated option: useNewUrlParser has no effect since Node.js Driver version 4.0.0 and will be removed in the next major version
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:16288) [MONGODB DRIVER] Warning: useUnifiedTopology is a deprecated option: useUnifiedTopology has no effect since Node.js Driver version 4.0.0 and will be removed in the next major version
+PASS tests/unit/infrastructureServices.test.js
+  Infrastructure Services - Unit Tests
+    Distributed Lock Service
+      ΓêÜ Acquires lock successfully (1 ms)
+      ΓêÜ Lock acquisition fails if already locked
+      ΓêÜ Lock is released properly
+      ΓêÜ Multiple locks independent (2 ms)
+      ΓêÜ Lock TTL can be extended (1 ms)
+      ΓêÜ Cannot extend expired lock (1 ms)
+      ΓêÜ Lock provides release method (1 ms)
+      ΓêÜ Concurrent lock attempts are serialized
+    Database Service
+      ΓêÜ Queries database successfully
+      ΓêÜ Insert operation succeeds (1 ms)
+      ΓêÜ Update operation succeeds
+      ΓêÜ Delete operation succeeds
+      ΓêÜ Transaction executes multiple operations (1 ms)
+      ΓêÜ Fails gracefully when disconnected
+      ΓêÜ Reconnection restores operations (1 ms)
+      ΓêÜ Batch operations preserve order (1 ms)
+    Queue Service
+      ΓêÜ Enqueues message successfully (1 ms)
+      ΓêÜ Dequeues messages in FIFO order
+      ΓêÜ Peek returns first message without removing it (1 ms)
+      ΓêÜ Size reports correct queue depth
+      ΓêÜ Dequeue from empty queue returns null (1 ms)
+      ΓêÜ Processes messages in order
+      ΓêÜ Stop listening halts processing (1 ms)
+      ΓêÜ Handles message with priority (if implemented)
+    Metrics Service
+      ΓêÜ Records metric successfully (1 ms)
+      ΓêÜ Records latency measurements (1 ms)
+      ΓêÜ Records errors (1 ms)
+      ΓêÜ Calculates statistics (1 ms)
+      ΓêÜ Tags metrics for filtering
+      ΓêÜ Returns null for unknown metrics (1 ms)
+    Health Check Service
+      ΓêÜ Registers health check components
+      ΓêÜ Executes individual health check (1 ms)
+      ΓêÜ Reports unhealthy component (1 ms)
+      ΓêÜ Handles check failures (1 ms)
+      ΓêÜ Checks all components (1 ms)
+      ΓêÜ Overall health depends on all components
+      ΓêÜ All healthy returns true (1 ms)
+    Infrastructure Services Integration
+      ΓêÜ Lock protects database transaction
+      ΓêÜ Metrics track queue performance (1 ms)
+      ΓêÜ Health check validates all infrastructure
+
+PASS services/infrastructure/__tests__/phase11_6LoadProtection.test.js
+  Phase 11.6 Load Protection Certification
+    ΓêÜ tenant admission is bounded independently (2 ms)
+    ΓêÜ Redis admission failure remains bounded by local fallback (1 ms)
+    ΓêÜ queue saturation rejects new publishers before RabbitMQ call (1 ms)
+    ΓêÜ queue load status cannot grant execution authority
+    ΓêÜ admission status cannot grant execution authority
+
+PASS services/infrastructure/__tests__/phase11_5ProductionHardening.test.js
+  Phase 11.5 Production Hardening Certification
+    ΓêÜ canonical breaker opens, suppresses traffic, and recovers (28 ms)
+    ΓêÜ critical infrastructure dependency fails closed (2 ms)
+    ΓêÜ durable asynchronous dependency becomes retry decision (1 ms)
+    ΓêÜ Redis degradation never becomes successful execution (1 ms)
+    ΓêÜ optional dependency failure allows workflow continuation without authority (1 ms)
+    ΓêÜ dependency circuit suppresses repeated calls after threshold (1 ms)
+    ΓêÜ unknown dependency cannot invent recovery policy (1 ms)
+    ΓêÜ health summary distinguishes degradation from critical unavailability (2 ms)
+    ΓêÜ production dependency classifications remain frozen (1 ms)
+    ΓêÜ dependency isolation never grants execution authority (2 ms)
+
+PASS services/infrastructure/__tests__/phase11_16ProductionReadiness.test.js
+  Phase 11.16 ΓÇö Production Readiness Certification
+    ΓêÜ READY when all production safety systems are healthy (3 ms)
+    ΓêÜ NOT_READY when startup configuration is invalid (1 ms)
+    ΓêÜ NOT_READY while application lifecycle is shutting down (1 ms)
+    ΓêÜ NOT_READY when startup recovery has not completed
+    ΓêÜ NOT_READY when startup recovery reports an error
+    ΓêÜ NOT_READY when AIRA enters SAFE_MODE
+    ΓêÜ DEGRADED for non-fatal system health degradation (1 ms)
+    ΓêÜ NOT_READY when critical fail-closed dependency circuit is OPEN (2 ms)
+    ΓêÜ DEGRADED when a fail-open dependency is unavailable (1 ms)
+    ΓêÜ DEGRADED when workflow outbox runtime is not running (1 ms)
+    ΓêÜ NOT_READY when audit collections are not protected by retention (1 ms)
+    ΓêÜ NOT_READY when chaos failures are active in production
+    ΓêÜ DEGRADED when emergency mode is active (1 ms)
+    ΓêÜ DEGRADED when global action execution is disabled
+    ΓêÜ NOT_READY when feature flag configuration is unsafe
+    ΓêÜ DEGRADED when feature flags contain production warnings
+    ΓêÜ DEGRADED when SLO error budget is exhausted
+    ΓêÜ DEGRADED when reliability state has insufficient data (1 ms)
+    ΓêÜ missing critical readiness evidence never produces READY
+    ΓêÜ readiness evaluation NEVER grants execution authorization (1 ms)
+    ΓêÜ getStatus tracks readiness evaluations without granting authorization (1 ms)
+    ΓêÜ blockers are remembered in diagnostic status (1 ms)
+
+PASS services/infrastructure/__tests__/dependencyIsolationService.test.js
+  DependencyIsolationService
+    ΓêÜ critical dependency fails closed (5 ms)
+    ΓêÜ rabbitmq failure becomes durable retry decision (2 ms)
+    ΓêÜ redis failure degrades instead of granting success (2 ms)
+    ΓêÜ redis degradation preserves original dependency error (1 ms)
+    ΓêÜ redis circuit opens and suppresses repeated dependency calls (2 ms)
+    ΓêÜ optional notification failure does not terminate workflow (1 ms)
+    ΓêÜ healthy dependency returns result (2 ms)
+    ΓêÜ repeated failures open dependency circuit (1 ms)
+    ΓêÜ unknown dependency fails closed instead of inventing policy
+    ΓêÜ dependency layer never returns execution authority (1 ms)
+    ΓêÜ healthy dependency summary reports no degraded dependencies (1 ms)
+    ΓêÜ redis open circuit is degraded but not critical unavailable (3 ms)
+    ΓêÜ critical dependency open circuit makes dependency summary unhealthy (1 ms)
+    ΓêÜ summary distinguishes degradable and critical dependency failures (1 ms)
+    ΓêÜ getAllStatuses exposes registered dependency isolation state (1 ms)
+
+  console.log
+    [queue] ΓåÆ test.topic | eventId=4487528a-3f0d-4ce4-81f7-baec04149f48 | correlationId=e3b6d468-112e-4d71-87ef-a96f22191a4e
+
+      at QueueService.log [as publishEvent] (services/infrastructure/queueService.js:735:15)
+
+  console.log
+    [queue] ΓåÆ test.topic | eventId=94e84247-c92d-4969-9021-766e231fdcdd | correlationId=c8c1d478-dd25-4858-a580-c05fabc5a360 | backpressure=drained
+
+      at QueueService.log [as publishEvent] (services/infrastructure/queueService.js:735:15)
+
+  console.log
+    [queue] Subscribing to test.topic via test.queue prefetch=10
+
+      at QueueService.log [as consumeEvents] (services/infrastructure/queueService.js:1097:15)
+
+PASS services/infrastructure/__tests__/queueServiceBackpressure.test.js
+  Phase 11.6 Queue Backpressure
+    ΓêÜ rejects publisher when max in-flight limit is reached (2 ms)
+    ΓêÜ normal publish succeeds below saturation (58 ms)
+    ΓêÜ publish false waits for drain instead of republishing event (5 ms)
+    ΓêÜ active publisher backpressure rejects new publishes (1 ms)
+    ΓêÜ consumer prefetch is capped by global maximum (6 ms)
+    ΓêÜ load status exposes saturation and backpressure telemetry (1 ms)
+
+PASS services/infrastructure/__tests__/circuitBreakerService.production.test.js
+  Canonical CircuitBreakerService
+    ΓêÜ opens after consecutive threshold failures (16 ms)
+    ΓêÜ open circuit fails fast without calling dependency (1 ms)
+    ΓêÜ half-open probe closes recovered circuit (1 ms)
+    ΓêÜ half-open failure immediately reopens (1 ms)
+    ΓêÜ failure classifier can ignore caller errors (2 ms)
+
+Test Suites: 2 failed, 7 passed, 9 total
+Tests:       10 failed, 110 passed, 120 total
+Snapshots:   0 total
+Time:        6.768 s, estimated 8 s
+Ran all test suites matching /services\\infrastructure|tests\\unit\\infrastructureServices.test.js/i.

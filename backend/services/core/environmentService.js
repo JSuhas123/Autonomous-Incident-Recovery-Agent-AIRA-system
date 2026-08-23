@@ -5,7 +5,13 @@ const {
 } = require(
   "../../utils/identifier"
 );
-const { environmentRepository, organizationRepository } = require("../../persistence/repositories");
+
+const {
+  environmentRepository,
+  organizationRepository,
+} = require(
+  "../../persistence/repositories"
+);
 
 const EntitlementService = require(
   "./entitlementService"
@@ -13,7 +19,9 @@ const EntitlementService = require(
 
 const {
   ENTITLEMENTS,
-} = require("../../constants/entitlements");
+} = require(
+  "../../constants/entitlements"
+);
 
 /**
  * Canonical environment-domain service.
@@ -47,8 +55,11 @@ class EnvironmentService {
     const error =
       new Error(message);
 
-    error.code = code;
-    error.status = status;
+    error.code =
+      code;
+
+    error.status =
+      status;
 
     Object.assign(
       error,
@@ -60,11 +71,65 @@ class EnvironmentService {
 
   /**
    * ---------------------------------------------------------------
+   * IDENTIFIER NORMALIZATION
+   * ---------------------------------------------------------------
+   */
+  static identifierString(
+    value
+  ) {
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return null;
+    }
+
+    return String(
+      value
+    ).trim();
+  }
+
+  /**
+   * ---------------------------------------------------------------
+   * IDENTIFIER COMPARISON
+   * ---------------------------------------------------------------
+   *
+   * Repository results may originate from MongoDB or PostgreSQL.
+   * Never depend on ObjectId-specific equality semantics here.
+   */
+  static sameIdentifier(
+    left,
+    right
+  ) {
+    const leftValue =
+      this.identifierString(
+        left
+      );
+
+    const rightValue =
+      this.identifierString(
+        right
+      );
+
+    if (
+      leftValue === null ||
+      rightValue === null
+    ) {
+      return false;
+    }
+
+    return (
+      leftValue ===
+      rightValue
+    );
+  }
+
+  /**
+   * ---------------------------------------------------------------
    * SAFE SERIALIZATION
    * ---------------------------------------------------------------
    *
-   * Never return raw mongoose Environment documents
-   * directly to the frontend.
+   * Never expose provider-specific persistence objects directly.
    */
   static safeEnvironment(
     environment
@@ -75,13 +140,14 @@ class EnvironmentService {
 
     return {
       id:
-        environment._id
-          .toString(),
+        this.identifierString(
+          environment._id
+        ),
 
       organizationId:
-        environment.organizationId
-          ?.toString?.() ||
-        null,
+        this.identifierString(
+          environment.organizationId
+        ),
 
       name:
         environment.name,
@@ -138,10 +204,10 @@ class EnvironmentService {
           null,
 
         archivedByUserId:
-          environment
-            .archivedByUserId
-            ?.toString?.() ||
-          null,
+          this.identifierString(
+            environment
+              .archivedByUserId
+          ),
 
         reason:
           environment
@@ -150,10 +216,10 @@ class EnvironmentService {
       },
 
       createdByUserId:
-        environment
-          .createdByUserId
-          ?.toString?.() ||
-        null,
+        this.identifierString(
+          environment
+            .createdByUserId
+        ),
 
       createdAt:
         environment.createdAt,
@@ -206,35 +272,65 @@ class EnvironmentService {
    * ---------------------------------------------------------------
    */
   static assertValidId(
-  value,
-  fieldName
-) {
-  const normalized =
-    value === null ||
-    value === undefined
-      ? ""
-      : String(
-          value
-        ).trim();
-
-  if (
-    !isDatabaseIdentifier(
-      normalized
-    )
+    value,
+    fieldName
   ) {
-    throw this.createError(
-      `Invalid ${fieldName}`,
-      "INVALID_IDENTIFIER",
-      400,
-      {
-        field:
-          fieldName,
-      }
-    );
+    const normalized =
+      value === null ||
+      value === undefined
+        ? ""
+        : String(
+            value
+          ).trim();
+
+    if (
+      !isDatabaseIdentifier(
+        normalized
+      )
+    ) {
+      throw this.createError(
+        `Invalid ${fieldName}`,
+        "INVALID_IDENTIFIER",
+        400,
+        {
+          field:
+            fieldName,
+        }
+      );
+    }
+
+    return normalized;
   }
 
-  return normalized;
-}
+  /**
+   * ---------------------------------------------------------------
+   * CREATED-AT SORT
+   * ---------------------------------------------------------------
+   */
+  static sortByCreatedAt(
+    items
+  ) {
+    return (
+      Array.isArray(
+        items
+      )
+        ? items.slice()
+        : []
+    ).sort(
+      (
+        left,
+        right
+      ) =>
+        new Date(
+          left?.createdAt ||
+          0
+        ) -
+        new Date(
+          right?.createdAt ||
+          0
+        )
+    );
+  }
 
   /**
    * ---------------------------------------------------------------
@@ -244,15 +340,16 @@ class EnvironmentService {
   static async getActiveOrganization(
     organizationId
   ) {
-    this.assertValidId(
-      organizationId,
-      "organizationId"
-    );
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
 
     const organization =
       await organizationRepository.findOne({
         _id:
-          organizationId,
+          normalizedOrganizationId,
 
         status:
           "active",
@@ -281,21 +378,24 @@ class EnvironmentService {
     organizationId,
     options = {}
   ) {
-    this.assertValidId(
-      environmentId,
-      "environmentId"
-    );
+    const normalizedEnvironmentId =
+      this.assertValidId(
+        environmentId,
+        "environmentId"
+      );
 
-    this.assertValidId(
-      organizationId,
-      "organizationId"
-    );
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
 
     const query = {
       _id:
-        environmentId,
+        normalizedEnvironmentId,
 
-      organizationId,
+      organizationId:
+        normalizedOrganizationId,
     };
 
     if (
@@ -307,7 +407,10 @@ class EnvironmentService {
       };
     }
 
-    return environmentRepository.findOne(query);
+    return environmentRepository
+      .findOne(
+        query
+      );
   }
 
   /**
@@ -349,13 +452,15 @@ class EnvironmentService {
     organizationId,
     options = {}
   ) {
-    this.assertValidId(
-      organizationId,
-      "organizationId"
-    );
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
 
     const query = {
-      organizationId,
+      organizationId:
+        normalizedOrganizationId,
     };
 
     if (
@@ -367,18 +472,53 @@ class EnvironmentService {
       };
     }
 
-    if (options.type) {
+    if (
+      options.type
+    ) {
       query.type =
         options.type;
     }
 
-    if (options.status) {
+    if (
+      options.status
+    ) {
       query.status =
         options.status;
     }
 
-    const environments = await environmentRepository.findMany(query);
-    return environments.sort((left, right) => String(left.type).localeCompare(String(right.type)) || new Date(left.createdAt) - new Date(right.createdAt));
+    const environments =
+      await environmentRepository
+        .findMany(
+          query
+        );
+
+    return environments
+      .slice()
+      .sort(
+        (
+          left,
+          right
+        ) =>
+          String(
+            left.type ||
+            ""
+          ).localeCompare(
+            String(
+              right.type ||
+              ""
+            )
+          ) ||
+          (
+            new Date(
+              left.createdAt ||
+              0
+            ) -
+            new Date(
+              right.createdAt ||
+              0
+            )
+          )
+      );
   }
 
   /**
@@ -389,9 +529,17 @@ class EnvironmentService {
   static async getDefaultForOrganization(
     organization
   ) {
-    if (!organization?._id) {
+    if (
+      !organization?._id
+    ) {
       return null;
     }
+
+    const organizationId =
+      this.assertValidId(
+        organization._id,
+        "organizationId"
+      );
 
     const defaultEnvironmentId =
       organization
@@ -402,20 +550,22 @@ class EnvironmentService {
       defaultEnvironmentId
     ) {
       const environment =
-        await environmentRepository.findOne({
-          _id:
-            defaultEnvironmentId,
+        await environmentRepository
+          .findOne({
+            _id:
+              defaultEnvironmentId,
 
-          organizationId:
-            organization._id,
+            organizationId,
 
-          status: {
-            $ne:
-              "archived",
-          },
-        });
+            status: {
+              $ne:
+                "archived",
+            },
+          });
 
-      if (environment) {
+      if (
+        environment
+      ) {
         return environment;
       }
     }
@@ -423,17 +573,24 @@ class EnvironmentService {
     /*
      * Compatibility fallback:
      *
-     * organizations created before Environment support
+     * Organizations created before Environment support
      * may not yet have defaultEnvironmentId populated.
      */
-    const environments = await environmentRepository.findMany({
-      organizationId:
-        organization._id,
+    const environments =
+      await environmentRepository
+        .findMany({
+          organizationId,
 
-      status:
-        "active",
-    });
-    return environments.sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt))[0] || null;
+          status:
+            "active",
+        });
+
+    return (
+      this.sortByCreatedAt(
+        environments
+      )[0] ||
+      null
+    );
   }
 
   /**
@@ -446,26 +603,38 @@ class EnvironmentService {
     data,
     actorUserId = null
   ) {
-    const organization =
-      await this.getActiveOrganization(
-        organizationId
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
       );
 
+    const organization =
+      await this.getActiveOrganization(
+        normalizedOrganizationId
+      );
+
+    const currentEnvironments =
+      await environmentRepository
+        .findMany({
+          organizationId:
+            normalizedOrganizationId,
+
+          status: {
+            $ne:
+              "archived",
+          },
+        });
+
     const currentCount =
-      (await environmentRepository.findMany({
-        organizationId,
-        status: {
-          $ne:
-            "archived",
-        },
-      })).length;
+      currentEnvironments.length;
 
     /*
      * Enforce plan environment count.
      */
     await EntitlementService
       .assertWithinLimit(
-        organizationId,
+        normalizedOrganizationId,
         ENTITLEMENTS
           .ENVIRONMENTS_MAX,
         currentCount,
@@ -486,23 +655,25 @@ class EnvironmentService {
     ) {
       await EntitlementService
         .assertEnabled(
-          organizationId,
+          normalizedOrganizationId,
           ENTITLEMENTS
             .PRODUCTION_ENVIRONMENT
         );
 
       const existingProduction =
-        await environmentRepository.findOne({
-          organizationId,
+        await environmentRepository
+          .findOne({
+            organizationId:
+              normalizedOrganizationId,
 
-          type:
-            "production",
+            type:
+              "production",
 
-          status: {
-            $ne:
-              "archived",
-          },
-        });
+            status: {
+              $ne:
+                "archived",
+            },
+          });
 
       if (
         existingProduction
@@ -517,10 +688,13 @@ class EnvironmentService {
 
     const name =
       String(
-        data.name || ""
+        data.name ||
+        ""
       ).trim();
 
-    if (!name) {
+    if (
+      !name
+    ) {
       throw this.createError(
         "Environment name is required",
         "ENVIRONMENT_NAME_REQUIRED",
@@ -528,13 +702,15 @@ class EnvironmentService {
       );
     }
 
-    let slug =
+    const slug =
       this.normalizeSlug(
         data.slug ||
         name
       );
 
-    if (!slug) {
+    if (
+      !slug
+    ) {
       throw this.createError(
         "Environment slug is invalid",
         "INVALID_ENVIRONMENT_SLUG",
@@ -543,12 +719,17 @@ class EnvironmentService {
     }
 
     const duplicateSlug =
-      await environmentRepository.findOne({
-        organizationId,
-        slug,
-      });
+      await environmentRepository
+        .findOne({
+          organizationId:
+            normalizedOrganizationId,
 
-    if (duplicateSlug) {
+          slug,
+        });
+
+    if (
+      duplicateSlug
+    ) {
       throw this.createError(
         "An environment with this slug already exists",
         "ENVIRONMENT_SLUG_EXISTS",
@@ -558,90 +739,90 @@ class EnvironmentService {
 
     /*
      * Production defaults must remain conservative.
-     *
-     * Explicit policies will become more sophisticated
-     * during the Policy/Autonomy phase.
      */
     const isProduction =
       type ===
       "production";
 
     const environment =
-      await environmentRepository.create({
-        organizationId,
+      await environmentRepository
+        .create({
+          organizationId:
+            normalizedOrganizationId,
 
-        name,
+          name,
 
-        slug,
+          slug,
 
-        type,
+          type,
 
-        criticality:
-          isProduction
-            ? "critical"
-            : (
-                data.criticality ||
-                "medium"
-              ),
-
-        status:
-          "active",
-
-        description:
-          data.description ||
-          "",
-
-        settings: {
-          allowAutonomousExecution:
+          criticality:
             isProduction
-              ? false
+              ? "critical"
               : (
-                  data.settings
-                    ?.allowAutonomousExecution ??
-                  false
+                  data.criticality ||
+                  "medium"
                 ),
 
-          requireApprovalForDestructiveActions:
-            isProduction
-              ? true
-              : (
-                  data.settings
-                    ?.requireApprovalForDestructiveActions ??
-                  true
-                ),
+          status:
+            "active",
 
-          timezone:
-            data.settings
-              ?.timezone ??
+          description:
+            data.description ||
+            "",
+
+          settings: {
+            allowAutonomousExecution:
+              isProduction
+                ? false
+                : (
+                    data.settings
+                      ?.allowAutonomousExecution ??
+                    false
+                  ),
+
+            requireApprovalForDestructiveActions:
+              isProduction
+                ? true
+                : (
+                    data.settings
+                      ?.requireApprovalForDestructiveActions ??
+                    true
+                  ),
+
+            timezone:
+              data.settings
+                ?.timezone ??
+              null,
+          },
+
+          createdByUserId:
+            actorUserId ||
             null,
-        },
-
-        createdByUserId:
-          actorUserId ||
-          null,
-      });
+        });
 
     /*
-     * If the organization somehow has no default environment,
-     * the newly-created environment becomes the default.
+     * If the organization has no default environment,
+     * the newly created environment becomes the default.
      */
     if (
       !organization
         .settings
         ?.defaultEnvironmentId
     ) {
-      await organizationRepository.updateOne(
-        {
-          _id:
-            organizationId,
-        },
-        {
-          $set: {
-            "settings.defaultEnvironmentId":
-              environment._id,
+      await organizationRepository
+        .updateOne(
+          {
+            _id:
+              normalizedOrganizationId,
           },
-        }
-      );
+          {
+            $set: {
+              "settings.defaultEnvironmentId":
+                environment._id,
+            },
+          }
+        );
     }
 
     return environment;
@@ -664,9 +845,6 @@ class EnvironmentService {
    * organizationId
    * type
    * slug
-   *
-   * Type/slug changes can have wide downstream effects, so
-   * they should not be casual PATCH operations.
    */
   static async updateEnvironment(
     environmentId,
@@ -688,7 +866,9 @@ class EnvironmentService {
           data.name
         ).trim();
 
-      if (!name) {
+      if (
+        !name
+      ) {
         throw this.createError(
           "Environment name cannot be empty",
           "ENVIRONMENT_NAME_REQUIRED",
@@ -745,14 +925,11 @@ class EnvironmentService {
       undefined
     ) {
       const incomingSettings =
-        data.settings || {};
+        data.settings ||
+        {};
 
       /*
-       * Production autonomous execution remains locked
-       * during Phase 1.
-       *
-       * The Policy/Autonomy phase will introduce controlled
-       * production autonomy rather than enabling it here.
+       * Production autonomous execution remains locked here.
        */
       if (
         environment.type ===
@@ -767,6 +944,10 @@ class EnvironmentService {
           403
         );
       }
+
+      environment.settings =
+        environment.settings ||
+        {};
 
       if (
         incomingSettings
@@ -787,8 +968,8 @@ class EnvironmentService {
         undefined
       ) {
         /*
-         * Production destructive-action approval cannot
-         * be disabled during Phase 1.
+         * Production destructive-action approval
+         * may not be disabled here.
          */
         if (
           environment.type ===
@@ -825,7 +1006,10 @@ class EnvironmentService {
       }
     }
 
-    await environmentRepository.save(environment);
+    await environmentRepository
+      .save(
+        environment
+      );
 
     return environment;
   }
@@ -865,7 +1049,10 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       new Date();
 
-    await environmentRepository.save(environment);
+    await environmentRepository
+      .save(
+        environment
+      );
 
     return environment;
   }
@@ -901,7 +1088,10 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       null;
 
-    await environmentRepository.save(environment);
+    await environmentRepository
+      .save(
+        environment
+      );
 
     return environment;
   }
@@ -915,10 +1105,16 @@ class EnvironmentService {
     environmentId,
     organizationId
   ) {
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
+
     const environment =
       await this.requireEnvironment(
         environmentId,
-        organizationId
+        normalizedOrganizationId
       );
 
     if (
@@ -932,20 +1128,37 @@ class EnvironmentService {
       );
     }
 
-    await organizationRepository.updateOne(
-      {
-        _id:
-          organizationId,
-        status:
-          "active",
-      },
-      {
-        $set: {
-          "settings.defaultEnvironmentId":
-            environment._id,
-        },
-      }
-    );
+    const result =
+      await organizationRepository
+        .updateOne(
+          {
+            _id:
+              normalizedOrganizationId,
+
+            status:
+              "active",
+          },
+          {
+            $set: {
+              "settings.defaultEnvironmentId":
+                environment._id,
+            },
+          }
+        );
+
+    if (
+      result &&
+      typeof result.matchedCount ===
+        "number" &&
+      result.matchedCount ===
+        0
+    ) {
+      throw this.createError(
+        "Organization not found",
+        "ORGANIZATION_NOT_FOUND",
+        404
+      );
+    }
 
     return environment;
   }
@@ -959,6 +1172,17 @@ class EnvironmentService {
    *
    * Operational history such as incidents/executions may
    * continue referencing this environment indefinitely.
+   *
+   * Important:
+   *
+   * We deliberately do not use:
+   *
+   *   _id: { $ne: environment._id }
+   *
+   * because repository identifier filters must remain
+   * provider-neutral. The tenant/status candidates are fetched
+   * first and the current environment is excluded through
+   * normalized identifier comparison.
    */
   static async archiveEnvironment(
     environmentId,
@@ -966,40 +1190,53 @@ class EnvironmentService {
     actorUserId = null,
     reason = null
   ) {
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
+
     const environment =
       await this.requireEnvironment(
         environmentId,
-        organizationId
+        normalizedOrganizationId
       );
 
     const organization =
       await this.getActiveOrganization(
-        organizationId
+        normalizedOrganizationId
       );
 
     /*
      * Prevent archiving the organization's last
      * active/maintenance environment.
      */
-    const remainingCount =
-      (await environmentRepository.findMany({
-        organizationId,
+    const remainingCandidates =
+      await environmentRepository
+        .findMany({
+          organizationId:
+            normalizedOrganizationId,
 
-        _id: {
-          $ne:
-            environment._id,
-        },
+          status: {
+            $in: [
+              "active",
+              "maintenance",
+            ],
+          },
+        });
 
-        status: {
-          $in: [
-            "active",
-            "maintenance",
-          ],
-        },
-      })).length;
+    const remainingEnvironments =
+      remainingCandidates
+        .filter(
+          (candidate) =>
+            !this.sameIdentifier(
+              candidate._id,
+              environment._id
+            )
+        );
 
     if (
-      remainingCount ===
+      remainingEnvironments.length ===
       0
     ) {
       throw this.createError(
@@ -1032,7 +1269,10 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       null;
 
-    await environmentRepository.save(environment);
+    await environmentRepository
+      .save(
+        environment
+      );
 
     /*
      * If the archived environment was the organization's
@@ -1041,106 +1281,97 @@ class EnvironmentService {
     const currentDefaultId =
       organization
         .settings
-        ?.defaultEnvironmentId
-        ?.toString?.() ||
-      null;
+        ?.defaultEnvironmentId;
 
     if (
-      currentDefaultId ===
-      environment._id
-        .toString()
+      this.sameIdentifier(
+        currentDefaultId,
+        environment._id
+      )
     ) {
       const activeCandidates =
-  await environmentRepository.findMany({
-    organizationId,
-
-    status:
-      "active",
-
-    _id: {
-      $ne:
-        environment._id,
-    },
-  });
-
-const replacement =
-  activeCandidates
-    .sort(
-      (
-        left,
-        right
-      ) =>
-        new Date(
-          left.createdAt
-        ) -
-        new Date(
-          right.createdAt
-        )
-    )[0] ||
-  null;
-
-if (
-  replacement
-) {
-  await organizationRepository.updateOne(
-    {
-      _id:
-        organizationId,
-    },
-    {
-      $set: {
-        "settings.defaultEnvironmentId":
-          replacement._id,
-      },
-    }
-  );
-} else {
-  const maintenanceCandidates =
-    await environmentRepository.findMany({
-      organizationId,
-
-      status:
-        "maintenance",
-
-      _id: {
-        $ne:
-          environment._id,
-      },
-    });
-
-  const maintenanceReplacement =
-    maintenanceCandidates
-      .sort(
         (
-          left,
-          right
-        ) =>
-          new Date(
-            left.createdAt
-          ) -
-          new Date(
-            right.createdAt
-          )
-      )[0] ||
-    null;
+          await environmentRepository
+            .findMany({
+              organizationId:
+                normalizedOrganizationId,
 
-  if (
-    maintenanceReplacement
-  ) {
-    await organizationRepository.updateOne(
-      {
-        _id:
-          organizationId,
-      },
-      {
-        $set: {
-          "settings.defaultEnvironmentId":
-            maintenanceReplacement._id,
-        },
+              status:
+                "active",
+            })
+        ).filter(
+          (candidate) =>
+            !this.sameIdentifier(
+              candidate._id,
+              environment._id
+            )
+        );
+
+      const activeReplacement =
+        this.sortByCreatedAt(
+          activeCandidates
+        )[0] ||
+        null;
+
+      if (
+        activeReplacement
+      ) {
+        await organizationRepository
+          .updateOne(
+            {
+              _id:
+                normalizedOrganizationId,
+            },
+            {
+              $set: {
+                "settings.defaultEnvironmentId":
+                  activeReplacement._id,
+              },
+            }
+          );
+      } else {
+        const maintenanceCandidates =
+          (
+            await environmentRepository
+              .findMany({
+                organizationId:
+                  normalizedOrganizationId,
+
+                status:
+                  "maintenance",
+              })
+          ).filter(
+            (candidate) =>
+              !this.sameIdentifier(
+                candidate._id,
+                environment._id
+              )
+          );
+
+        const maintenanceReplacement =
+          this.sortByCreatedAt(
+            maintenanceCandidates
+          )[0] ||
+          null;
+
+        if (
+          maintenanceReplacement
+        ) {
+          await organizationRepository
+            .updateOne(
+              {
+                _id:
+                  normalizedOrganizationId,
+              },
+              {
+                $set: {
+                  "settings.defaultEnvironmentId":
+                    maintenanceReplacement._id,
+                },
+              }
+            );
+        }
       }
-    );
-  }
-}
     }
 
     return environment;
@@ -1156,10 +1387,11 @@ if (
   static async getEnvironmentSummary(
     organizationId
   ) {
-    this.assertValidId(
-      organizationId,
-      "organizationId"
-    );
+    const normalizedOrganizationId =
+      this.assertValidId(
+        organizationId,
+        "organizationId"
+      );
 
     const [
       total,
@@ -1168,57 +1400,77 @@ if (
       production,
     ] =
       await Promise.all([
-        environmentRepository.findMany({
-          organizationId,
-          status: {
-            $ne:
-              "archived",
-          },
-        }),
+        environmentRepository
+          .findMany({
+            organizationId:
+              normalizedOrganizationId,
 
-        environmentRepository.findMany({
-          organizationId,
-          status:
-            "active",
-        }),
+            status: {
+              $ne:
+                "archived",
+            },
+          }),
 
-        environmentRepository.findMany({
-          organizationId,
-          status:
-            "maintenance",
-        }),
+        environmentRepository
+          .findMany({
+            organizationId:
+              normalizedOrganizationId,
 
-        environmentRepository.findMany({
-          organizationId,
-          type:
-            "production",
-          status: {
-            $ne:
-              "archived",
-          },
-        }),
+            status:
+              "active",
+          }),
+
+        environmentRepository
+          .findMany({
+            organizationId:
+              normalizedOrganizationId,
+
+            status:
+              "maintenance",
+          }),
+
+        environmentRepository
+          .findMany({
+            organizationId:
+              normalizedOrganizationId,
+
+            type:
+              "production",
+
+            status: {
+              $ne:
+                "archived",
+            },
+          }),
       ]);
 
     const subscription =
       await EntitlementService
         .getSubscription(
-          organizationId
+          normalizedOrganizationId
         );
 
     const environmentLimit =
       await EntitlementService
         .getEntitlement(
-          organizationId,
+          normalizedOrganizationId,
           ENTITLEMENTS
             .ENVIRONMENTS_MAX
         );
 
     return {
-      total: total.length,
-      active: active.length,
-      maintenance: maintenance.length,
+      total:
+        total.length,
+
+      active:
+        active.length,
+
+      maintenance:
+        maintenance.length,
+
       hasProduction:
-        production.length > 0,
+        production.length >
+        0,
 
       plan:
         subscription.plan,

@@ -169,6 +169,7 @@ class PostgresAgentIntelligenceRunRepository
                 incident.id,
 
                 data.status ||
+                  data.state ||
                   "pending",
 
                 data.phase ||
@@ -214,9 +215,11 @@ class PostgresAgentIntelligenceRunRepository
                   [],
 
                 data.outcome ||
+                  data.finalOutcome ||
                   null,
 
                 data.summary ||
+                  data.explanationTitle ||
                   null,
 
                 data.manualReason ||
@@ -290,24 +293,24 @@ class PostgresAgentIntelligenceRunRepository
     run,
     transaction = null
   ) {
+    const context =
+      requireScope(
+        run
+      );
+
+    const identifier =
+      normalizeId(
+        run._id
+      );
+
     if (
-      !run?._id ||
-      !run.organizationId ||
-      !run.environmentId
+      !identifier
     ) {
       throw createError(
-        "PostgresAgentIntelligenceRunRepository.save() requires persisted run with scope",
-        "INVALID_AGENT_INTELLIGENCE_RUN_DOCUMENT"
+        "Agent intelligence run identifier is required",
+        "POSTGRES_AGENT_RUN_ID_REQUIRED"
       );
     }
-
-    const context = {
-      organizationId:
-        run.organizationId,
-
-      environmentId:
-        run.environmentId,
-    };
 
     return this.scope.run(
       context,
@@ -315,19 +318,6 @@ class PostgresAgentIntelligenceRunRepository
         client,
         resolved
       ) => {
-        let diagnosisUuid =
-          null;
-
-        if (
-          run.diagnosisId
-        ) {
-          diagnosisUuid =
-            await resolveDiagnosisUuid(
-              client,
-              run.diagnosisId
-            );
-        }
-
         const document =
           serializeDocument(
             run
@@ -338,50 +328,47 @@ class PostgresAgentIntelligenceRunRepository
             `
               UPDATE agents.intelligence_runs
               SET
-                diagnosis_id = $1,
-                status = $2,
-                phase = $3,
-                confidence = $4,
-                correlation_id = $5,
-                correlation_group_id = $6,
-                context_summary = $7::jsonb,
-                agent_trace = $8::jsonb,
-                budget_usage = $9::jsonb,
-                security_findings = $10::jsonb,
-                finding_ids = $11,
-                hypothesis_ids = $12,
-                contradiction_ids = $13,
-                outcome = $14,
-                summary = $15,
-                manual_reason = $16,
-                warnings = $17::jsonb,
-                error = $18::jsonb,
-                coordinator_version = $19,
-                reasoning_provider = $20,
-                model = $21,
-                fallback_used = $22,
-                started_at = $23,
-                completed_at = $24,
-                failed_at = $25,
-                duration_ms = $26,
-                metadata = $27::jsonb,
-                document = $28::jsonb
+                status = $1,
+                phase = $2,
+                confidence = $3,
+                correlation_id = $4,
+                correlation_group_id = $5,
+                context_summary = $6::jsonb,
+                agent_trace = $7::jsonb,
+                budget_usage = $8::jsonb,
+                security_findings = $9::jsonb,
+                finding_ids = $10,
+                hypothesis_ids = $11,
+                contradiction_ids = $12,
+                outcome = $13,
+                summary = $14,
+                manual_reason = $15,
+                warnings = $16::jsonb,
+                error = $17::jsonb,
+                coordinator_version = $18,
+                reasoning_provider = $19,
+                model = $20,
+                fallback_used = $21,
+                started_at = $22,
+                completed_at = $23,
+                failed_at = $24,
+                duration_ms = $25,
+                metadata = $26::jsonb,
+                document = $27::jsonb,
+                updated_at = NOW()
               WHERE
-                organization_id = $29
-                AND environment_id = $30
-                AND (
-                  database_id = $31
-                  OR legacy_mongo_id = $31
-                  OR id::text = $31
-                )
+                organization_id = $28
+                AND environment_id = $29
+                AND database_id = $30
               RETURNING *
             `,
             [
-              diagnosisUuid,
+              run.status ||
+                run.state ||
+                "pending",
 
-              run.status,
-
-              run.phase,
+              run.phase ||
+                "context_building",
 
               extractOverallConfidence(
                 run.confidence
@@ -423,9 +410,11 @@ class PostgresAgentIntelligenceRunRepository
                 [],
 
               run.outcome ||
+                run.finalOutcome ||
                 null,
 
               run.summary ||
+                run.explanationTitle ||
                 null,
 
               run.manualReason ||
@@ -481,9 +470,7 @@ class PostgresAgentIntelligenceRunRepository
 
               resolved.environmentUuid,
 
-              normalizeId(
-                run._id
-              ),
+              identifier,
             ]
           );
 
@@ -502,8 +489,13 @@ class PostgresAgentIntelligenceRunRepository
     scope,
     transaction = null
   ) {
+    const context =
+      requireScope(
+        scope
+      );
+
     return this.scope.run(
-      scope,
+      context,
       async (
         client,
         resolved
@@ -524,16 +516,20 @@ class PostgresAgentIntelligenceRunRepository
         const result =
           await client.query(
             `
-              SELECT
-                created_at,
-                status,
-                completed_at
+              SELECT *
               FROM agents.intelligence_runs
-              WHERE incident_id = $1
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
               ORDER BY created_at DESC
               LIMIT 1
             `,
             [
+              resolved.organizationUuid,
+
+              resolved.environmentUuid,
+
               incident.id,
             ]
           );
@@ -545,54 +541,14 @@ class PostgresAgentIntelligenceRunRepository
           return null;
         }
 
-        return {
-          createdAt:
-            result.rows[0]
-              .created_at,
-
-          status:
-            result.rows[0]
-              .status,
-
-          completedAt:
-            result.rows[0]
-              .completed_at,
-        };
+        return mapRun(
+          result.rows[0],
+          context
+        );
       },
       transaction
     );
   }
-}
-
-async function resolveDiagnosisUuid(
-  client,
-  identifier
-) {
-  const normalized =
-    normalizeId(
-      identifier
-    );
-
-  const result =
-    await client.query(
-      `
-        SELECT id
-        FROM incidents.diagnoses
-        WHERE
-          database_id = $1
-          OR public_id = $1
-          OR legacy_mongo_id = $1
-          OR id::text = $1
-        LIMIT 1
-      `,
-      [
-        normalized,
-      ]
-    );
-
-  return result.rows[0]
-    ?.id ||
-    null;
 }
 
 function extractOverallConfidence(
@@ -614,10 +570,42 @@ function extractOverallConfidence(
     return confidence;
   }
 
-  return confidence
-    .overallConfidence ??
-    confidence.score ??
-    null;
+  if (
+    typeof confidence ===
+    "object"
+  ) {
+    if (
+      typeof confidence.overall ===
+      "number"
+    ) {
+      return confidence.overall;
+    }
+
+    if (
+      typeof confidence.score ===
+      "number"
+    ) {
+      return confidence.score;
+    }
+
+    if (
+      typeof confidence.value ===
+      "number"
+    ) {
+      return confidence.value;
+    }
+  }
+
+  const parsed =
+    Number(
+      confidence
+    );
+
+  return Number.isFinite(
+    parsed
+  )
+    ? parsed
+    : null;
 }
 
 function mapRun(
@@ -653,18 +641,134 @@ function mapRun(
         context.environmentId
       ),
 
+    incidentId:
+      document.incidentId ||
+      normalizeId(
+        context.incidentId
+      ),
+
     tenantId:
+      document.tenantId ||
       row.tenant_public_id,
 
     status:
       row.status,
 
+    state:
+      document.state ||
+      row.status,
+
     phase:
       row.phase,
 
-    diagnosisId:
-      document.diagnosisId ||
+    confidence:
+      document.confidence ??
+      row.confidence,
+
+    correlationId:
+      document.correlationId ||
+      row.correlation_id,
+
+    correlationGroupId:
+      document.correlationGroupId ||
+      row.correlation_group_id,
+
+    contextSummary:
+      document.contextSummary ||
+      row.context_summary ||
+      {},
+
+    agentTrace:
+      document.agentTrace ||
+      row.agent_trace ||
+      [],
+
+    budgetUsage:
+      document.budgetUsage ||
+      row.budget_usage ||
+      {},
+
+    securityFindings:
+      document.securityFindings ||
+      row.security_findings ||
+      [],
+
+    findingIds:
+      document.findingIds ||
+      row.finding_ids ||
+      [],
+
+    hypothesisIds:
+      document.hypothesisIds ||
+      row.hypothesis_ids ||
+      [],
+
+    contradictionIds:
+      document.contradictionIds ||
+      row.contradiction_ids ||
+      [],
+
+    outcome:
+      document.outcome ||
+      row.outcome,
+
+    finalOutcome:
+      document.finalOutcome ||
+      row.outcome,
+
+    summary:
+      document.summary ||
+      row.summary,
+
+    explanationTitle:
+      document.explanationTitle ||
+      row.summary,
+
+    manualRequired:
+      Boolean(
+        document.manualRequired
+      ),
+
+    manualReason:
+      document.manualReason ||
+      row.manual_reason,
+
+    warnings:
+      document.warnings ||
+      row.warnings ||
+      [],
+
+    error:
+      document.error ||
+      row.error,
+
+    learningCount:
+      document.learningCount ||
+      0,
+
+    playbookExecutionId:
+      document.playbookExecutionId ||
       null,
+
+    decisionTraceSchemaVersion:
+      document.decisionTraceSchemaVersion ||
+      null,
+
+    decisionTrace:
+      document.decisionTrace ||
+      null,
+
+    coordinatorVersion:
+      row.coordinator_version,
+
+    reasoningProvider:
+      row.reasoning_provider,
+
+    model:
+      row.model,
+
+    fallbackUsed:
+      row.fallback_used,
 
     startedAt:
       row.started_at,

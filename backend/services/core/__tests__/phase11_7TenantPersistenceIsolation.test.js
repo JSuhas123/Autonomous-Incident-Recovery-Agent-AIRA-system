@@ -5,14 +5,45 @@ const mongoose =
     "mongoose"
   );
 
-const Environment =
-  require(
-    "../../../models/Environment"
-  );
+jest.mock(
+  "../../../persistence/repositories",
+  () => ({
+    environmentRepository: {
+      findOne:
+        jest.fn(),
 
-const Organization =
+      findMany:
+        jest.fn(),
+
+      create:
+        jest.fn(),
+
+      updateOne:
+        jest.fn(),
+
+      save:
+        jest.fn(),
+    },
+
+    organizationRepository: {
+      findOne:
+        jest.fn(),
+
+      updateOne:
+        jest.fn(),
+
+      save:
+        jest.fn(),
+    },
+  })
+);
+
+const {
+  environmentRepository,
+  organizationRepository,
+} =
   require(
-    "../../../models/Organization"
+    "../../../persistence/repositories"
   );
 
 const EnvironmentService =
@@ -20,14 +51,10 @@ const EnvironmentService =
     "../environmentService"
   );
 
-
-jest.mock(
-  "../../../models/Environment"
-);
-
-jest.mock(
-  "../../../models/Organization"
-);
+const EntitlementService =
+  require(
+    "../entitlementService"
+  );
 
 
 describe(
@@ -46,6 +73,65 @@ describe(
     beforeEach(
       () => {
         jest.clearAllMocks();
+
+        environmentRepository
+          .findOne
+          .mockResolvedValue(
+            null
+          );
+
+        environmentRepository
+          .findMany
+          .mockResolvedValue(
+            []
+          );
+
+        environmentRepository
+          .create
+          .mockResolvedValue(
+            null
+          );
+
+        environmentRepository
+          .updateOne
+          .mockResolvedValue({
+            acknowledged:
+              true,
+
+            matchedCount:
+              1,
+
+            modifiedCount:
+              1,
+          });
+
+        environmentRepository
+          .save
+          .mockImplementation(
+            async (
+              environment
+            ) =>
+              environment
+          );
+
+        organizationRepository
+          .findOne
+          .mockResolvedValue(
+            null
+          );
+
+        organizationRepository
+          .updateOne
+          .mockResolvedValue({
+            acknowledged:
+              true,
+
+            matchedCount:
+              1,
+
+            modifiedCount:
+              1,
+          });
       }
     );
 
@@ -53,13 +139,6 @@ describe(
     test(
       "environment lookup always includes organization ownership",
       async () => {
-        Environment
-          .findOne
-          .mockResolvedValue(
-            null
-          );
-
-
         await EnvironmentService
           .getByIdForOrganization(
             envA,
@@ -68,15 +147,20 @@ describe(
 
 
         expect(
-          Environment.findOne
+          environmentRepository
+            .findOne
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               _id:
-                envA,
+                String(
+                  envA
+                ),
 
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
 
               status: {
                 $ne:
@@ -91,11 +175,7 @@ describe(
     test(
       "cross-organization environment is indistinguishable from missing environment",
       async () => {
-        /*
-         * Persistence layer returns null because the
-         * organization-scoped query does not match.
-         */
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             null
@@ -120,15 +200,20 @@ describe(
 
 
         expect(
-          Environment.findOne
+          environmentRepository
+            .findOne
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               _id:
-                envA,
+                String(
+                  envA
+                ),
 
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
             })
           );
       }
@@ -138,33 +223,30 @@ describe(
     test(
       "environment listing is organization scoped",
       async () => {
-        const sort =
-          jest.fn()
-            .mockResolvedValue(
-              []
-            );
-
-
-        Environment
-          .find
-          .mockReturnValue({
-            sort,
-          });
-
-
-        await EnvironmentService
-          .listForOrganization(
-            orgA
+        environmentRepository
+          .findMany
+          .mockResolvedValue(
+            []
           );
 
 
+        const result =
+          await EnvironmentService
+            .listForOrganization(
+              orgA
+            );
+
+
         expect(
-          Environment.find
+          environmentRepository
+            .findMany
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
 
               status: {
                 $ne:
@@ -172,129 +254,104 @@ describe(
               },
             })
           );
+
+
+        expect(
+          result
+        )
+          .toEqual(
+            []
+          );
       }
     );
 
 
     test(
-  "default environment lookup cannot cross organization boundary",
-  async () => {
-    const defaultEnvironmentId =
-      new mongoose.Types.ObjectId();
+      "default environment lookup cannot cross organization boundary",
+      async () => {
+        const defaultEnvironmentId =
+          new mongoose.Types
+            .ObjectId();
 
 
-    /*
-     * First lookup:
-     *
-     * explicit defaultEnvironmentId scoped to orgA.
-     *
-     * Return null so the service falls back to the first
-     * active environment for the same organization.
-     */
-    Environment
-      .findOne
-      .mockResolvedValueOnce(
-        null
-      );
+        environmentRepository
+          .findOne
+          .mockResolvedValueOnce(
+            null
+          );
 
 
-    /*
-     * Second lookup:
-     *
-     * Environment.findOne(...).sort(...)
-     *
-     * Therefore the mock must return a query-like object
-     * exposing sort().
-     */
-    const sort =
-      jest.fn()
-        .mockResolvedValue(
-          null
-        );
+        environmentRepository
+          .findMany
+          .mockResolvedValueOnce(
+            []
+          );
 
 
-    Environment
-      .findOne
-      .mockReturnValueOnce({
-        sort,
-      });
+        const result =
+          await EnvironmentService
+            .getDefaultForOrganization({
+              _id:
+                orgA,
+
+              settings: {
+                defaultEnvironmentId,
+              },
+            });
 
 
-    const result =
-      await EnvironmentService
-        .getDefaultForOrganization({
-          _id:
-            orgA,
-
-          settings: {
-            defaultEnvironmentId,
-          },
-        });
+        expect(
+          result
+        )
+          .toBeNull();
 
 
-    expect(
-      result
-    )
-      .toBeNull();
+        expect(
+          environmentRepository
+            .findOne
+        )
+          .toHaveBeenNthCalledWith(
+            1,
+            expect.objectContaining({
+              _id:
+                defaultEnvironmentId,
+
+              organizationId:
+                String(
+                  orgA
+                ),
+
+              status: {
+                $ne:
+                  "archived",
+              },
+            })
+          );
 
 
-    /*
-     * Explicit default environment lookup must include
-     * organization ownership.
-     */
-    expect(
-      Environment.findOne
-    )
-      .toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({
-          _id:
-            defaultEnvironmentId,
+        expect(
+          environmentRepository
+            .findMany
+        )
+          .toHaveBeenCalledWith(
+            expect.objectContaining({
+              organizationId:
+                String(
+                  orgA
+                ),
 
-          organizationId:
-            orgA,
-
-          status: {
-            $ne:
-              "archived",
-          },
-        })
-      );
-
-
-    /*
-     * Compatibility fallback must ALSO remain within orgA.
-     */
-    expect(
-      Environment.findOne
-    )
-      .toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({
-          organizationId:
-            orgA,
-
-          status:
-            "active",
-        })
-      );
-
-
-    expect(
-      sort
-    )
-      .toHaveBeenCalledWith({
-        createdAt:
-          1,
-      });
-  }
-);
+              status:
+                "active",
+            })
+          );
+      }
+    );
 
 
     test(
       "environment creation writes canonical organization ownership",
       async () => {
-        Organization
+        organizationRepository
           .findOne
           .mockResolvedValue({
             _id:
@@ -311,14 +368,17 @@ describe(
           });
 
 
-        Environment
-          .countDocuments
+        environmentRepository
+          .findMany
           .mockResolvedValue(
-            0
+            []
           );
 
 
-        Environment
+        /*
+         * duplicate-slug lookup
+         */
+        environmentRepository
           .findOne
           .mockResolvedValue(
             null
@@ -330,23 +390,28 @@ describe(
             envA,
 
           organizationId:
-            orgA,
+            String(
+              orgA
+            ),
+
+          name:
+            "Staging",
+
+          slug:
+            "staging",
+
+          type:
+            "custom",
+
+          status:
+            "active",
         };
 
 
-        Environment
+        environmentRepository
           .create
           .mockResolvedValue(
             createdEnvironment
-          );
-
-
-        /*
-         * Mock entitlement methods used by creation.
-         */
-        const EntitlementService =
-          require(
-            "../entitlementService"
           );
 
 
@@ -381,15 +446,24 @@ describe(
 
 
         expect(
-          Environment.create
+          environmentRepository
+            .create
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
 
               name:
                 "Staging",
+
+              slug:
+                "staging",
+
+              type:
+                "custom",
             })
           );
 
@@ -398,8 +472,10 @@ describe(
           result
             .organizationId
         )
-          .toEqual(
-            orgA
+          .toBe(
+            String(
+              orgA
+            )
           );
       }
     );
@@ -413,7 +489,9 @@ describe(
             envA,
 
           organizationId:
-            orgA,
+            String(
+              orgA
+            ),
 
           type:
             "custom",
@@ -427,6 +505,9 @@ describe(
           criticality:
             "medium",
 
+          status:
+            "active",
+
           settings: {
             allowAutonomousExecution:
               false,
@@ -437,14 +518,10 @@ describe(
             timezone:
               null,
           },
-
-          save:
-            jest.fn()
-              .mockResolvedValue(),
         };
 
 
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             environmentDocument
@@ -463,21 +540,27 @@ describe(
 
 
         expect(
-          Environment.findOne
+          environmentRepository
+            .findOne
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               _id:
-                envA,
+                String(
+                  envA
+                ),
 
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
             })
           );
 
 
         expect(
-          environmentDocument.name
+          environmentDocument
+            .name
         )
           .toBe(
             "Updated"
@@ -485,10 +568,11 @@ describe(
 
 
         expect(
-          environmentDocument.save
+          environmentRepository
+            .save
         )
-          .toHaveBeenCalledTimes(
-            1
+          .toHaveBeenCalledWith(
+            environmentDocument
           );
       }
     );
@@ -502,7 +586,9 @@ describe(
             envA,
 
           organizationId:
-            orgA,
+            String(
+              orgA
+            ),
 
           type:
             "custom",
@@ -516,6 +602,9 @@ describe(
           criticality:
             "medium",
 
+          status:
+            "active",
+
           settings: {
             allowAutonomousExecution:
               false,
@@ -526,14 +615,10 @@ describe(
             timezone:
               null,
           },
-
-          save:
-            jest.fn()
-              .mockResolvedValue(),
         };
 
 
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             environmentDocument
@@ -558,8 +643,22 @@ describe(
           environmentDocument
             .organizationId
         )
-          .toEqual(
-            orgA
+          .toBe(
+            String(
+              orgA
+            )
+          );
+
+
+        expect(
+          environmentDocument
+            .organizationId
+        )
+          .not
+          .toBe(
+            String(
+              orgB
+            )
           );
       }
     );
@@ -573,18 +672,18 @@ describe(
             envA,
 
           organizationId:
-            orgA,
+            String(
+              orgA
+            ),
 
           status:
             "active",
 
-          save:
-            jest.fn()
-              .mockResolvedValue(),
+          settings: {},
         };
 
 
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             environmentDocument
@@ -600,15 +699,20 @@ describe(
 
 
         expect(
-          Environment.findOne
+          environmentRepository
+            .findOne
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               _id:
-                envA,
+                String(
+                  envA
+                ),
 
               organizationId:
-                orgA,
+                String(
+                  orgA
+                ),
             })
           );
 
@@ -619,6 +723,24 @@ describe(
         )
           .toBe(
             "maintenance"
+          );
+
+
+        expect(
+          environmentDocument
+            .maintenanceReason
+        )
+          .toBe(
+            "planned"
+          );
+
+
+        expect(
+          environmentRepository
+            .save
+        )
+          .toHaveBeenCalledWith(
+            environmentDocument
           );
       }
     );
@@ -632,26 +754,20 @@ describe(
             envA,
 
           organizationId:
-            orgA,
+            String(
+              orgA
+            ),
 
           status:
             "active",
         };
 
 
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             environmentDocument
           );
-
-
-        Organization
-          .updateOne
-          .mockResolvedValue({
-            modifiedCount:
-              1,
-          });
 
 
         await EnvironmentService
@@ -662,12 +778,15 @@ describe(
 
 
         expect(
-          Organization.updateOne
+          organizationRepository
+            .updateOne
         )
           .toHaveBeenCalledWith(
             expect.objectContaining({
               _id:
-                orgA,
+                String(
+                  orgA
+                ),
 
               status:
                 "active",
@@ -686,18 +805,12 @@ describe(
 
 
     test(
-      "environment summary scopes every aggregate count to organization",
+      "environment summary scopes every aggregate read to organization",
       async () => {
-        Environment
-          .countDocuments
+        environmentRepository
+          .findMany
           .mockResolvedValue(
-            0
-          );
-
-
-        const EntitlementService =
-          require(
-            "../entitlementService"
+            []
           );
 
 
@@ -722,15 +835,16 @@ describe(
           );
 
 
-        await EnvironmentService
-          .getEnvironmentSummary(
-            orgA
-          );
+        const result =
+          await EnvironmentService
+            .getEnvironmentSummary(
+              orgA
+            );
 
 
         expect(
-          Environment
-            .countDocuments
+          environmentRepository
+            .findMany
         )
           .toHaveBeenCalledTimes(
             4
@@ -739,8 +853,8 @@ describe(
 
         for (
           const call
-          of Environment
-            .countDocuments
+          of environmentRepository
+            .findMany
             .mock
             .calls
         ) {
@@ -750,10 +864,39 @@ describe(
             .toEqual(
               expect.objectContaining({
                 organizationId:
-                  orgA,
+                  String(
+                    orgA
+                  ),
               })
             );
         }
+
+
+        expect(
+          result
+        )
+          .toEqual({
+            total:
+              0,
+
+            active:
+              0,
+
+            maintenance:
+              0,
+
+            hasProduction:
+              false,
+
+            plan:
+              "test",
+
+            limit:
+              10,
+
+            remaining:
+              10,
+          });
       }
     );
 
@@ -761,7 +904,7 @@ describe(
     test(
       "organization A query never substitutes organization B",
       async () => {
-        Environment
+        environmentRepository
           .findOne
           .mockResolvedValue(
             null
@@ -776,7 +919,7 @@ describe(
 
 
         const query =
-          Environment
+          environmentRepository
             .findOne
             .mock
             .calls[0][0];
@@ -785,8 +928,10 @@ describe(
         expect(
           query.organizationId
         )
-          .toEqual(
-            orgA
+          .toBe(
+            String(
+              orgA
+            )
           );
 
 
@@ -794,8 +939,10 @@ describe(
           query.organizationId
         )
           .not
-          .toEqual(
-            orgB
+          .toBe(
+            String(
+              orgB
+            )
           );
       }
     );

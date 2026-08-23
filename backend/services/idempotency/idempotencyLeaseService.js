@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Idempotency Lease Service
@@ -20,9 +20,7 @@
  */
 
 const IdempotencyRecord =
-  require(
-    "../../models/IdempotencyRecord"
-  );
+  require("../../persistence/operational/PostgresIdempotencyRecord");
 
 const {
   IDEMPOTENCY_STATUS,

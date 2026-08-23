@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const crypto =
   require(
@@ -680,6 +680,60 @@ class PostgresWorkflowOutboxRepository
     );
   }
 
+
+  async findForIncident(
+    scope,
+    incidentId,
+    transaction = null
+  ) {
+    requireScope(
+      scope
+    );
+
+    return this.scope.run(
+      scope,
+      async (
+        client
+      ) => {
+        const incident =
+          await this.scope
+            .identityResolver
+            .resolveIncident(
+              client,
+              scope,
+              incidentId
+            );
+
+        if (!incident) {
+          return [];
+        }
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM workflow.outbox_events
+              WHERE incident_id = $1
+              ORDER BY created_at ASC
+            `,
+            [
+              incident.id,
+            ]
+          );
+
+        return result.rows.map(
+          (
+            row
+          ) =>
+            mapEvent(
+              row,
+              scope
+            )
+        );
+      },
+      transaction
+    );
+  }
   async findDeliverable() {
     throw Object.assign(
       new Error(

@@ -2,9 +2,16 @@
 
 const express = require("express");
 const Joi = require("joi");
-const mongoose = require("mongoose");
+const { isDatabaseIdentifier } = require("../utils/identifier");
 
-const Service = require("../models/Service");
+const {
+  Service,
+  SERVICE_TYPES,
+  SERVICE_ENVS,
+  SERVICE_STATUSES,
+  VERIFICATION_STATUSES,
+  MONITORING_STATUSES,
+} = require("../persistence/operational/operationalModels");
 
 const verificationRoutes = require("./verificationRoutes");
 const {
@@ -30,13 +37,6 @@ const {
   environmentCreateData,
 } = require("../utils/contextQuery");
 
-const {
-  SERVICE_TYPES,
-  SERVICE_ENVS,
-  SERVICE_STATUSES,
-  VERIFICATION_STATUSES,
-  MONITORING_STATUSES,
-} = require("../models/Service");
 
 const router = express.Router();
 
@@ -246,7 +246,7 @@ router.param(
       }
 
       if (
-        !mongoose.Types.ObjectId.isValid(
+        !isDatabaseIdentifier(
           serviceId
         )
       ) {

@@ -83,6 +83,217 @@ class MongoExecutionAuthorizationRepository
       transaction
     );
   }
+
+  async findAuthorizationByIdentifier(
+    {
+      organizationId,
+      environmentId,
+    },
+    identifier,
+    transaction = null
+  ) {
+    const normalized =
+      String(
+        identifier ||
+        ""
+      ).trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    const clauses = [
+      {
+        authorizationId:
+          normalized,
+      },
+    ];
+
+    if (
+      /^[0-9a-f]{24}$/i.test(
+        normalized
+      )
+    ) {
+      clauses.unshift({
+        _id:
+          normalized,
+      });
+    }
+
+    let query =
+      ExecutionAuthorization
+        .findOne({
+          organizationId,
+
+          environmentId,
+
+          $or:
+            clauses,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findExecutionRequestByIdentifier(
+    {
+      organizationId,
+      environmentId,
+    },
+    identifier,
+    transaction = null
+  ) {
+    const normalized =
+      String(
+        identifier ||
+        ""
+      ).trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    const clauses = [
+      {
+        executionRequestId:
+          normalized,
+      },
+    ];
+
+    if (
+      /^[0-9a-f]{24}$/i.test(
+        normalized
+      )
+    ) {
+      clauses.unshift({
+        _id:
+          normalized,
+      });
+    }
+
+    let query =
+      ExecutionRequest
+        .findOne({
+          organizationId,
+
+          environmentId,
+
+          $or:
+            clauses,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findIncidentExecutionHistory(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    options = {},
+    transaction = null
+  ) {
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    let query =
+      ExecutionRequest
+        .find({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+        })
+        .sort({
+          createdAt:
+            -1,
+        })
+        .limit(
+          limit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async saveExecutionRequest(
+    request,
+    transaction = null
+  ) {
+    if (
+      !request ||
+      typeof request.save !==
+        "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "MongoExecutionAuthorizationRepository.saveExecutionRequest() requires a Mongoose document"
+        ),
+        {
+          code:
+            "INVALID_EXECUTION_REQUEST_DOCUMENT",
+        }
+      );
+    }
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    return request.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
+  }
 }
 
 module.exports =

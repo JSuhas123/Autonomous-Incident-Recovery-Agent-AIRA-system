@@ -1,11 +1,17 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
-
-const InfrastructureResource =
+const {
+  isDatabaseIdentifier,
+} =
   require(
-    "../../models/InfrastructureResource"
+    "../../utils/identifier"
+  );
+
+const {
+  InfrastructureResource,
+} =
+  require(
+    "../../persistence/operational/inventoryModels"
   );
 
 class InventoryService {
@@ -314,8 +320,7 @@ class InventoryService {
       );
 
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
+      !isDatabaseIdentifier(
           resourceId
         )
     ) {
@@ -393,8 +398,7 @@ class InventoryService {
 
     if (integrationId) {
       if (
-        !mongoose.Types.ObjectId
-          .isValid(
+        !isDatabaseIdentifier(
             integrationId
           )
       ) {

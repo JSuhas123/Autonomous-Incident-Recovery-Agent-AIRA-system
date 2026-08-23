@@ -11,7 +11,7 @@
  * - Per-tenant calibration
  */
 
-const mongoose = require('mongoose');
+const mongoose = require("../../../persistence/operational/mongooseCompat");
 
 const confidenceHistorySchema = new mongoose.Schema(
   {

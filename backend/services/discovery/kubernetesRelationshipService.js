@@ -2,15 +2,17 @@
 const crypto =
   require("node:crypto");
 
-const KubernetesResource =
-  require(
-    "../../models/KubernetesResource"
-  );
+const {
+  KubernetesResource,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
-const KubernetesResourceRelation =
-  require(
-    "../../models/KubernetesResourceRelation"
-  );
+const {
+  KubernetesResourceRelation,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
 const kubernetesInventoryAdapter =
   require(

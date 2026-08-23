@@ -15,19 +15,18 @@
  * - does not authorize infrastructure execution
  */
 
-const ExecutionRequest =
+const {
+  executionAuthorizationRepository,
+} =
   require(
-    "../models/ExecutionRequest"
+    "../persistence/repositories"
   );
 
-const RecoveryVerification =
+const {
+  recoveryVerificationRepository,
+} =
   require(
-    "../models/RecoveryVerification"
-  );
-
-const RecoveryVerificationRun =
-  require(
-    "../models/RecoveryVerificationRun"
+    "../persistence/repositories/recoveryVerificationProvider"
   );
 
 const verificationQueueService =
@@ -36,10 +35,6 @@ const verificationQueueService =
   );
 
 class VerificationController {
-  // ==========================================================================
-  // REQUEST VERIFICATION
-  // ==========================================================================
-
   async requestVerification(
     req,
     res,
@@ -67,16 +62,17 @@ class VerificationController {
       }
 
       const executionRequest =
-        await ExecutionRequest
-          .findOne({
-            executionRequestId,
+        await executionAuthorizationRepository
+          .findExecutionRequestByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
-
-            environmentId:
-              scope.environmentId,
-          });
+              environmentId:
+                scope.environmentId,
+            },
+            executionRequestId
+          );
 
       if (
         !executionRequest
@@ -222,10 +218,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // GET CURRENT VERIFICATION
-  // ==========================================================================
-
   async getCurrentVerification(
     req,
     res,
@@ -253,8 +245,8 @@ class VerificationController {
       }
 
       const verification =
-        await RecoveryVerification
-          .findOne({
+        await recoveryVerificationRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -262,11 +254,7 @@ class VerificationController {
               scope.environmentId,
 
             incidentId,
-
-            isCurrent:
-              true,
-          })
-          .lean();
+          });
 
       if (
         !verification
@@ -311,10 +299,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // GET VERIFICATION BY ID
-  // ==========================================================================
-
   async getVerification(
     req,
     res,
@@ -342,17 +326,17 @@ class VerificationController {
       }
 
       const verification =
-        await RecoveryVerification
-          .findOne({
-            verificationId,
+        await recoveryVerificationRepository
+          .findByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
-
-            environmentId:
-              scope.environmentId,
-          })
-          .lean();
+              environmentId:
+                scope.environmentId,
+            },
+            verificationId
+          );
 
       if (
         !verification
@@ -397,10 +381,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // VERIFICATION HISTORY
-  // ==========================================================================
-
   async getVerificationHistory(
     req,
     res,
@@ -440,24 +420,21 @@ class VerificationController {
         );
 
       const verifications =
-        await RecoveryVerification
-          .find({
-            organizationId:
-              scope.organizationId,
+        await recoveryVerificationRepository
+          .findHistory(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            revision:
-              -1,
-          })
-          .limit(
-            limit
-          )
-          .lean();
+              incidentId,
+            },
+            {
+              limit,
+            }
+          );
 
       return res
         .status(
@@ -491,10 +468,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // VERIFICATION RUN HISTORY
-  // ==========================================================================
-
   async getVerificationRuns(
     req,
     res,
@@ -512,24 +485,22 @@ class VerificationController {
         req.params;
 
       const runs =
-        await RecoveryVerificationRun
-          .find({
-            organizationId:
-              scope.organizationId,
+        await recoveryVerificationRepository
+          .findRuns(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            createdAt:
-              -1,
-          })
-          .limit(
-            100
-          )
-          .lean();
+              incidentId,
+            },
+            {
+              limit:
+                100,
+            }
+          );
 
       return res
         .status(
@@ -563,10 +534,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // EVIDENCE
-  // ==========================================================================
-
   async getVerificationEvidence(
     req,
     res,
@@ -584,17 +551,17 @@ class VerificationController {
         req.params;
 
       const verification =
-        await RecoveryVerification
-          .findOne({
-            verificationId,
+        await recoveryVerificationRepository
+          .findByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
-
-            environmentId:
-              scope.environmentId,
-          })
-          .lean();
+              environmentId:
+                scope.environmentId,
+            },
+            verificationId
+          );
 
       if (
         !verification
@@ -669,10 +636,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // CLOSURE ELIGIBILITY
-  // ==========================================================================
-
   async getClosureEligibility(
     req,
     res,
@@ -690,8 +653,8 @@ class VerificationController {
         req.params;
 
       const verification =
-        await RecoveryVerification
-          .findOne({
+        await recoveryVerificationRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -699,11 +662,7 @@ class VerificationController {
               scope.environmentId,
 
             incidentId,
-
-            isCurrent:
-              true,
-          })
-          .lean();
+          });
 
       if (
         !verification
@@ -773,10 +732,6 @@ class VerificationController {
     }
   }
 
-  // ==========================================================================
-  // SCOPE
-  // ==========================================================================
-
   resolveScope(
     req
   ) {
@@ -818,10 +773,6 @@ class VerificationController {
         ),
     };
   }
-
-  // ==========================================================================
-  // SERIALIZATION
-  // ==========================================================================
 
   serializeVerification(
     verification

@@ -1,18 +1,10 @@
 "use strict";
 
-const mongoose =
+const {
+  recoveryDecisionRepository,
+} =
   require(
-    "mongoose"
-  );
-
-const RecoveryDecision =
-  require(
-    "../models/RecoveryDecision"
-  );
-
-const RecoveryDecisionRun =
-  require(
-    "../models/RecoveryDecisionRun"
+    "../persistence/repositories"
   );
 
 const recoveryDecisionQueueService =
@@ -46,8 +38,8 @@ class RecoveryDecisionController {
       );
 
       const decision =
-        await RecoveryDecision
-          .findOne({
+        await recoveryDecisionRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -55,11 +47,7 @@ class RecoveryDecisionController {
               scope.environmentId,
 
             incidentId,
-
-            isCurrent:
-              true,
-          })
-          .lean();
+          });
 
       if (
         !decision
@@ -141,24 +129,21 @@ class RecoveryDecisionController {
         );
 
       const decisions =
-        await RecoveryDecision
-          .find({
-            organizationId:
-              scope.organizationId,
+        await recoveryDecisionRepository
+          .findHistory(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            revision:
-              -1,
-          })
-          .limit(
-            limit
-          )
-          .lean();
+              incidentId,
+            },
+            {
+              limit,
+            }
+          );
 
       return res
         .status(
@@ -217,62 +202,24 @@ class RecoveryDecisionController {
         incidentId
       );
 
-      if (
-        !decisionId
-      ) {
-        throw Object.assign(
-          new Error(
-            "decisionId is required"
-          ),
-          {
-            code:
-              "RECOVERY_DECISION_ID_REQUIRED",
-
-            status:
-              400,
-          }
-        );
-      }
-
-      const query = {
-        organizationId:
-          scope.organizationId,
-
-        environmentId:
-          scope.environmentId,
-
-        incidentId,
-      };
-
-      if (
-        mongoose
-          .Types
-          .ObjectId
-          .isValid(
-            decisionId
-          )
-      ) {
-        query.$or = [
-          {
-            _id:
-              decisionId,
-          },
-
-          {
-            decisionId,
-          },
-        ];
-      } else {
-        query.decisionId =
-          decisionId;
-      }
+      this.assertDecisionId(
+        decisionId
+      );
 
       const decision =
-        await RecoveryDecision
-          .findOne(
-            query
-          )
-          .lean();
+        await recoveryDecisionRepository
+          .findByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
+
+              environmentId:
+                scope.environmentId,
+
+              incidentId,
+            },
+            decisionId
+          );
 
       if (
         !decision
@@ -342,7 +289,11 @@ class RecoveryDecisionController {
         incidentId
       );
 
-      const decisionQuery = {
+      this.assertDecisionId(
+        decisionId
+      );
+
+      const repositoryScope = {
         organizationId:
           scope.organizationId,
 
@@ -352,35 +303,12 @@ class RecoveryDecisionController {
         incidentId,
       };
 
-      if (
-        mongoose
-          .Types
-          .ObjectId
-          .isValid(
-            decisionId
-          )
-      ) {
-        decisionQuery.$or = [
-          {
-            _id:
-              decisionId,
-          },
-
-          {
-            decisionId,
-          },
-        ];
-      } else {
-        decisionQuery.decisionId =
-          decisionId;
-      }
-
       const decision =
-        await RecoveryDecision
-          .findOne(
-            decisionQuery
-          )
-          .lean();
+        await recoveryDecisionRepository
+          .findByIdentifier(
+            repositoryScope,
+            decisionId
+          );
 
       if (
         !decision
@@ -403,21 +331,33 @@ class RecoveryDecisionController {
           });
       }
 
+      if (
+        !decision.runId
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            success:
+              false,
+
+            error: {
+              code:
+                "RECOVERY_DECISION_RUN_NOT_FOUND",
+
+              message:
+                "Recovery decision run not found.",
+            },
+          });
+      }
+
       const run =
-        await RecoveryDecisionRun
-          .findOne({
-            runId:
-              decision.runId,
-
-            organizationId:
-              scope.organizationId,
-
-            environmentId:
-              scope.environmentId,
-
-            incidentId,
-          })
-          .lean();
+        await recoveryDecisionRepository
+          .findRunByIdentifier(
+            repositoryScope,
+            decision.runId
+          );
 
       if (
         !run
@@ -651,13 +591,20 @@ class RecoveryDecisionController {
     }
 
     return {
-      organizationId,
-      environmentId,
+      organizationId:
+        String(
+          organizationId
+        ),
+
+      environmentId:
+        String(
+          environmentId
+        ),
     };
   }
 
   // ==========================================================================
-  // INCIDENT ID
+  // VALIDATION
   // ==========================================================================
 
   assertIncidentId(
@@ -681,6 +628,48 @@ class RecoveryDecisionController {
     }
   }
 
+  assertDecisionId(
+    decisionId
+  ) {
+    if (
+      !decisionId
+    ) {
+      throw Object.assign(
+        new Error(
+          "decisionId is required"
+        ),
+        {
+          code:
+            "RECOVERY_DECISION_ID_REQUIRED",
+
+          status:
+            400,
+        }
+      );
+    }
+  }
+
+  // ==========================================================================
+  // IDENTIFIER SERIALIZATION
+  // ==========================================================================
+
+  identifierString(
+    value
+  ) {
+    if (
+      value ===
+        null ||
+      value ===
+        undefined
+    ) {
+      return null;
+    }
+
+    return String(
+      value
+    );
+  }
+
   // ==========================================================================
   // SERIALIZE DECISION
   // ==========================================================================
@@ -690,16 +679,22 @@ class RecoveryDecisionController {
   ) {
     return {
       id:
-        decision._id,
+        this.identifierString(
+          decision._id
+        ),
 
       decisionId:
         decision.decisionId,
 
       incidentId:
-        decision.incidentId,
+        this.identifierString(
+          decision.incidentId
+        ),
 
       diagnosisId:
-        decision.diagnosisId,
+        this.identifierString(
+          decision.diagnosisId
+        ),
 
       diagnosisRevision:
         decision.diagnosisRevision,
@@ -774,14 +769,16 @@ class RecoveryDecisionController {
         null,
 
       supersedesDecisionId:
-        decision
-          .supersedesDecisionId ||
-        null,
+        this.identifierString(
+          decision
+            .supersedesDecisionId
+        ),
 
       supersededByDecisionId:
-        decision
-          .supersededByDecisionId ||
-        null,
+        this.identifierString(
+          decision
+            .supersededByDecisionId
+        ),
 
       generatedAt:
         decision.generatedAt,
@@ -806,7 +803,9 @@ class RecoveryDecisionController {
   ) {
     return {
       id:
-        decision._id,
+        this.identifierString(
+          decision._id
+        ),
 
       decisionId:
         decision.decisionId,
@@ -862,22 +861,30 @@ class RecoveryDecisionController {
   ) {
     return {
       id:
-        run._id,
+        this.identifierString(
+          run._id
+        ),
 
       runId:
         run.runId,
 
       incidentId:
-        run.incidentId,
+        this.identifierString(
+          run.incidentId
+        ),
 
       diagnosisId:
-        run.diagnosisId,
+        this.identifierString(
+          run.diagnosisId
+        ),
 
       diagnosisRevision:
         run.diagnosisRevision,
 
       decisionId:
-        run.decisionId,
+        this.identifierString(
+          run.decisionId
+        ),
 
       decisionType:
         run.decisionType,

@@ -1,12 +1,24 @@
 "use strict";
 
-const mongoose =
-  require(
-    "mongoose"
-  );
+/**
+ * AIRA Database Service
+ *
+ * Phase 13 — PostgreSQL Primary Runtime
+ *
+ * Production runtime connects only to PostgreSQL.
+ *
+ * Provider-selection helpers are retained as PURE compatibility/control
+ * functions for:
+ *
+ * - migration tooling
+ * - retirement certification
+ * - historical provider-selection tests
+ *
+ * They DO NOT create Mongo connections.
+ */
 
 const {
-  checkPostgresHealth,
+  getPostgresPool,
   closePostgresPool,
 } =
   require(
@@ -14,569 +26,548 @@ const {
   );
 
 
-// ============================================================================
-// STATE
-// ============================================================================
+const SUPPORTED_PROVIDERS =
+  new Set([
+    "mongo",
+    "postgres",
+  ]);
 
-let memoryServer =
+
+const MONGO_REQUIRED_MIGRATION_MODES =
+  new Set([
+    "shadow",
+    "shadow-read",
+    "shadow_read",
+    "shadow-write",
+    "shadow_write",
+    "dual-read",
+    "dual_read",
+    "dual-write",
+    "dual_write",
+    "backfill-source",
+    "backfill_source",
+  ]);
+
+
+const POSTGRES_REQUIRED_MIGRATION_MODES =
+  new Set([
+    "shadow",
+    "shadow-read",
+    "shadow_read",
+    "shadow-write",
+    "shadow_write",
+    "dual-read",
+    "dual_read",
+    "dual-write",
+    "dual_write",
+    "backfill",
+    "backfill-target",
+    "backfill_target",
+    "verify",
+    "verification",
+  ]);
+
+
+let connected =
+  false;
+
+let connectedAt =
   null;
 
-let activeBackend =
-  null;
-
 
 // ============================================================================
-// CONFIG
+// PROVIDER / MIGRATION CONTROL HELPERS
 // ============================================================================
 
 function normalizeProvider(
-  value
+  provider
 ) {
-  const provider =
+  const normalized =
     String(
-      value ||
-      "mongo"
+      provider ||
+      process.env
+        .PERSISTENCE_PROVIDER ||
+      "postgres"
     )
       .trim()
       .toLowerCase();
 
+
   if (
-    ![
-      "mongo",
-      "postgres",
-    ].includes(
-      provider
-    )
+    !SUPPORTED_PROVIDERS
+      .has(
+        normalized
+      )
   ) {
     throw Object.assign(
       new Error(
-        `Unsupported persistence provider: ${provider}`
+        `Unsupported persistence provider: ${normalized || "<empty>"}`
       ),
       {
         code:
-          "PERSISTENCE_PROVIDER_INVALID",
+          "UNSUPPORTED_PERSISTENCE_PROVIDER",
+
+        provider:
+          normalized ||
+          null,
       }
     );
   }
 
-  return provider;
+
+  return normalized;
 }
 
 
 function normalizeMigrationMode(
   value
 ) {
+  if (
+    value ===
+      undefined ||
+    value ===
+      null ||
+    value ===
+      false
+  ) {
+    return "";
+  }
+
+
+  if (
+    value ===
+    true
+  ) {
+    return "shadow";
+  }
+
+
   return String(
-    value ||
-    "disabled"
+    value
   )
     .trim()
     .toLowerCase();
 }
 
 
+function resolveMigrationMode(
+  options = {}
+) {
+  return normalizeMigrationMode(
+    options.migrationMode ??
+    options.mode ??
+    options.migration ??
+    options.shadowMode ??
+    process.env
+      .PERSISTENCE_MIGRATION_MODE ??
+    process.env
+      .MIGRATION_MODE ??
+    ""
+  );
+}
+
+
+/**
+ * Determine whether a Mongo connection WOULD be required by the requested
+ * provider/migration configuration.
+ *
+ * IMPORTANT:
+ * This function does not import Mongoose and does not connect to MongoDB.
+ */
 function shouldConnectMongo(
-  {
-    provider,
-    migrationMode,
-  }
+  options = {}
 ) {
-  /*
-   * PostgreSQL-primary production runtime must be capable of starting
-   * without MongoDB.
-   *
-   * Migration/backfill/shadow modes still need Mongo because Mongo is
-   * either the migration source or the authoritative read side.
-   */
-  if (
-    provider ===
-      "mongo"
-  ) {
-    return true;
-  }
-
-  return [
-    "backfill",
-    "shadow",
-    "verify",
-  ].includes(
-    migrationMode
-  );
-}
-
-
-function shouldConnectPostgres(
-  {
-    provider,
-    migrationMode,
-  }
-) {
-  if (
-    provider ===
-      "postgres"
-  ) {
-    return true;
-  }
-
-  if (
-    process.env
-      .POSTGRES_ENABLED ===
-    "true"
-  ) {
-    return true;
-  }
-
-  return [
-    "backfill",
-    "shadow",
-    "verify",
-    "cutover",
-  ].includes(
-    migrationMode
-  );
-}
-
-
-// ============================================================================
-// REDACTION
-// ============================================================================
-
-function redactUrl(
-  url
-) {
-  try {
-    const parsed =
-      new URL(
-        url
-      );
-
-    if (
-      parsed.password
-    ) {
-      parsed.password =
-        "***";
-    }
-
-    if (
-      parsed.username
-    ) {
-      parsed.username =
-        "***";
-    }
-
-    return parsed
-      .toString();
-  } catch {
-    return "[redacted]";
-  }
-}
-
-
-// ============================================================================
-// MONGO
-// ============================================================================
-
-async function connectMongo() {
-  if (
-    mongoose.connection
-      .readyState ===
-    1
-  ) {
-    return {
-      backend:
-        "mongo",
-
-      connected:
-        true,
-
-      reused:
-        true,
-
-      inMemory:
-        Boolean(
-          memoryServer
-        ),
-    };
-  }
-
-  const configuredUri =
-    process.env
-      .MONGODB_URI ||
-    "mongodb://127.0.0.1:27017/autonomous_incident_agent";
-
-  try {
-    await mongoose
-      .connect(
-        configuredUri
-      );
-
-    console.log(
-      `[db] Connected to MongoDB at ${redactUrl(configuredUri)}`
-    );
-
-    return {
-      backend:
-        "mongo",
-
-      connected:
-        true,
-
-      reused:
-        false,
-
-      uri:
-        configuredUri,
-
-      inMemory:
-        false,
-    };
-  } catch (
-    error
-  ) {
-    /*
-     * Never silently start an in-memory database in production.
-     */
-    if (
-      process.env
-        .NODE_ENV ===
-        "production" ||
-      process.env
-        .DISABLE_MEMORY_DB ===
-        "true"
-    ) {
-      throw error;
-    }
-
-    console.warn(
-      "[db] Failed to connect to configured MongoDB URI. Falling back to in-memory MongoDB."
-    );
-
-    const {
-      MongoMemoryServer,
-    } =
-      require(
-        "mongodb-memory-server"
-      );
-
-    memoryServer =
-      await MongoMemoryServer
-        .create();
-
-    const memoryUri =
-      memoryServer
-        .getUri(
-          "autonomous_incident_agent"
-        );
-
-    await mongoose
-      .connect(
-        memoryUri
-      );
-
-    console.log(
-      "[db] Connected to in-memory MongoDB instance"
-    );
-
-    return {
-      backend:
-        "mongo",
-
-      connected:
-        true,
-
-      reused:
-        false,
-
-      uri:
-        memoryUri,
-
-      inMemory:
-        true,
-    };
-  }
-}
-
-
-// ============================================================================
-// POSTGRESQL
-// ============================================================================
-
-async function connectPostgres() {
-  const health =
-    await checkPostgresHealth();
-
-  if (
-    health?.healthy !==
-    true
-  ) {
-    throw Object.assign(
-      new Error(
-        health?.error?.message ||
-        "PostgreSQL health check failed"
-      ),
-      {
-        code:
-          health?.error?.code ||
-          "POSTGRES_HEALTH_FAILED",
-
-        health,
-      }
-    );
-  }
-
-  console.log(
-    "[db] Connected to PostgreSQL"
-  );
-
-  return {
-    backend:
-      "postgres",
-
-    connected:
-      true,
-
-    health,
-  };
-}
-
-
-// ============================================================================
-// MAIN CONNECT
-// ============================================================================
-
-async function connectDatabase() {
   const provider =
     normalizeProvider(
-      process.env
-        .PERSISTENCE_PROVIDER
+      options.provider
     );
 
   const migrationMode =
-    normalizeMigrationMode(
-      process.env
-        .MIGRATION_MODE
+    resolveMigrationMode(
+      options
     );
 
-  const mongoRequired =
-    shouldConnectMongo({
-      provider,
-      migrationMode,
-    });
 
-  const postgresRequired =
-    shouldConnectPostgres({
-      provider,
-      migrationMode,
-    });
+  if (
+    provider ===
+    "mongo"
+  ) {
+    return true;
+  }
 
-  const result = {
-    provider,
 
-    migrationMode,
+  if (
+    MONGO_REQUIRED_MIGRATION_MODES
+      .has(
+        migrationMode
+      )
+  ) {
+    return true;
+  }
 
-    mongo: {
-      required:
-        mongoRequired,
-
-      connected:
-        false,
-    },
-
-    postgres: {
-      required:
-        postgresRequired,
-
-      connected:
-        false,
-    },
-  };
 
   /*
-   * PostgreSQL-primary mode validates PostgreSQL first.
-   *
-   * AIRA must fail closed rather than quietly reverting to Mongo.
+   * Explicit compatibility switches used by migration scripts.
    */
   if (
-    postgresRequired
+    options.requireMongo ===
+      true ||
+    options.mongoRequired ===
+      true ||
+    options.shadow ===
+      true ||
+    options.shadowRead ===
+      true
   ) {
-    result.postgres =
-      {
-        required:
-          true,
-
-        ...(
-          await connectPostgres()
-        ),
-      };
+    return true;
   }
+
+
+  return false;
+}
+
+
+/**
+ * Determine whether PostgreSQL is required by the requested
+ * provider/migration configuration.
+ *
+ * Pure function. Does not open a database connection.
+ */
+function shouldConnectPostgres(
+  options = {}
+) {
+  const provider =
+    normalizeProvider(
+      options.provider
+    );
+
+  const migrationMode =
+    resolveMigrationMode(
+      options
+    );
+
 
   if (
-    mongoRequired
+    provider ===
+    "postgres"
   ) {
-    result.mongo =
-      {
-        required:
-          true,
-
-        ...(
-          await connectMongo()
-        ),
-      };
+    return true;
   }
 
-  activeBackend = {
-    provider,
 
-    migrationMode,
+  if (
+    POSTGRES_REQUIRED_MIGRATION_MODES
+      .has(
+        migrationMode
+      )
+  ) {
+    return true;
+  }
 
-    mongoRequired,
 
-    postgresRequired,
-  };
+  if (
+    options.requirePostgres ===
+      true ||
+    options.postgresRequired ===
+      true ||
+    options.backfill ===
+      true ||
+    options.verify ===
+      true
+  ) {
+    return true;
+  }
 
-  console.log(
-    "[db] Persistence runtime:",
-    {
-      provider,
 
-      migrationMode,
-
-      mongo:
-        result.mongo
-          .connected,
-
-      postgres:
-        result.postgres
-          .connected,
-    }
-  );
-
-  return result;
+  return false;
 }
 
 
 // ============================================================================
-// DISCONNECT
+// POSTGRESQL RUNTIME
 // ============================================================================
 
-async function disconnectDatabase() {
-  const errors = [];
-
+async function connectDatabase() {
   if (
-    mongoose.connection
-      .readyState !==
-    0
+    connected ===
+    true
   ) {
-    try {
-      await mongoose
-        .disconnect();
+    return {
+      provider:
+        "postgres",
 
-      console.log(
-        "[db] MongoDB disconnected"
-      );
-    } catch (
-      error
-    ) {
-      errors.push(
-        error
-      );
-    }
+      connected:
+        true,
+
+      connectedAt,
+
+      reused:
+        true,
+    };
   }
 
-  if (
-    memoryServer
-  ) {
-    try {
-      await memoryServer
-        .stop();
-    } catch (
-      error
-    ) {
-      errors.push(
-        error
-      );
-    } finally {
-      memoryServer =
-        null;
-    }
-  }
 
   /*
-   * It is safe for server.js to also call closePostgresPool().
-   * postgresPool.close is idempotent.
+   * Phase 13 production runtime is PostgreSQL-only.
+   *
+   * Provider-selection helpers above remain only for migration certification
+   * and tooling. They must never cause normal runtime Mongo startup.
    */
+  const pool =
+    getPostgresPool();
+
+
   try {
-    await closePostgresPool();
+    const result =
+      await pool.query(
+        `
+          SELECT
+            current_database() AS database_name,
+            current_user AS database_user,
+            NOW() AS connected_at,
+            version() AS server_version
+        `
+      );
+
+
+    const row =
+      result.rows[0] ||
+      {};
+
+
+    connected =
+      true;
+
+    connectedAt =
+      row.connected_at ||
+      new Date();
+
+
+    console.log(
+      [
+        "[db]",
+        "Connected to PostgreSQL",
+        `database=${row.database_name || "unknown"}`,
+        `user=${row.database_user || "unknown"}`,
+      ].join(
+        " | "
+      )
+    );
+
+
+    return {
+      provider:
+        "postgres",
+
+      connected:
+        true,
+
+      connectedAt,
+
+      database:
+        row.database_name ||
+        null,
+
+      user:
+        row.database_user ||
+        null,
+
+      serverVersion:
+        row.server_version ||
+        null,
+
+      reused:
+        false,
+    };
   } catch (
     error
   ) {
-    errors.push(
-      error
-    );
-  }
+    connected =
+      false;
 
-  activeBackend =
-    null;
+    connectedAt =
+      null;
 
-  if (
-    errors.length >
-    0
-  ) {
-    const error =
+
+    throw Object.assign(
       new Error(
-        "One or more database shutdown operations failed"
-      );
+        `PostgreSQL connection failed: ${error.message}`
+      ),
+      {
+        code:
+          error.code ||
+          "POSTGRES_CONNECTION_FAILED",
 
-    error.code =
-      "DATABASE_SHUTDOWN_FAILED";
-
-    error.causes =
-      errors;
-
-    throw error;
+        cause:
+          error,
+      }
+    );
   }
 }
 
 
-// ============================================================================
-// STATUS
-// ============================================================================
+async function disconnectDatabase() {
+  if (
+    connected !==
+      true
+  ) {
+    return {
+      provider:
+        "postgres",
 
-function getDatabaseRuntimeStatus() {
+      disconnected:
+        true,
+
+      wasConnected:
+        false,
+    };
+  }
+
+
+  await closePostgresPool();
+
+
+  connected =
+    false;
+
+  connectedAt =
+    null;
+
+
+  console.log(
+    "[db] PostgreSQL connection pool closed"
+  );
+
+
   return {
-    active:
-      activeBackend
-        ? {
-            ...activeBackend,
-          }
-        : null,
+    provider:
+      "postgres",
 
-    mongoReadyState:
-      mongoose.connection
-        .readyState,
+    disconnected:
+      true,
 
-    mongoConnected:
-      mongoose.connection
-        .readyState ===
-      1,
+    wasConnected:
+      true,
   };
 }
 
 
-// ============================================================================
-// EXPORTS
-// ============================================================================
+async function getDatabaseHealth() {
+  try {
+    const pool =
+      getPostgresPool();
+
+    const startedAt =
+      Date.now();
+
+
+    const result =
+      await pool.query(
+        `
+          SELECT
+            1 AS healthy,
+            NOW() AS checked_at,
+            current_database() AS database_name
+        `
+      );
+
+
+    return {
+      healthy:
+        result.rows[0]
+          ?.healthy ===
+        1,
+
+      provider:
+        "postgres",
+
+      database:
+        result.rows[0]
+          ?.database_name ||
+        null,
+
+      checkedAt:
+        result.rows[0]
+          ?.checked_at ||
+        new Date(),
+
+      latencyMs:
+        Date.now() -
+        startedAt,
+
+      connected:
+        true,
+    };
+  } catch (
+    error
+  ) {
+    return {
+      healthy:
+        false,
+
+      provider:
+        "postgres",
+
+      database:
+        null,
+
+      checkedAt:
+        new Date(),
+
+      latencyMs:
+        null,
+
+      connected:
+        false,
+
+      error: {
+        code:
+          error.code ||
+          "POSTGRES_HEALTH_CHECK_FAILED",
+
+        message:
+          String(
+            error.message ||
+            "PostgreSQL health check failed"
+          ),
+      },
+    };
+  }
+}
+
+
+function isDatabaseConnected() {
+  return (
+    connected ===
+    true
+  );
+}
+
+
+function getDatabaseProvider() {
+  return "postgres";
+}
+
 
 module.exports = {
+  // Runtime
   connectDatabase,
 
   disconnectDatabase,
 
-  getDatabaseRuntimeStatus,
+  getDatabaseHealth,
 
+  isDatabaseConnected,
+
+  getDatabaseProvider,
+
+
+  // Migration/control compatibility
   normalizeProvider,
 
   normalizeMigrationMode,
+
+  resolveMigrationMode,
 
   shouldConnectMongo,
 

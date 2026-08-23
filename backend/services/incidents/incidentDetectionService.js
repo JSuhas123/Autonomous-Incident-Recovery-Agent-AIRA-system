@@ -1,30 +1,26 @@
 "use strict";
 
-const mongoose =
-  require(
-    "mongoose"
-  );
-
 const {
-  Signal,
+  incidentRepository,
+  signalRepository,
+  signalCorrelationRepository,
 } =
   require(
-    "../../models/Signal"
+    "../../persistence/repositories"
   );
 
 const {
-  SignalCorrelation,
-} =
-  require(
-    "../../models/SignalCorrelation"
-  );
-
-const {
-  Incident,
   ACTIVE_INCIDENT_STATUSES,
 } =
   require(
-    "../../models/Incident"
+    "../../constants/incidents"
+  );
+
+const {
+  isDatabaseIdentifier,
+} =
+  require(
+    "../../utils/identifier"
   );
 
 class IncidentDetectionService {
@@ -100,7 +96,8 @@ class IncidentDetectionService {
     }
 
     /*
-     * Signal already classified by Phase 4 as non-candidate.
+     * Signal already classified by the signal pipeline
+     * as a non-candidate.
      */
     if (
       !signal
@@ -171,7 +168,10 @@ class IncidentDetectionService {
           "open_or_update",
 
         reason:
-          `Cross-provider correlation reached confidence ${correlationGroup.confidenceScore.toFixed(
+          `Cross-provider correlation reached confidence ${Number(
+            correlationGroup
+              .confidenceScore
+          ).toFixed(
             2
           )}.`,
 
@@ -240,21 +240,34 @@ class IncidentDetectionService {
       return null;
     }
 
-    return SignalCorrelation
-      .findOne({
-        organizationId:
-          signal
-            .organizationId,
+    /*
+     * Phase 13 provider-neutral persistence boundary.
+     *
+     * Previous implementation:
+     *
+     *   SignalCorrelation.findOne(...).lean()
+     *
+     * Repository implementation now owns Mongo/PostgreSQL selection.
+     */
+    return signalCorrelationRepository
+      .findGroup(
+        {
+          organizationId:
+            String(
+              signal
+                .organizationId
+            ),
 
-        environmentId:
-          signal
-            .environmentId,
+          environmentId:
+            String(
+              signal
+                .environmentId
+            ),
+        },
 
-        correlationGroupId:
-          signal
-            .correlationGroupId,
-      })
-      .lean();
+        signal
+          .correlationGroupId
+      );
   }
 
   // ==========================================================================
@@ -274,6 +287,20 @@ class IncidentDetectionService {
       return null;
     }
 
+    const scope = {
+      organizationId:
+        String(
+          signal
+            .organizationId
+        ),
+
+      environmentId:
+        String(
+          signal
+            .environmentId
+        ),
+    };
+
     /*
      * Prefer correlation-group match.
      */
@@ -282,15 +309,9 @@ class IncidentDetectionService {
         .correlationGroupId
     ) {
       const byGroup =
-        await Incident
+        await incidentRepository
           .findOne({
-            organizationId:
-              signal
-                .organizationId,
-
-            environmentId:
-              signal
-                .environmentId,
+            ...scope,
 
             correlationGroupId:
               signal
@@ -302,23 +323,22 @@ class IncidentDetectionService {
             },
           });
 
-      if (byGroup) {
+      if (
+        byGroup
+      ) {
         return byGroup;
       }
     }
 
     /*
      * Fallback to signal fingerprint.
+     *
+     * Keep service ownership in the query so incidents for
+     * unrelated services cannot collide solely by fingerprint.
      */
-    return Incident
+    return incidentRepository
       .findOne({
-        organizationId:
-          signal
-            .organizationId,
-
-        environmentId:
-          signal
-            .environmentId,
+        ...scope,
 
         serviceId:
           signal
@@ -487,7 +507,8 @@ class IncidentDetectionService {
 
     const suffix =
       correlationGroup
-        ?.providerCount > 1
+        ?.providerCount >
+        1
         ? ` (${correlationGroup.providerCount} providers)`
         : "";
 
@@ -508,7 +529,8 @@ class IncidentDetectionService {
     signal,
     correlationGroup = null
   ) {
-    const parts = [];
+    const parts =
+      [];
 
     if (
       signal.description
@@ -538,7 +560,8 @@ class IncidentDetectionService {
 
     if (
       correlationGroup
-        ?.providerCount > 1
+        ?.providerCount >
+        1
     ) {
       parts.push(
         `Correlated evidence received from ${correlationGroup.providerCount} providers.`
@@ -577,14 +600,14 @@ class IncidentDetectionService {
 
     if (
       signal.source ===
-        "manual"
+      "manual"
     ) {
       return "manual";
     }
 
     if (
       signal.signalType ===
-        "alert"
+      "alert"
     ) {
       return "alert";
     }
@@ -615,17 +638,33 @@ class IncidentDetectionService {
       );
     }
 
+    const organizationId =
+      String(
+        signal
+          .organizationId
+      ).trim();
+
+    const environmentId =
+      String(
+        signal
+          .environmentId
+      ).trim();
+
+    /*
+     * Phase 13:
+     *
+     * Do not use mongoose.Types.ObjectId.isValid().
+     *
+     * PostgreSQL UUIDs and stable public IDs are valid database
+     * identifiers too.
+     */
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
-          signal
-            .organizationId
-        ) ||
-      !mongoose.Types.ObjectId
-        .isValid(
-          signal
-            .environmentId
-        )
+      !isDatabaseIdentifier(
+        organizationId
+      ) ||
+      !isDatabaseIdentifier(
+        environmentId
+      )
     ) {
       throw Object.assign(
         new Error(
@@ -637,6 +676,12 @@ class IncidentDetectionService {
         }
       );
     }
+
+    return {
+      organizationId,
+
+      environmentId,
+    };
   }
 
   // ==========================================================================
@@ -647,17 +692,55 @@ class IncidentDetectionService {
     context,
     signalId
   ) {
-    return Signal
+    if (
+      !context
+        ?.organizationId ||
+      !context
+        ?.environmentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "Signal lookup requires organization and environment scope"
+        ),
+        {
+          code:
+            "INCIDENT_SIGNAL_LOOKUP_SCOPE_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      !signalId
+    ) {
+      throw Object.assign(
+        new Error(
+          "signalId is required"
+        ),
+        {
+          code:
+            "INCIDENT_SIGNAL_ID_REQUIRED",
+        }
+      );
+    }
+
+    return signalRepository
       .findOne({
         organizationId:
-          context
-            .organizationId,
+          String(
+            context
+              .organizationId
+          ),
 
         environmentId:
-          context
-            .environmentId,
+          String(
+            context
+              .environmentId
+          ),
 
-        signalId,
+        signalId:
+          String(
+            signalId
+          ),
       });
   }
 }

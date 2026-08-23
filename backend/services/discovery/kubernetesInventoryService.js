@@ -1,16 +1,17 @@
-"use strict";
+﻿"use strict";
 
 const crypto =
   require("node:crypto");
 
-const KubernetesResource =
-  require(
-    "../../models/KubernetesResource"
-  );
+const {
+  KubernetesResource,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
 const KubernetesClusterSnapshot =
   require(
-    "../../models/KubernetesClusterSnapshot"
+    "../../persistence/operational/PostgresKubernetesClusterSnapshot"
   );
 
 const kubernetesInventoryAdapter =
@@ -87,7 +88,7 @@ class KubernetesInventoryService {
 
     /*
      * ========================================================================
-     * PHASE A — PROVIDER INVENTORY
+     * PHASE A â€” PROVIDER INVENTORY
      * ========================================================================
      *
      * All provider records are persisted BEFORE anything is marked inactive.
@@ -198,7 +199,7 @@ class KubernetesInventoryService {
 
     /*
      * ========================================================================
-     * PHASE B — PROVIDER RECONCILIATION
+     * PHASE B â€” PROVIDER RECONCILIATION
      * ========================================================================
      *
      * Reached only if every discovered provider resource was persisted.
@@ -251,7 +252,7 @@ class KubernetesInventoryService {
 
     /*
      * ========================================================================
-     * PHASE C — CANONICAL INVENTORY
+     * PHASE C â€” CANONICAL INVENTORY
      * ========================================================================
      */
 
@@ -280,7 +281,7 @@ class KubernetesInventoryService {
 
     /*
      * ========================================================================
-     * PHASE D — SUCCESS SNAPSHOT
+     * PHASE D â€” SUCCESS SNAPSHOT
      * ========================================================================
      *
      * Snapshot is written AFTER provider + canonical persistence succeeds.

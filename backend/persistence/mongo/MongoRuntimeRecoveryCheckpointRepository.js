@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const RuntimeRecoveryCheckpointRepository =
   require(
@@ -98,6 +98,51 @@ class MongoRuntimeRecoveryCheckpointRepository
         .findOne(
           filter
         );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+
+  async list(
+    filter,
+    options = {},
+    transaction = null
+  ) {
+    let query =
+      RuntimeRecoveryCheckpoint
+        .find(
+          filter
+        );
+
+    if (options.sort) {
+      query =
+        query.sort(
+          options.sort
+        );
+    }
+
+    if (options.limit) {
+      query =
+        query.limit(
+          options.limit
+        );
+    }
 
     const session =
       sessionFrom(

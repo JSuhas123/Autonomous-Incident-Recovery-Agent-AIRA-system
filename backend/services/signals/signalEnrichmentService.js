@@ -1,19 +1,22 @@
 "use strict";
 
-const mongoose =
-  require(
-    "mongoose"
-  );
+const {
+  isLegacyObjectId,
+} = require(
+  "../../persistence/operational/identifierCompat"
+);
 
-const Service =
-  require(
-    "../../models/Service"
-  );
+const {
+  Service,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
-const InfrastructureResource =
-  require(
-    "../../models/InfrastructureResource"
-  );
+const {
+  InfrastructureResource,
+} = require(
+  "../../persistence/operational/inventoryModels"
+);
 
 class SignalEnrichmentService {
   async enrich(
@@ -200,8 +203,7 @@ class SignalEnrichmentService {
      */
     if (
       signal.serviceId &&
-      mongoose.Types.ObjectId
-        .isValid(
+      isLegacyObjectId(
           signal.serviceId
         )
     ) {

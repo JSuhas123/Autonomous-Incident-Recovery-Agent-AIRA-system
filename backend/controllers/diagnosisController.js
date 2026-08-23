@@ -1,18 +1,11 @@
 "use strict";
 
-const mongoose =
+const {
+  incidentDiagnosisRepository,
+  agentIntelligenceRunRepository,
+} =
   require(
-    "mongoose"
-  );
-
-const IncidentDiagnosis =
-  require(
-    "../models/IncidentDiagnosis"
-  );
-
-const AgentIntelligenceRun =
-  require(
-    "../models/AgentIntelligenceRun"
+    "../persistence/repositories"
   );
 
 const diagnosisQueueService =
@@ -46,8 +39,8 @@ class DiagnosisController {
       );
 
       const diagnosis =
-        await IncidentDiagnosis
-          .findOne({
+        await incidentDiagnosisRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -55,11 +48,7 @@ class DiagnosisController {
               scope.environmentId,
 
             incidentId,
-
-            isCurrent:
-              true,
-          })
-          .lean();
+          });
 
       if (
         !diagnosis
@@ -142,24 +131,21 @@ class DiagnosisController {
         );
 
       const diagnoses =
-        await IncidentDiagnosis
-          .find({
-            organizationId:
-              scope.organizationId,
+        await incidentDiagnosisRepository
+          .findHistory(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            revision:
-              -1,
-          })
-          .limit(
-            limit
-          )
-          .lean();
+              incidentId,
+            },
+            {
+              limit,
+            }
+          );
 
       return res
         .status(
@@ -218,65 +204,24 @@ class DiagnosisController {
         incidentId
       );
 
-      if (
-        !diagnosisId
-      ) {
-        throw Object.assign(
-          new Error(
-            "diagnosisId is required"
-          ),
-          {
-            code:
-              "DIAGNOSIS_ID_REQUIRED",
-
-            status:
-              400,
-          }
-        );
-      }
-
-      const query = {
-        organizationId:
-          scope.organizationId,
-
-        environmentId:
-          scope.environmentId,
-
-        incidentId,
-      };
-
-      /*
-       * Support both Mongo _id and external diagnosisId.
-       */
-      if (
-        mongoose
-          .Types
-          .ObjectId
-          .isValid(
-            diagnosisId
-          )
-      ) {
-        query.$or = [
-          {
-            _id:
-              diagnosisId,
-          },
-
-          {
-            diagnosisId,
-          },
-        ];
-      } else {
-        query.diagnosisId =
-          diagnosisId;
-      }
+      this.assertDiagnosisId(
+        diagnosisId
+      );
 
       const diagnosis =
-        await IncidentDiagnosis
-          .findOne(
-            query
-          )
-          .lean();
+        await incidentDiagnosisRepository
+          .findByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
+
+              environmentId:
+                scope.environmentId,
+
+              incidentId,
+            },
+            diagnosisId
+          );
 
       if (
         !diagnosis
@@ -346,7 +291,11 @@ class DiagnosisController {
         incidentId
       );
 
-      const diagnosisQuery = {
+      this.assertDiagnosisId(
+        diagnosisId
+      );
+
+      const repositoryScope = {
         organizationId:
           scope.organizationId,
 
@@ -356,35 +305,12 @@ class DiagnosisController {
         incidentId,
       };
 
-      if (
-        mongoose
-          .Types
-          .ObjectId
-          .isValid(
-            diagnosisId
-          )
-      ) {
-        diagnosisQuery.$or = [
-          {
-            _id:
-              diagnosisId,
-          },
-
-          {
-            diagnosisId,
-          },
-        ];
-      } else {
-        diagnosisQuery.diagnosisId =
-          diagnosisId;
-      }
-
       const diagnosis =
-        await IncidentDiagnosis
-          .findOne(
-            diagnosisQuery
-          )
-          .lean();
+        await incidentDiagnosisRepository
+          .findByIdentifier(
+            repositoryScope,
+            diagnosisId
+          );
 
       if (
         !diagnosis
@@ -410,47 +336,37 @@ class DiagnosisController {
       let run =
         null;
 
+      /*
+       * A diagnosis may point at the provider/database identifier
+       * of an intelligence run.
+       */
       if (
         diagnosis.runId
       ) {
         run =
-          await AgentIntelligenceRun
-            .findOne({
-              _id:
-                diagnosis.runId,
-
-              organizationId:
-                scope.organizationId,
-
-              environmentId:
-                scope.environmentId,
-
-              incidentId,
-            })
-            .lean();
+          await agentIntelligenceRunRepository
+            .findByIdentifier(
+              repositoryScope,
+              diagnosis.runId
+            );
       }
 
+      /*
+       * During migration/backfill or older diagnosis records,
+       * the diagnosis may only retain the public/external run ID.
+       */
       if (
         !run &&
         diagnosis
           .runExternalId
       ) {
         run =
-          await AgentIntelligenceRun
-            .findOne({
-              runId:
-                diagnosis
-                  .runExternalId,
-
-              organizationId:
-                scope.organizationId,
-
-              environmentId:
-                scope.environmentId,
-
-              incidentId,
-            })
-            .lean();
+          await agentIntelligenceRunRepository
+            .findByIdentifier(
+              repositoryScope,
+              diagnosis
+                .runExternalId
+            );
       }
 
       if (
@@ -651,8 +567,15 @@ class DiagnosisController {
     }
 
     return {
-      organizationId,
-      environmentId,
+      organizationId:
+        String(
+          organizationId
+        ),
+
+      environmentId:
+        String(
+          environmentId
+        ),
     };
   }
 
@@ -682,21 +605,67 @@ class DiagnosisController {
   }
 
   // ==========================================================================
+  // DIAGNOSIS ID
+  // ==========================================================================
+
+  assertDiagnosisId(
+    diagnosisId
+  ) {
+    if (
+      !diagnosisId
+    ) {
+      throw Object.assign(
+        new Error(
+          "diagnosisId is required"
+        ),
+        {
+          code:
+            "DIAGNOSIS_ID_REQUIRED",
+
+          status:
+            400,
+        }
+      );
+    }
+  }
+
+  // ==========================================================================
   // SERIALIZATION
   // ==========================================================================
+
+  identifierString(
+    value
+  ) {
+    if (
+      value ===
+        null ||
+      value ===
+        undefined
+    ) {
+      return null;
+    }
+
+    return String(
+      value
+    );
+  }
 
   serializeDiagnosis(
     diagnosis
   ) {
     return {
       id:
-        diagnosis._id,
+        this.identifierString(
+          diagnosis._id
+        ),
 
       diagnosisId:
         diagnosis.diagnosisId,
 
       incidentId:
-        diagnosis.incidentId,
+        this.identifierString(
+          diagnosis.incidentId
+        ),
 
       revision:
         diagnosis.revision,
@@ -815,7 +784,9 @@ class DiagnosisController {
   ) {
     return {
       id:
-        diagnosis._id,
+        this.identifierString(
+          diagnosis._id
+        ),
 
       diagnosisId:
         diagnosis.diagnosisId,
@@ -861,16 +832,22 @@ class DiagnosisController {
   ) {
     return {
       id:
-        run._id,
+        this.identifierString(
+          run._id
+        ),
 
       runId:
         run.runId,
 
       diagnosisId:
-        run.diagnosisId,
+        this.identifierString(
+          run.diagnosisId
+        ),
 
       incidentId:
-        run.incidentId,
+        this.identifierString(
+          run.incidentId
+        ),
 
       status:
         run.status,

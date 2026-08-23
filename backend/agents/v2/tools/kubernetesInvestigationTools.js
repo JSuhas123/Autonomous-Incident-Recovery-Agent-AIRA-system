@@ -1,5 +1,13 @@
 "use strict";
 
+const {
+  KubernetesResource,
+  KubernetesResourceRelation,
+} =
+  require(
+    "../../../persistence/operational/operationalModels"
+  );
+
 /**
  * Kubernetes Investigation Tools
  *
@@ -12,11 +20,7 @@
  * rather than granting an LLM direct access to the Kubernetes API.
  */
 
-const KubernetesResource =
-  require("../../../models/KubernetesResource");
 
-const KubernetesResourceRelation =
-  require("../../../models/KubernetesResourceRelation");
 
 class KubernetesInvestigationTools {
   async findPod({

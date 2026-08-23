@@ -1,5 +1,10 @@
-const IncidentMemory = require("../../models/IncidentMemory");
+﻿"use strict";
 
+const {
+  IncidentMemory,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 /**
  * Memory Service
  * Tracks incident patterns and historical outcomes
@@ -344,3 +349,4 @@ class MemoryService {
 }
 
 module.exports = new MemoryService();
+

@@ -1,5 +1,20 @@
 "use strict";
 
+const {
+  Incident,
+  AgentIntelligenceRun,
+} =
+  require(
+    "../persistence/operational/canonicalModels"
+  );
+
+const {
+  Service,
+} =
+  require(
+    "../persistence/operational/operationalModels"
+  );
+
 /**
  * Machine Ingestion Routes
  *
@@ -40,9 +55,6 @@ const crypto = require("node:crypto");
 
 const router = express.Router();
 
-const Service = require("../models/Service");
-const { Incident } = require("../models/Incident");
-const AgentIntelligenceRun = require("../models/AgentIntelligenceRun");
 
 const { getAgentOrchestratorInstance } = require("../agents/v2");
 

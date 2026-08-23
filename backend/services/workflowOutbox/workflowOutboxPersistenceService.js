@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const {
   workflowOutboxRepository,
@@ -7,10 +7,7 @@ const {
     "../../persistence/repositories"
   );
 
-const WorkflowOutboxEvent =
-  require(
-    "../../models/WorkflowOutboxEvent"
-  );
+
 
 const workflowOutboxIdentity =
   require(

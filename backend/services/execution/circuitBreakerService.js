@@ -1,4 +1,11 @@
-const IncidentMemory = require("../../models/IncidentMemory");
+"use strict";
+
+const {
+  IncidentMemory,
+} =
+  require(
+    "../../persistence/operational/legacyModels"
+  );
 
 /**
  * Circuit Breaker Service

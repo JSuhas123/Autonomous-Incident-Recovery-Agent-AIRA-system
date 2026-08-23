@@ -11,7 +11,7 @@ const {
   buildFingerprint,
 } =
   require(
-    "../../models/Incident"
+    "../../persistence/operational/canonicalModels"
   );
 
 const {

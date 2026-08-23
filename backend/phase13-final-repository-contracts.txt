@@ -1,0 +1,490 @@
+﻿
+============================================================
+persistence/repositories/SignalRepository.js
+============================================================
+"use strict";
+
+/**
+ * Phase 13 â€” Enterprise Data Architecture
+ *
+ * Canonical Signal persistence contract.
+ *
+ * All operations capable of reading or mutating an existing Signal must carry
+ * organization/environment scope so PostgreSQL RLS can remain enforced.
+ */
+class SignalRepository {
+  async create(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.create() is not implemented"
+    );
+  }
+
+  async findByDatabaseId(
+    _context,
+    _id,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.findByDatabaseId() is not implemented"
+    );
+  }
+
+  async findOne(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.findOne() is not implemented"
+    );
+  }
+
+  async findOneLean(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.findOneLean() is not implemented"
+    );
+  }
+
+  async findLatestDuplicate(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.findLatestDuplicate() is not implemented"
+    );
+  }
+
+  async list(
+    _filter,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.list() is not implemented"
+    );
+  }
+
+  async updateOne(
+    _filter,
+    _update,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.updateOne() is not implemented"
+    );
+  }
+
+  async updateMany(
+    _filter,
+    _update,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.updateMany() is not implemented"
+    );
+  }
+
+  async save(
+    _signal,
+    _transaction = null
+  ) {
+    throw new Error(
+      "SignalRepository.save() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  SignalRepository;
+
+============================================================
+persistence/repositories/RuntimeRecoveryCheckpointRepository.js
+============================================================
+"use strict";
+
+class RuntimeRecoveryCheckpointRepository {
+  async create(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RuntimeRecoveryCheckpointRepository.create() is not implemented"
+    );
+  }
+
+  async findOneAndUpdate(
+    _filter,
+    _update,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RuntimeRecoveryCheckpointRepository.findOneAndUpdate() is not implemented"
+    );
+  }
+
+  async findOne(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RuntimeRecoveryCheckpointRepository.findOne() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  RuntimeRecoveryCheckpointRepository;
+
+============================================================
+persistence/repositories/ExecutionAuthorizationRepository.js
+============================================================
+"use strict";
+
+/**
+ * Phase 13 â€” Enterprise Data Architecture
+ *
+ * Persistence contract for:
+ * - ExecutionAuthorization
+ * - ExecutionRequest
+ *
+ * Implementations must preserve atomic creation when used
+ * inside a persistence transaction.
+ */
+class ExecutionAuthorizationRepository {
+  async createAuthorization(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.createAuthorization() is not implemented"
+    );
+  }
+
+  async createExecutionRequest(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.createExecutionRequest() is not implemented"
+    );
+  }
+
+  async findAuthorizationByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findAuthorizationByIdentifier() is not implemented"
+    );
+  }
+
+  async findExecutionRequestByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findExecutionRequestByIdentifier() is not implemented"
+    );
+  }
+
+  async findIncidentExecutionHistory(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findIncidentExecutionHistory() is not implemented"
+    );
+  }
+
+  async saveExecutionRequest(
+    _request,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.saveExecutionRequest() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  ExecutionAuthorizationRepository;
+
+============================================================
+persistence/repositories/IncidentLifecycleRepository.js
+============================================================
+"use strict";
+
+class IncidentLifecycleRepository {
+  async findCurrent(
+    _scope,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentLifecycleRepository.findCurrent() is not implemented"
+    );
+  }
+
+  async createTransition(
+    _transition,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentLifecycleRepository.createTransition() is not implemented"
+    );
+  }
+
+  async upsertCurrent(
+    _scope,
+    _update,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentLifecycleRepository.upsertCurrent() is not implemented"
+    );
+  }
+
+  async updateCurrent(
+    _scope,
+    _update,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentLifecycleRepository.updateCurrent() is not implemented"
+    );
+  }
+
+  async getHistory(
+    _scope,
+    _limit = 100,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentLifecycleRepository.getHistory() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  IncidentLifecycleRepository;
+
+============================================================
+persistence/repositories/RecoveryVerificationRepository.js
+============================================================
+"use strict";
+
+class RecoveryVerificationRepository {
+  async findCurrent(
+    _scope,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.findCurrent() is not implemented"
+    );
+  }
+
+  async findByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.findByIdentifier() is not implemented"
+    );
+  }
+
+  async findHistory(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.findHistory() is not implemented"
+    );
+  }
+
+  async findRuns(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.findRuns() is not implemented"
+    );
+  }
+
+  async createRun(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.createRun() is not implemented"
+    );
+  }
+
+  async saveRun(
+    _run,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.saveRun() is not implemented"
+    );
+  }
+
+  async createVerification(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.createVerification() is not implemented"
+    );
+  }
+
+  async saveVerification(
+    _verification,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.saveVerification() is not implemented"
+    );
+  }
+
+  async markRunFailed(
+    _verificationRunId,
+    _error,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryVerificationRepository.markRunFailed() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  RecoveryVerificationRepository;
+
+============================================================
+persistence/repositories/WorkflowOutboxRepository.js
+============================================================
+"use strict";
+
+/**
+ * Phase 13 â€” Workflow Outbox persistence boundary.
+ *
+ * IMPORTANT:
+ *
+ * The repository stores durable workflow intent only.
+ * It never grants execution authority.
+ *
+ * Tenant-scoped operations must always include:
+ *
+ * organizationId
+ * environmentId
+ */
+class WorkflowOutboxRepository {
+  async create(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.create() is not implemented"
+    );
+  }
+
+  async findByEventId(
+    _scope,
+    _eventId,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.findByEventId() is not implemented"
+    );
+  }
+
+  async findByEventKey(
+    _scope,
+    _eventKey,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.findByEventKey() is not implemented"
+    );
+  }
+
+  async claim(
+    _scope,
+    _input,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.claim() is not implemented"
+    );
+  }
+
+  async heartbeat(
+    _scope,
+    _input,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.heartbeat() is not implemented"
+    );
+  }
+
+  async markDelivered(
+    _scope,
+    _input,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.markDelivered() is not implemented"
+    );
+  }
+
+  async markFailed(
+    _scope,
+    _input,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.markFailed() is not implemented"
+    );
+  }
+
+  async markDeadLetter(
+    _scope,
+    _input,
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.markDeadLetter() is not implemented"
+    );
+  }
+
+  /**
+   * Cross-tenant dispatcher scan.
+   *
+   * Mongo supports this today.
+   *
+   * PostgreSQL intentionally fails closed until Phase 13.5 introduces
+   * a dedicated privileged worker role rather than bypassing FORCE RLS.
+   */
+  async findDeliverable(
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "WorkflowOutboxRepository.findDeliverable() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  WorkflowOutboxRepository;

@@ -1,0 +1,7317 @@
+﻿
+============================================================
+services/diagnosis/investigationContextService.js
+============================================================
+
+### Signal
+  require(
+    "../../persistence/operational/canonicalModels"
+  );
+
+const {
+  Signal,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const incidentDetailService =
+  require(
+    "../incidents/incidentDetailService"
+  );
+
+---
+
+const {
+  Signal,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const incidentDetailService =
+  require(
+    "../incidents/incidentDetailService"
+  );
+
+const {
+  createInvestigationContext,
+  createEvidencePackage,
+---
+    "../../agents/v2/contracts/agentContracts"
+  );
+
+class InvestigationContextService {
+  constructor() {
+    this.maxSignals =
+      Number(
+        process.env
+          .DIAGNOSIS_MAX_SIGNALS
+      ) ||
+      500;
+
+    this.maxHistoricalIncidents =
+      Number(
+        process.env
+          .DIAGNOSIS_MAX_HISTORICAL_INCIDENTS
+---
+class InvestigationContextService {
+  constructor() {
+    this.maxSignals =
+      Number(
+        process.env
+          .DIAGNOSIS_MAX_SIGNALS
+      ) ||
+      500;
+
+    this.maxHistoricalIncidents =
+      Number(
+        process.env
+          .DIAGNOSIS_MAX_HISTORICAL_INCIDENTS
+      ) ||
+      20;
+
+---
+    // LOAD ADDITIONAL SERVER-SIDE CONTEXT
+    // ========================================================================
+
+    const [
+      service,
+      signals,
+      historicalIncidents,
+    ] =
+      await Promise.all([
+        this.loadService(
+          incident
+        ),
+
+        this.loadSignals(
+          incident
+        ),
+---
+      await Promise.all([
+        this.loadService(
+          incident
+        ),
+
+        this.loadSignals(
+          incident
+        ),
+
+        this.loadHistoricalIncidents(
+          incident,
+          options
+        ),
+      ]);
+
+    // ========================================================================
+---
+          options
+        ),
+      ]);
+
+    // ========================================================================
+    // CLASSIFY SIGNALS
+    // ========================================================================
+
+    const classified =
+      this.classifySignals(
+        signals
+      );
+
+    // ========================================================================
+    // BUILD EVIDENCE
+    // ========================================================================
+---
+    // ========================================================================
+    // CLASSIFY SIGNALS
+    // ========================================================================
+
+    const classified =
+      this.classifySignals(
+        signals
+      );
+
+    // ========================================================================
+    // BUILD EVIDENCE
+    // ========================================================================
+
+    const evidence =
+      this.buildEvidencePackage({
+        incident,
+---
+    // CLASSIFY SIGNALS
+    // ========================================================================
+
+    const classified =
+      this.classifySignals(
+        signals
+      );
+
+    // ========================================================================
+    // BUILD EVIDENCE
+    // ========================================================================
+
+    const evidence =
+      this.buildEvidencePackage({
+        incident,
+
+---
+
+    const evidence =
+      this.buildEvidencePackage({
+        incident,
+
+        signals,
+
+        incidentEvents:
+          detail.events ||
+          [],
+
+        impact:
+          detail.impact,
+
+        correlationGroup:
+          detail
+---
+
+    const missingEvidence =
+      this.identifyMissingEvidence({
+        incident,
+
+        signals,
+
+        classified,
+
+        service,
+
+        impact:
+          detail.impact,
+      });
+
+    evidence.missingEvidence =
+---
+        ])
+      );
+
+    evidence.completeness =
+      this.calculateEvidenceCompleteness({
+        signals,
+
+        classified,
+
+        service,
+
+        impact:
+          detail.impact,
+
+        events:
+          detail.events ||
+---
+              service
+            )
+          : {},
+
+      // ----------------------------------------------------------------------
+      // SIGNALS
+      // ----------------------------------------------------------------------
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+---
+
+      // ----------------------------------------------------------------------
+      // SIGNALS
+      // ----------------------------------------------------------------------
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+      // ----------------------------------------------------------------------
+      // INCIDENT EVENTS
+      // ----------------------------------------------------------------------
+---
+      // ----------------------------------------------------------------------
+      // SIGNALS
+      // ----------------------------------------------------------------------
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+      // ----------------------------------------------------------------------
+      // INCIDENT EVENTS
+      // ----------------------------------------------------------------------
+
+---
+      // SIGNALS
+      // ----------------------------------------------------------------------
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+      // ----------------------------------------------------------------------
+      // INCIDENT EVENTS
+      // ----------------------------------------------------------------------
+
+      incidentEvents:
+---
+      // ----------------------------------------------------------------------
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+      // ----------------------------------------------------------------------
+      // INCIDENT EVENTS
+      // ----------------------------------------------------------------------
+
+      incidentEvents:
+        detail.events ||
+---
+
+      signals:
+        signals.map(
+          (signal) =>
+            this.serializeSignal(
+              signal
+            )
+        ),
+
+      // ----------------------------------------------------------------------
+      // INCIDENT EVENTS
+      // ----------------------------------------------------------------------
+
+      incidentEvents:
+        detail.events ||
+        [],
+---
+          .impact
+          ?.affectedResources ||
+        [],
+
+      // ----------------------------------------------------------------------
+      // PROVIDER-SPECIFIC SIGNAL TYPES
+      // ----------------------------------------------------------------------
+
+      metrics:
+        classified.metrics,
+
+      logs:
+        classified.logs,
+
+      traces:
+        classified.traces,
+---
+        providerCount:
+          incident
+            .providerCount ||
+          0,
+
+        signalCount:
+          signals.length,
+
+        incidentEventCount:
+          (
+            detail.events ||
+            []
+          ).length,
+
+        historicalIncidentCount:
+          historicalIncidents
+---
+          incident
+            .providerCount ||
+          0,
+
+        signalCount:
+          signals.length,
+
+        incidentEventCount:
+          (
+            detail.events ||
+            []
+          ).length,
+
+        historicalIncidentCount:
+          historicalIncidents
+            .length,
+---
+      })
+      .lean();
+  }
+
+  // ==========================================================================
+  // SIGNALS
+  // ==========================================================================
+
+  async loadSignals(
+    incident
+  ) {
+    const clauses = [
+      {
+        incidentId:
+          incident._id,
+      },
+---
+
+  // ==========================================================================
+  // SIGNALS
+  // ==========================================================================
+
+  async loadSignals(
+    incident
+  ) {
+    const clauses = [
+      {
+        incidentId:
+          incident._id,
+      },
+    ];
+
+    if (
+---
+      },
+    ];
+
+    if (
+      Array.isArray(
+        incident.signalIds
+      ) &&
+      incident
+        .signalIds
+        .length >
+      0
+    ) {
+      clauses.push({
+        signalId: {
+          $in:
+            incident
+---
+    if (
+      Array.isArray(
+        incident.signalIds
+      ) &&
+      incident
+        .signalIds
+        .length >
+      0
+    ) {
+      clauses.push({
+        signalId: {
+          $in:
+            incident
+              .signalIds,
+        },
+      });
+---
+        .signalIds
+        .length >
+      0
+    ) {
+      clauses.push({
+        signalId: {
+          $in:
+            incident
+              .signalIds,
+        },
+      });
+    }
+
+    return Signal
+      .find({
+        organizationId:
+---
+    ) {
+      clauses.push({
+        signalId: {
+          $in:
+            incident
+              .signalIds,
+        },
+      });
+    }
+
+    return Signal
+      .find({
+        organizationId:
+          incident
+            .organizationId,
+
+---
+              .signalIds,
+        },
+      });
+    }
+
+    return Signal
+      .find({
+        organizationId:
+          incident
+            .organizationId,
+
+        environmentId:
+          incident
+            .environmentId,
+
+        $or:
+---
+      .sort({
+        observedAt:
+          1,
+      })
+      .limit(
+        this.maxSignals
+      )
+      .lean();
+  }
+
+  // ==========================================================================
+  // HISTORY
+  // ==========================================================================
+
+  async loadHistoricalIncidents(
+    incident,
+---
+      });
+    }
+
+    if (
+      incident
+        .signalFingerprint
+    ) {
+      clauses.push({
+        signalFingerprint:
+          incident
+            .signalFingerprint,
+      });
+    }
+
+    return Incident
+      .find({
+---
+    if (
+      incident
+        .signalFingerprint
+    ) {
+      clauses.push({
+        signalFingerprint:
+          incident
+            .signalFingerprint,
+      });
+    }
+
+    return Incident
+      .find({
+        _id: {
+          $ne:
+            incident._id,
+---
+        .signalFingerprint
+    ) {
+      clauses.push({
+        signalFingerprint:
+          incident
+            .signalFingerprint,
+      });
+    }
+
+    return Incident
+      .find({
+        _id: {
+          $ne:
+            incident._id,
+        },
+
+---
+      )
+      .lean();
+  }
+
+  // ==========================================================================
+  // CLASSIFY SIGNALS
+  // ==========================================================================
+
+  classifySignals(
+    signals
+  ) {
+    const result = {
+      metrics:
+        [],
+
+      logs:
+---
+
+  // ==========================================================================
+  // CLASSIFY SIGNALS
+  // ==========================================================================
+
+  classifySignals(
+    signals
+  ) {
+    const result = {
+      metrics:
+        [],
+
+      logs:
+        [],
+
+      traces:
+---
+  // ==========================================================================
+  // CLASSIFY SIGNALS
+  // ==========================================================================
+
+  classifySignals(
+    signals
+  ) {
+    const result = {
+      metrics:
+        [],
+
+      logs:
+        [],
+
+      traces:
+        [],
+---
+
+      alerts:
+        [],
+
+      kubernetes: {
+        signals:
+          [],
+
+        events:
+          [],
+
+        resources:
+          [],
+      },
+    };
+
+---
+          [],
+      },
+    };
+
+    for (
+      const signal
+      of signals
+    ) {
+      const serialized =
+        this.serializeSignal(
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+---
+      },
+    };
+
+    for (
+      const signal
+      of signals
+    ) {
+      const serialized =
+        this.serializeSignal(
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+          ""
+---
+    for (
+      const signal
+      of signals
+    ) {
+      const serialized =
+        this.serializeSignal(
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+---
+      const signal
+      of signals
+    ) {
+      const serialized =
+        this.serializeSignal(
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+---
+      const serialized =
+        this.serializeSignal(
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const provider =
+        String(
+          signal.provider ||
+---
+          signal
+        );
+
+      const signalType =
+        String(
+          signal.signalType ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+      const provider =
+        String(
+          signal.provider ||
+          ""
+        )
+---
+          .trim()
+          .toLowerCase();
+
+      const provider =
+        String(
+          signal.provider ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+      // ----------------------------------------------------------------------
+      // METRIC
+      // ----------------------------------------------------------------------
+
+      if (
+---
+      // ----------------------------------------------------------------------
+      // METRIC
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+        "metric"
+      ) {
+        result.metrics.push({
+          ...serialized,
+
+          metric:
+            signal.metric ||
+            null,
+        });
+      }
+---
+      ) {
+        result.metrics.push({
+          ...serialized,
+
+          metric:
+            signal.metric ||
+            null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // LOG
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+---
+      // ----------------------------------------------------------------------
+      // LOG
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+        "log"
+      ) {
+        result.logs.push({
+          ...serialized,
+
+          body:
+            signal.body ||
+            signal.log
+              ?.body ||
+            signal.description ||
+---
+      ) {
+        result.logs.push({
+          ...serialized,
+
+          body:
+            signal.body ||
+            signal.log
+              ?.body ||
+            signal.description ||
+            null,
+
+          log:
+            signal.log ||
+            null,
+        });
+      }
+---
+        result.logs.push({
+          ...serialized,
+
+          body:
+            signal.body ||
+            signal.log
+              ?.body ||
+            signal.description ||
+            null,
+
+          log:
+            signal.log ||
+            null,
+        });
+      }
+
+---
+
+          body:
+            signal.body ||
+            signal.log
+              ?.body ||
+            signal.description ||
+            null,
+
+          log:
+            signal.log ||
+            null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // TRACE
+---
+              ?.body ||
+            signal.description ||
+            null,
+
+          log:
+            signal.log ||
+            null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // TRACE
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+---
+      // ----------------------------------------------------------------------
+      // TRACE
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+          "trace" ||
+        signal.traceId
+      ) {
+        result.traces.push({
+          ...serialized,
+
+          traceId:
+            signal.traceId ||
+            null,
+
+---
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+          "trace" ||
+        signal.traceId
+      ) {
+        result.traces.push({
+          ...serialized,
+
+          traceId:
+            signal.traceId ||
+            null,
+
+          spanId:
+            signal.spanId ||
+---
+      ) {
+        result.traces.push({
+          ...serialized,
+
+          traceId:
+            signal.traceId ||
+            null,
+
+          spanId:
+            signal.spanId ||
+            null,
+
+          trace:
+            signal.trace ||
+            null,
+        });
+---
+          traceId:
+            signal.traceId ||
+            null,
+
+          spanId:
+            signal.spanId ||
+            null,
+
+          trace:
+            signal.trace ||
+            null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // ALERT
+---
+          spanId:
+            signal.spanId ||
+            null,
+
+          trace:
+            signal.trace ||
+            null,
+        });
+      }
+
+      // ----------------------------------------------------------------------
+      // ALERT
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+---
+      // ----------------------------------------------------------------------
+      // ALERT
+      // ----------------------------------------------------------------------
+
+      if (
+        signalType ===
+          "alert" ||
+        String(
+          signal.eventType ||
+          ""
+        )
+          .toLowerCase()
+          .includes(
+            "alert"
+          )
+      ) {
+---
+
+      if (
+        signalType ===
+          "alert" ||
+        String(
+          signal.eventType ||
+          ""
+        )
+          .toLowerCase()
+          .includes(
+            "alert"
+          )
+      ) {
+        result.alerts.push(
+          serialized
+        );
+---
+        provider ===
+          "k8s"
+      ) {
+        result
+          .kubernetes
+          .signals
+          .push(
+            serialized
+          );
+
+        if (
+          String(
+            signal.eventType ||
+            ""
+          )
+            .toLowerCase()
+---
+            serialized
+          );
+
+        if (
+          String(
+            signal.eventType ||
+            ""
+          )
+            .toLowerCase()
+            .includes(
+              "event"
+            )
+        ) {
+          result
+            .kubernetes
+            .events
+---
+              serialized
+            );
+        }
+
+        if (
+          signal.resource
+        ) {
+          result
+            .kubernetes
+            .resources
+            .push(
+              signal.resource
+            );
+        }
+      }
+    }
+---
+        ) {
+          result
+            .kubernetes
+            .resources
+            .push(
+              signal.resource
+            );
+        }
+      }
+    }
+
+    result
+      .kubernetes
+      .resources =
+      this.uniqueObjects(
+        result
+---
+  // EVIDENCE PACKAGE
+  // ==========================================================================
+
+  buildEvidencePackage({
+  incident,
+  signals,
+  incidentEvents,
+  impact,
+  correlationGroup,
+}) {
+  const items =
+    [];
+
+  const collectedAt =
+    new Date();
+
+---
+
+  const collectedAt =
+    new Date();
+
+  // ==========================================================================
+  // SIGNAL EVIDENCE
+  // ==========================================================================
+
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+---
+  // ==========================================================================
+  // SIGNAL EVIDENCE
+  // ==========================================================================
+
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+---
+  // SIGNAL EVIDENCE
+  // ==========================================================================
+
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+---
+
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+---
+  for (
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+            signal
+---
+    const signal
+    of signals
+  ) {
+    const signalId =
+      signal.signalId ||
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+            signal
+          ),
+---
+      signal._id;
+
+    items.push(
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+            signal
+          ),
+
+        source:
+          signal.provider ||
+          "signal",
+
+---
+      createEvidenceItem({
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+            signal
+          ),
+
+        source:
+          signal.provider ||
+          "signal",
+
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+---
+        id:
+          `signal:${signalId}`,
+
+        type:
+          this.evidenceTypeForSignal(
+            signal
+          ),
+
+        source:
+          signal.provider ||
+          "signal",
+
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+---
+          this.evidenceTypeForSignal(
+            signal
+          ),
+
+        source:
+          signal.provider ||
+          "signal",
+
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+---
+            signal
+          ),
+
+        source:
+          signal.provider ||
+          "signal",
+
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+---
+          signal.provider ||
+          "signal",
+
+        sourceType:
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+---
+          this.evidenceSourceForProvider(
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+          null,
+
+        collectedAt,
+
+---
+            signal.provider
+          ),
+
+        timestamp:
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+          null,
+
+        collectedAt,
+
+        resource:
+---
+          signal.observedAt ||
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+          null,
+
+        collectedAt,
+
+        resource:
+          signal.resource ||
+          {},
+
+        serviceId:
+---
+          signal.receivedAt ||
+          collectedAt,
+
+        observedAt:
+          signal.observedAt ||
+          signal.receivedAt ||
+          null,
+
+        collectedAt,
+
+        resource:
+          signal.resource ||
+          {},
+
+        serviceId:
+          signal.serviceId,
+---
+          null,
+
+        collectedAt,
+
+        resource:
+          signal.resource ||
+          {},
+
+        serviceId:
+          signal.serviceId,
+
+        provider:
+          signal.provider,
+
+        signalId,
+
+---
+        resource:
+          signal.resource ||
+          {},
+
+        serviceId:
+          signal.serviceId,
+
+        provider:
+          signal.provider,
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+---
+
+        serviceId:
+          signal.serviceId,
+
+        provider:
+          signal.provider,
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+---
+          signal.serviceId,
+
+        provider:
+          signal.provider,
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+---
+          signal.provider,
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+---
+
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+---
+        signalId,
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+            .correlationScore ??
+---
+
+        summary:
+          signal.title ||
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+            .correlationScore ??
+          null,
+---
+          signal.description ||
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+            .correlationScore ??
+          null,
+
+        correlationId:
+          incident
+---
+          signal.eventType ||
+          "Operational signal",
+
+        structuredData:
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+            .correlationScore ??
+          null,
+
+        correlationId:
+          incident
+            .correlationGroupId ||
+---
+          this.safeSignalEvidenceData(
+            signal
+          ),
+
+        confidence:
+          signal
+            .correlationScore ??
+          null,
+
+        correlationId:
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
+
+        correlationGroupId:
+          signal
+---
+          incident
+            .correlationGroupId ||
+          `incident:${incident._id}`,
+
+        correlationGroupId:
+          signal
+            .correlationGroupId ||
+          null,
+
+        trustLevel:
+          EVIDENCE_TRUST_LEVEL
+            .SOURCE_REPORTED,
+
+        provenance: {
+          collector:
+            "InvestigationContextService",
+---
+        provenance: {
+          collector:
+            "InvestigationContextService",
+
+          retrievalMethod:
+            "tenant_scoped_signal_store_read",
+
+          sourceRef:
+            `Signal:${String(
+              signal._id ||
+              signalId
+            )}`,
+
+          canonicalStore:
+            "Signal",
+
+---
+
+          retrievalMethod:
+            "tenant_scoped_signal_store_read",
+
+          sourceRef:
+            `Signal:${String(
+              signal._id ||
+              signalId
+            )}`,
+
+          canonicalStore:
+            "Signal",
+
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
+
+---
+          retrievalMethod:
+            "tenant_scoped_signal_store_read",
+
+          sourceRef:
+            `Signal:${String(
+              signal._id ||
+              signalId
+            )}`,
+
+          canonicalStore:
+            "Signal",
+
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
+
+          metadata: {
+---
+            "tenant_scoped_signal_store_read",
+
+          sourceRef:
+            `Signal:${String(
+              signal._id ||
+              signalId
+            )}`,
+
+          canonicalStore:
+            "Signal",
+
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
+
+          metadata: {
+            organizationId:
+---
+              signal._id ||
+              signalId
+            )}`,
+
+          canonicalStore:
+            "Signal",
+
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
+
+          metadata: {
+            organizationId:
+              String(
+                incident.organizationId
+              ),
+
+---
+
+          canonicalStore:
+            "Signal",
+
+          trustReason:
+            "Telemetry was persisted in the tenant-scoped AIRA Signal store before diagnosis.",
+
+          metadata: {
+            organizationId:
+              String(
+                incident.organizationId
+              ),
+
+            environmentId:
+              String(
+                incident.environmentId
+---
+              ),
+          },
+        },
+
+        tags: [
+          signal.signalType,
+          signal.eventType,
+          signal.severity,
+        ]
+          .filter(
+            Boolean
+          ),
+      })
+    );
+  }
+
+---
+          },
+        },
+
+        tags: [
+          signal.signalType,
+          signal.eventType,
+          signal.severity,
+        ]
+          .filter(
+            Boolean
+          ),
+      })
+    );
+  }
+
+  // ==========================================================================
+---
+        },
+
+        tags: [
+          signal.signalType,
+          signal.eventType,
+          signal.severity,
+        ]
+          .filter(
+            Boolean
+          ),
+      })
+    );
+  }
+
+  // ==========================================================================
+  // INCIDENT EVENT EVIDENCE
+---
+  // ==========================================================================
+
+  const providers =
+    Array.from(
+      new Set(
+        signals
+          .map(
+            (
+              signal
+            ) =>
+              signal.provider
+          )
+          .filter(
+            Boolean
+          )
+      )
+---
+    Array.from(
+      new Set(
+        signals
+          .map(
+            (
+              signal
+            ) =>
+              signal.provider
+          )
+          .filter(
+            Boolean
+          )
+      )
+    );
+
+  return createEvidencePackage({
+---
+        signals
+          .map(
+            (
+              signal
+            ) =>
+              signal.provider
+          )
+          .filter(
+            Boolean
+          )
+      )
+    );
+
+  return createEvidencePackage({
+    incidentId:
+      incident._id,
+---
+      [],
+
+    providerCoverage:
+      providers,
+
+    signalCount:
+      signals.length,
+
+    collectedAt,
+
+    metadata: {
+      collector:
+        "InvestigationContextService",
+
+      organizationId:
+        String(
+---
+
+    providerCoverage:
+      providers,
+
+    signalCount:
+      signals.length,
+
+    collectedAt,
+
+    metadata: {
+      collector:
+        "InvestigationContextService",
+
+      organizationId:
+        String(
+          incident.organizationId
+---
+    },
+  });
+}
+
+  // ==========================================================================
+  // SIGNAL -> EVIDENCE TYPE
+  // ==========================================================================
+
+  evidenceTypeForSignal(
+    signal
+  ) {
+    const type =
+      String(
+        signal.signalType ||
+        ""
+      )
+---
+
+  // ==========================================================================
+  // SIGNAL -> EVIDENCE TYPE
+  // ==========================================================================
+
+  evidenceTypeForSignal(
+    signal
+  ) {
+    const type =
+      String(
+        signal.signalType ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+---
+  // ==========================================================================
+  // SIGNAL -> EVIDENCE TYPE
+  // ==========================================================================
+
+  evidenceTypeForSignal(
+    signal
+  ) {
+    const type =
+      String(
+        signal.signalType ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    const provider =
+---
+  evidenceTypeForSignal(
+    signal
+  ) {
+    const type =
+      String(
+        signal.signalType ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    const provider =
+      String(
+        signal.provider ||
+        ""
+      )
+---
+        .trim()
+        .toLowerCase();
+
+    const provider =
+      String(
+        signal.provider ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    if (
+      provider ===
+        "kubernetes" ||
+      provider ===
+        "k8s"
+---
+      provider ===
+        "k8s"
+    ) {
+      if (
+        String(
+          signal.eventType ||
+          ""
+        )
+          .toLowerCase()
+          .includes(
+            "event"
+          )
+      ) {
+        return EVIDENCE_TYPE
+          .KUBERNETES_EVENT;
+      }
+---
+        return EVIDENCE_TYPE
+          .ALERT;
+
+      default:
+        return EVIDENCE_TYPE
+          .SIGNAL;
+    }
+  }
+
+  // ==========================================================================
+  // PROVIDER -> EVIDENCE SOURCE
+  // ==========================================================================
+
+  evidenceSourceForProvider(
+    provider
+  ) {
+---
+        return EVIDENCE_SOURCE_TYPE
+          .KUBERNETES_API;
+
+      case "monitor":
+        return EVIDENCE_SOURCE_TYPE
+          .AIRA_SIGNAL_STORE;
+
+      default:
+        return EVIDENCE_SOURCE_TYPE
+          .AIRA_SIGNAL_STORE;
+    }
+  }
+
+  // ==========================================================================
+  // EVIDENCE COMPLETENESS
+  // ==========================================================================
+---
+        return EVIDENCE_SOURCE_TYPE
+          .AIRA_SIGNAL_STORE;
+
+      default:
+        return EVIDENCE_SOURCE_TYPE
+          .AIRA_SIGNAL_STORE;
+    }
+  }
+
+  // ==========================================================================
+  // EVIDENCE COMPLETENESS
+  // ==========================================================================
+
+  calculateEvidenceCompleteness({
+    signals,
+    classified,
+---
+  // ==========================================================================
+  // EVIDENCE COMPLETENESS
+  // ==========================================================================
+
+  calculateEvidenceCompleteness({
+    signals,
+    classified,
+    service,
+    impact,
+    events,
+    historicalIncidents,
+  }) {
+    let score =
+      0;
+
+    let possible =
+---
+
+    let possible =
+      0;
+
+    // ------------------------------------------------------------------------
+    // Canonical signals
+    // ------------------------------------------------------------------------
+
+    possible +=
+      0.2;
+
+    if (
+      signals.length >
+      0
+    ) {
+      score +=
+---
+
+    possible +=
+      0.2;
+
+    if (
+      signals.length >
+      0
+    ) {
+      score +=
+        0.2;
+    }
+
+    // ------------------------------------------------------------------------
+    // Service identity
+    // ------------------------------------------------------------------------
+
+---
+  // ==========================================================================
+  // MISSING EVIDENCE
+  // ==========================================================================
+
+  identifyMissingEvidence({
+    signals,
+    classified,
+    service,
+    impact,
+  }) {
+    const missing =
+      [];
+
+    if (!service) {
+      missing.push(
+        "service_metadata"
+---
+        "service_metadata"
+      );
+    }
+
+    if (
+      signals.length ===
+      0
+    ) {
+      missing.push(
+        "canonical_signals"
+      );
+
+      return missing;
+    }
+
+    if (
+---
+    if (
+      signals.length ===
+      0
+    ) {
+      missing.push(
+        "canonical_signals"
+      );
+
+      return missing;
+    }
+
+    if (
+      classified
+        .metrics
+        .length ===
+      0
+---
+        incident.status,
+
+      fingerprint:
+        incident.fingerprint,
+
+      signalFingerprint:
+        incident
+          .signalFingerprint ||
+        null,
+
+      correlationGroupId:
+        incident
+          .correlationGroupId ||
+        null,
+
+      providers:
+---
+      fingerprint:
+        incident.fingerprint,
+
+      signalFingerprint:
+        incident
+          .signalFingerprint ||
+        null,
+
+      correlationGroupId:
+        incident
+          .correlationGroupId ||
+        null,
+
+      providers:
+        incident.providers ||
+        [],
+---
+        {},
+    };
+  }
+
+  // ==========================================================================
+  // SERIALIZATION — SIGNAL
+  // ==========================================================================
+
+  serializeSignal(
+    signal
+  ) {
+    return {
+      id:
+        String(
+          signal._id
+        ),
+---
+
+  // ==========================================================================
+  // SERIALIZATION — SIGNAL
+  // ==========================================================================
+
+  serializeSignal(
+    signal
+  ) {
+    return {
+      id:
+        String(
+          signal._id
+        ),
+
+      signalId:
+        signal.signalId,
+---
+  // ==========================================================================
+  // SERIALIZATION — SIGNAL
+  // ==========================================================================
+
+  serializeSignal(
+    signal
+  ) {
+    return {
+      id:
+        String(
+          signal._id
+        ),
+
+      signalId:
+        signal.signalId,
+
+---
+    signal
+  ) {
+    return {
+      id:
+        String(
+          signal._id
+        ),
+
+      signalId:
+        signal.signalId,
+
+      provider:
+        signal.provider,
+
+      source:
+        signal.source,
+---
+      id:
+        String(
+          signal._id
+        ),
+
+      signalId:
+        signal.signalId,
+
+      provider:
+        signal.provider,
+
+      source:
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+---
+        String(
+          signal._id
+        ),
+
+      signalId:
+        signal.signalId,
+
+      provider:
+        signal.provider,
+
+      source:
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+
+---
+
+      signalId:
+        signal.signalId,
+
+      provider:
+        signal.provider,
+
+      source:
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+
+      signalType:
+        signal.signalType,
+
+---
+
+      provider:
+        signal.provider,
+
+      source:
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+---
+
+      source:
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+---
+        signal.source,
+
+      sourceEventId:
+        signal.sourceEventId,
+
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+---
+
+      sourceEventId:
+        signal.sourceEventId,
+
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+---
+
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      title:
+        signal.title,
+
+---
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      title:
+        signal.title,
+
+      description:
+        signal.description,
+
+---
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      title:
+        signal.title,
+
+      description:
+        signal.description,
+
+      serviceId:
+        signal.serviceId
+          ? String(
+---
+
+      status:
+        signal.status,
+
+      title:
+        signal.title,
+
+      description:
+        signal.description,
+
+      serviceId:
+        signal.serviceId
+          ? String(
+              signal.serviceId
+            )
+          : null,
+---
+
+      title:
+        signal.title,
+
+      description:
+        signal.description,
+
+      serviceId:
+        signal.serviceId
+          ? String(
+              signal.serviceId
+            )
+          : null,
+
+      monitorId:
+        signal.monitorId
+---
+
+      description:
+        signal.description,
+
+      serviceId:
+        signal.serviceId
+          ? String(
+              signal.serviceId
+            )
+          : null,
+
+      monitorId:
+        signal.monitorId
+          ? String(
+              signal.monitorId
+            )
+---
+        signal.description,
+
+      serviceId:
+        signal.serviceId
+          ? String(
+              signal.serviceId
+            )
+          : null,
+
+      monitorId:
+        signal.monitorId
+          ? String(
+              signal.monitorId
+            )
+          : null,
+
+---
+              signal.serviceId
+            )
+          : null,
+
+      monitorId:
+        signal.monitorId
+          ? String(
+              signal.monitorId
+            )
+          : null,
+
+      incidentId:
+        signal.incidentId
+          ? String(
+              signal.incidentId
+            )
+---
+          : null,
+
+      monitorId:
+        signal.monitorId
+          ? String(
+              signal.monitorId
+            )
+          : null,
+
+      incidentId:
+        signal.incidentId
+          ? String(
+              signal.incidentId
+            )
+          : null,
+
+---
+              signal.monitorId
+            )
+          : null,
+
+      incidentId:
+        signal.incidentId
+          ? String(
+              signal.incidentId
+            )
+          : null,
+
+      correlationGroupId:
+        signal
+          .correlationGroupId ||
+        null,
+
+---
+          : null,
+
+      incidentId:
+        signal.incidentId
+          ? String(
+              signal.incidentId
+            )
+          : null,
+
+      correlationGroupId:
+        signal
+          .correlationGroupId ||
+        null,
+
+      correlationScore:
+        signal
+---
+              signal.incidentId
+            )
+          : null,
+
+      correlationGroupId:
+        signal
+          .correlationGroupId ||
+        null,
+
+      correlationScore:
+        signal
+          .correlationScore ??
+        null,
+
+      traceId:
+        signal.traceId ||
+---
+        signal
+          .correlationGroupId ||
+        null,
+
+      correlationScore:
+        signal
+          .correlationScore ??
+        null,
+
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+---
+        signal
+          .correlationScore ??
+        null,
+
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+---
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+---
+      spanId:
+        signal.spanId ||
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+---
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+---
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+
+      log:
+        signal.log ||
+        null,
+---
+        signal
+          .statusCode ??
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+
+      log:
+        signal.log ||
+        null,
+
+      trace:
+        signal.trace ||
+        null,
+
+---
+      metric:
+        signal.metric ||
+        null,
+
+      log:
+        signal.log ||
+        null,
+
+      trace:
+        signal.trace ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+---
+      log:
+        signal.log ||
+        null,
+
+      trace:
+        signal.trace ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+      attributes:
+        signal.attributes ||
+        {},
+
+---
+      trace:
+        signal.trace ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+      attributes:
+        signal.attributes ||
+        {},
+
+      observedAt:
+        signal.observedAt,
+
+      receivedAt:
+---
+      resource:
+        signal.resource ||
+        {},
+
+      attributes:
+        signal.attributes ||
+        {},
+
+      observedAt:
+        signal.observedAt,
+
+      receivedAt:
+        signal.receivedAt,
+
+      duplicateCount:
+        signal
+---
+      attributes:
+        signal.attributes ||
+        {},
+
+      observedAt:
+        signal.observedAt,
+
+      receivedAt:
+        signal.receivedAt,
+
+      duplicateCount:
+        signal
+          .duplicateCount ||
+        0,
+
+      fingerprint:
+---
+
+      observedAt:
+        signal.observedAt,
+
+      receivedAt:
+        signal.receivedAt,
+
+      duplicateCount:
+        signal
+          .duplicateCount ||
+        0,
+
+      fingerprint:
+        signal.fingerprint,
+    };
+  }
+---
+
+      receivedAt:
+        signal.receivedAt,
+
+      duplicateCount:
+        signal
+          .duplicateCount ||
+        0,
+
+      fingerprint:
+        signal.fingerprint,
+    };
+  }
+
+  // ==========================================================================
+  // SERIALIZATION — HISTORICAL INCIDENT
+---
+        signal
+          .duplicateCount ||
+        0,
+
+      fingerprint:
+        signal.fingerprint,
+    };
+  }
+
+  // ==========================================================================
+  // SERIALIZATION — HISTORICAL INCIDENT
+  // ==========================================================================
+
+  serializeHistoricalIncident(
+    incident
+  ) {
+---
+        incident.status,
+
+      fingerprint:
+        incident.fingerprint,
+
+      signalFingerprint:
+        incident
+          .signalFingerprint ||
+        null,
+
+      correlationGroupId:
+        incident
+          .correlationGroupId ||
+        null,
+
+      occurrenceCount:
+---
+      fingerprint:
+        incident.fingerprint,
+
+      signalFingerprint:
+        incident
+          .signalFingerprint ||
+        null,
+
+      correlationGroupId:
+        incident
+          .correlationGroupId ||
+        null,
+
+      occurrenceCount:
+        incident
+          .occurrenceCount ||
+---
+        incident.createdAt,
+    };
+  }
+
+  // ==========================================================================
+  // SAFE STRUCTURED SIGNAL DATA
+  // ==========================================================================
+
+  safeSignalEvidenceData(
+    signal
+  ) {
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+---
+
+  // ==========================================================================
+  // SAFE STRUCTURED SIGNAL DATA
+  // ==========================================================================
+
+  safeSignalEvidenceData(
+    signal
+  ) {
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+---
+  // ==========================================================================
+  // SAFE STRUCTURED SIGNAL DATA
+  // ==========================================================================
+
+  safeSignalEvidenceData(
+    signal
+  ) {
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+---
+
+  safeSignalEvidenceData(
+    signal
+  ) {
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+---
+  safeSignalEvidenceData(
+    signal
+  ) {
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+---
+    return {
+      signalType:
+        signal.signalType,
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      statusCode:
+        signal
+          .statusCode ??
+---
+
+      eventType:
+        signal.eventType,
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+
+      errorCode:
+---
+
+      severity:
+        signal.severity,
+
+      status:
+        signal.status,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+---
+
+      status:
+        signal.status,
+
+      statusCode:
+        signal
+          .statusCode ??
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+---
+        signal
+          .statusCode ??
+        null,
+
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      traceId:
+        signal.traceId ||
+        null,
+
+---
+      errorCode:
+        signal.errorCode ||
+        null,
+
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+
+---
+      errorMessage:
+        signal.errorMessage ||
+        null,
+
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+
+---
+      traceId:
+        signal.traceId ||
+        null,
+
+      spanId:
+        signal.spanId ||
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+---
+      spanId:
+        signal.spanId ||
+        null,
+
+      metric:
+        signal.metric ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+      attributes:
+        this.sanitizeObject(
+          signal.attributes ||
+          {}
+---
+      metric:
+        signal.metric ||
+        null,
+
+      resource:
+        signal.resource ||
+        {},
+
+      attributes:
+        this.sanitizeObject(
+          signal.attributes ||
+          {}
+        ),
+    };
+  }
+
+---
+        signal.resource ||
+        {},
+
+      attributes:
+        this.sanitizeObject(
+          signal.attributes ||
+          {}
+        ),
+    };
+  }
+
+  // ==========================================================================
+  // SANITIZATION
+  // ==========================================================================
+
+  sanitizeObject(
+---
+
+============================================================
+services/signals/signalNormalizationService.js
+============================================================
+
+### Signal
+
+const crypto =
+  require("node:crypto");
+
+const {
+  SIGNAL_TYPES,
+  SIGNAL_SEVERITIES,
+  SIGNAL_SOURCES,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const PROVIDER_SOURCE_MAP =
+  Object.freeze({
+    monitor:
+---
+const crypto =
+  require("node:crypto");
+
+const {
+  SIGNAL_TYPES,
+  SIGNAL_SEVERITIES,
+  SIGNAL_SOURCES,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const PROVIDER_SOURCE_MAP =
+  Object.freeze({
+    monitor:
+      "monitor",
+---
+  require("node:crypto");
+
+const {
+  SIGNAL_TYPES,
+  SIGNAL_SEVERITIES,
+  SIGNAL_SOURCES,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const PROVIDER_SOURCE_MAP =
+  Object.freeze({
+    monitor:
+      "monitor",
+
+---
+  SIGNAL_TYPES,
+  SIGNAL_SEVERITIES,
+  SIGNAL_SOURCES,
+} =
+  require(
+    "../../models/Signal"
+  );
+
+const PROVIDER_SOURCE_MAP =
+  Object.freeze({
+    monitor:
+      "monitor",
+
+    prometheus_alertmanager:
+      "integration",
+
+---
+
+    opentelemetry:
+      "telemetry",
+  });
+
+const PROVIDER_SIGNAL_TYPE_MAP =
+  Object.freeze({
+    monitor:
+      "monitor",
+
+    prometheus_alertmanager:
+      "alert",
+
+    grafana_alerting:
+      "alert",
+
+---
+
+    webhook_incoming:
+      "event",
+  });
+
+class SignalNormalizationService {
+  // ==========================================================================
+  // PUBLIC ENTRY POINT
+  // ==========================================================================
+
+  normalize(
+    input,
+    context = {}
+  ) {
+    if (
+      !input ||
+---
+        input
+      )
+    ) {
+      throw Object.assign(
+        new Error(
+          "Signal input must be an object"
+        ),
+        {
+          code:
+            "SIGNAL_INPUT_INVALID",
+        }
+      );
+    }
+
+    const provider =
+      this.normalizeProvider(
+---
+        new Error(
+          "Signal input must be an object"
+        ),
+        {
+          code:
+            "SIGNAL_INPUT_INVALID",
+        }
+      );
+    }
+
+    const provider =
+      this.normalizeProvider(
+        input.provider ||
+        context.provider ||
+        "internal"
+      );
+---
+        context.provider ||
+        "internal"
+      );
+
+    /*
+     * OpenTelemetry produces three different signal types.
+     */
+    if (
+      provider ===
+      "opentelemetry"
+    ) {
+      return this.normalizeOpenTelemetry(
+        input,
+        context
+      );
+    }
+---
+        traceId:
+          input.traceId,
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider,
+          fingerprint,
+          observedAt,
+          sourceEventId,
+        }),
+
+      ...ownership,
+
+      source:
+---
+          input.traceId,
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider,
+          fingerprint,
+          observedAt,
+          sourceEventId,
+        }),
+
+      ...ownership,
+
+      source:
+        this.resolveSource(
+---
+
+      provider,
+
+      sourceEventId,
+
+      signalType:
+        this.resolveSignalType(
+          provider,
+          input.signalType
+        ),
+
+      eventType,
+
+      severity,
+
+      title,
+---
+      provider,
+
+      sourceEventId,
+
+      signalType:
+        this.resolveSignalType(
+          provider,
+          input.signalType
+        ),
+
+      eventType,
+
+      severity,
+
+      title,
+
+---
+      sourceEventId,
+
+      signalType:
+        this.resolveSignalType(
+          provider,
+          input.signalType
+        ),
+
+      eventType,
+
+      severity,
+
+      title,
+
+      description:
+        this.cleanString(
+---
+              : input.status
+          ),
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider:
+            "monitor",
+
+          fingerprint,
+
+          observedAt,
+        }),
+
+      ...ownership,
+---
+          ),
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider:
+            "monitor",
+
+          fingerprint,
+
+          observedAt,
+        }),
+
+      ...ownership,
+
+---
+        "monitor",
+
+      sourceEventId:
+        null,
+
+      signalType:
+        "monitor",
+
+      eventType,
+
+      severity,
+
+      title:
+        this.buildMonitorTitle(
+          input,
+          context
+---
+      this.requireOwnership(
+        input,
+        context
+      );
+
+    const signalType =
+      this.normalizeSignalType(
+        input.signalType
+      );
+
+    const observedAt =
+      this.resolveTimestamp([
+        input.timestamp,
+        input.observedAt,
+        input.receivedAt,
+      ]);
+---
+        input,
+        context
+      );
+
+    const signalType =
+      this.normalizeSignalType(
+        input.signalType
+      );
+
+    const observedAt =
+      this.resolveTimestamp([
+        input.timestamp,
+        input.observedAt,
+        input.receivedAt,
+      ]);
+
+---
+        context
+      );
+
+    const signalType =
+      this.normalizeSignalType(
+        input.signalType
+      );
+
+    const observedAt =
+      this.resolveTimestamp([
+        input.timestamp,
+        input.observedAt,
+        input.receivedAt,
+      ]);
+
+    const severity =
+---
+      input.resourceAttributes
+        ?.["cloud.provider"]
+    ),
+
+  resourceType:
+    signalType,
+
+  resourceId:
+    this.cleanString(
+      input.resourceAttributes
+        ?.["service.instance.id"]
+    ),
+};
+
+    const eventType =
+      this.buildOtelEventType(
+---
+};
+
+    const eventType =
+      this.buildOtelEventType(
+        input,
+        signalType
+      );
+
+    const sourceEventId =
+      this.cleanString(
+        input.signalId
+      );
+
+    const fingerprint =
+      this.buildFingerprint({
+        organizationId:
+---
+        signalType
+      );
+
+    const sourceEventId =
+      this.cleanString(
+        input.signalId
+      );
+
+    const fingerprint =
+      this.buildFingerprint({
+        organizationId:
+          ownership.organizationId,
+
+        environmentId:
+          ownership.environmentId,
+
+---
+            input
+          ),
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider:
+            "opentelemetry",
+
+          fingerprint,
+
+          observedAt,
+
+          sourceEventId,
+        }),
+---
+          ),
+      });
+
+    return {
+      signalId:
+        this.buildSignalId({
+          provider:
+            "opentelemetry",
+
+          fingerprint,
+
+          observedAt,
+
+          sourceEventId,
+        }),
+
+---
+      provider:
+        "opentelemetry",
+
+      sourceEventId,
+
+      signalType,
+
+      eventType,
+
+      severity,
+
+      title:
+        this.buildOtelTitle(
+          input,
+          signalType
+        ),
+---
+      severity,
+
+      title:
+        this.buildOtelTitle(
+          input,
+          signalType
+        ),
+
+      description:
+        this.buildOtelDescription(
+          input,
+          signalType
+        ),
+
+      resource,
+
+---
+        ),
+
+      description:
+        this.buildOtelDescription(
+          input,
+          signalType
+        ),
+
+      resource,
+
+      traceId:
+        this.cleanString(
+          input.traceId
+        ),
+
+      spanId:
+---
+          input.span
+            ?.statusMessage
+        ),
+
+      metric:
+        signalType ===
+        "metric"
+          ? {
+              name:
+                this.cleanString(
+                  input.name
+                ),
+
+              value:
+                input.metric
+                  ?.value ??
+---
+
+      incidentCandidate:
+        this.isOtelIncidentCandidate(
+          input,
+          severity,
+          signalType
+        ),
+
+      observedAt,
+
+      receivedAt:
+        new Date(),
+
+      rawPayload:
+        input,
+
+---
+      context.tenantId;
+
+    if (!organizationId) {
+      throw Object.assign(
+        new Error(
+          "organizationId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_ORGANIZATION_REQUIRED",
+        }
+      );
+    }
+
+    if (!environmentId) {
+      throw Object.assign(
+---
+        new Error(
+          "organizationId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_ORGANIZATION_REQUIRED",
+        }
+      );
+    }
+
+    if (!environmentId) {
+      throw Object.assign(
+        new Error(
+          "environmentId is required for signal normalization"
+        ),
+        {
+---
+    }
+
+    if (!environmentId) {
+      throw Object.assign(
+        new Error(
+          "environmentId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_ENVIRONMENT_REQUIRED",
+        }
+      );
+    }
+
+    if (!tenantId) {
+      throw Object.assign(
+---
+        new Error(
+          "environmentId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_ENVIRONMENT_REQUIRED",
+        }
+      );
+    }
+
+    if (!tenantId) {
+      throw Object.assign(
+        new Error(
+          "tenantId is required for signal normalization"
+        ),
+        {
+---
+    }
+
+    if (!tenantId) {
+      throw Object.assign(
+        new Error(
+          "tenantId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_TENANT_REQUIRED",
+        }
+      );
+    }
+
+    return {
+      organizationId,
+---
+        new Error(
+          "tenantId is required for signal normalization"
+        ),
+        {
+          code:
+            "SIGNAL_TENANT_REQUIRED",
+        }
+      );
+    }
+
+    return {
+      organizationId,
+
+      environmentId,
+
+      tenantId:
+---
+      PROVIDER_SOURCE_MAP[
+        provider
+      ] ||
+      "internal";
+
+    return SIGNAL_SOURCES
+      .includes(
+        source
+      )
+      ? source
+      : "internal";
+  }
+
+  resolveSignalType(
+    provider,
+    explicit
+---
+      )
+      ? source
+      : "internal";
+  }
+
+  resolveSignalType(
+    provider,
+    explicit
+  ) {
+    if (explicit) {
+      return this
+        .normalizeSignalType(
+          explicit
+        );
+    }
+
+---
+    provider,
+    explicit
+  ) {
+    if (explicit) {
+      return this
+        .normalizeSignalType(
+          explicit
+        );
+    }
+
+    return (
+      PROVIDER_SIGNAL_TYPE_MAP[
+        provider
+      ] ||
+      "event"
+    );
+---
+          explicit
+        );
+    }
+
+    return (
+      PROVIDER_SIGNAL_TYPE_MAP[
+        provider
+      ] ||
+      "event"
+    );
+  }
+
+  normalizeSignalType(
+    value
+  ) {
+    const normalized =
+---
+      ] ||
+      "event"
+    );
+  }
+
+  normalizeSignalType(
+    value
+  ) {
+    const normalized =
+      String(
+        value ||
+        "unknown"
+      )
+        .trim()
+        .toLowerCase();
+
+---
+        "unknown"
+      )
+        .trim()
+        .toLowerCase();
+
+    return SIGNAL_TYPES
+      .includes(
+        normalized
+      )
+      ? normalized
+      : "unknown";
+  }
+
+  normalizeSeverity(
+    value
+  ) {
+---
+      )
+    ) {
+      return "info";
+    }
+
+    return SIGNAL_SEVERITIES
+      .includes(
+        normalized
+      )
+      ? normalized
+      : "unknown";
+  }
+
+  normalizeMonitorSeverity(
+    input
+  ) {
+---
+  }
+
+  isOtelIncidentCandidate(
+    input,
+    severity,
+    signalType
+  ) {
+    if (
+      severity ===
+      "critical"
+    ) {
+      return true;
+    }
+
+    if (
+      signalType ===
+---
+    ) {
+      return true;
+    }
+
+    if (
+      signalType ===
+      "trace" &&
+      input.span
+        ?.statusCode ===
+      2
+    ) {
+      return true;
+    }
+
+    if (
+      signalType ===
+---
+    ) {
+      return true;
+    }
+
+    if (
+      signalType ===
+      "log" &&
+      [
+        "error",
+        "critical",
+      ].includes(
+        severity
+      )
+    ) {
+      return true;
+    }
+---
+      .digest(
+        "hex"
+      );
+  }
+
+  buildSignalId({
+    provider,
+    fingerprint,
+    observedAt,
+    sourceEventId = null,
+  }) {
+    /*
+     * If provider supplied an event ID, signal identity remains
+     * deterministic across retries.
+     *
+     * Without one, observedAt distinguishes repeated observations
+---
+    fingerprint,
+    observedAt,
+    sourceEventId = null,
+  }) {
+    /*
+     * If provider supplied an event ID, signal identity remains
+     * deterministic across retries.
+     *
+     * Without one, observedAt distinguishes repeated observations
+     * while fingerprint still groups equivalent failures.
+     */
+    const raw =
+      [
+        provider,
+        sourceEventId ||
+        "no-source-id",
+---
+  // OTEL HELPERS
+  // ==========================================================================
+
+  buildOtelEventType(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      return input.severity ===
+        "error" ||
+        input.severity ===
+        "critical"
+        ? "telemetry.log.error"
+---
+  buildOtelEventType(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      return input.severity ===
+        "error" ||
+        input.severity ===
+        "critical"
+        ? "telemetry.log.error"
+        : "telemetry.log";
+    }
+
+---
+        ? "telemetry.log.error"
+        : "telemetry.log";
+    }
+
+    if (
+      signalType ===
+      "metric"
+    ) {
+      return "telemetry.metric";
+    }
+
+    if (
+      signalType ===
+      "trace"
+    ) {
+      return input.span
+---
+    ) {
+      return "telemetry.metric";
+    }
+
+    if (
+      signalType ===
+      "trace"
+    ) {
+      return input.span
+        ?.statusCode ===
+        2
+        ? "telemetry.trace.error"
+        : "telemetry.trace";
+    }
+
+    return "telemetry.event";
+---
+    return "telemetry.event";
+  }
+
+  buildOtelTitle(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      return (
+        this.cleanString(
+          input.name
+        ) ||
+        "OpenTelemetry log"
+---
+  buildOtelTitle(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      return (
+        this.cleanString(
+          input.name
+        ) ||
+        "OpenTelemetry log"
+      );
+    }
+
+---
+        "OpenTelemetry log"
+      );
+    }
+
+    if (
+      signalType ===
+      "metric"
+    ) {
+      return (
+        this.cleanString(
+          input.name
+        ) ||
+        "OpenTelemetry metric"
+      );
+    }
+
+---
+        "OpenTelemetry metric"
+      );
+    }
+
+    if (
+      signalType ===
+      "trace"
+    ) {
+      return (
+        this.cleanString(
+          input.name
+        ) ||
+        "OpenTelemetry span"
+      );
+    }
+
+---
+        ) ||
+        "OpenTelemetry span"
+      );
+    }
+
+    return "OpenTelemetry signal";
+  }
+
+  buildOtelDescription(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+---
+    return "OpenTelemetry signal";
+  }
+
+  buildOtelDescription(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      const body =
+        input.log
+          ?.body;
+
+      return typeof body ===
+---
+  buildOtelDescription(
+    input,
+    signalType
+  ) {
+    if (
+      signalType ===
+      "log"
+    ) {
+      const body =
+        input.log
+          ?.body;
+
+      return typeof body ===
+        "string"
+        ? body
+        : body
+---
+            )
+          : null;
+    }
+
+    if (
+      signalType ===
+      "metric"
+    ) {
+      return input.metric
+        ? `${input.name || "metric"} = ${JSON.stringify(
+            input.metric
+              .value
+          )}`
+        : null;
+    }
+
+---
+          )}`
+        : null;
+    }
+
+    if (
+      signalType ===
+      "trace"
+    ) {
+      return (
+        input.span
+          ?.statusMessage ||
+        input.name ||
+        null
+      );
+    }
+
+---
+    return new Date();
+  }
+}
+
+module.exports =
+  new SignalNormalizationService();
+
+module.exports
+  .SignalNormalizationService =
+  SignalNormalizationService;
+---
+
+module.exports =
+  new SignalNormalizationService();
+
+module.exports
+  .SignalNormalizationService =
+  SignalNormalizationService;
+---
+module.exports =
+  new SignalNormalizationService();
+
+module.exports
+  .SignalNormalizationService =
+  SignalNormalizationService;
+---
+
+============================================================
+services/discovery/kubernetesInventoryService.js
+============================================================
+
+### Signal
+
+          conditions:
+            item.conditions ||
+            [],
+
+          failureSignals:
+            item.failureSignals ||
+            [],
+        },
+
+        spec: {
+          nodeName:
+            item.nodeName ||
+            null,
+
+          serviceAccountName:
+---
+          conditions:
+            item.conditions ||
+            [],
+
+          failureSignals:
+            item.failureSignals ||
+            [],
+        },
+
+        spec: {
+          nodeName:
+            item.nodeName ||
+            null,
+
+          serviceAccountName:
+            item
+---
+
+### KubernetesClusterSnapshot
+  KubernetesResource,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
+
+const KubernetesClusterSnapshot =
+  require(
+    "../../models/KubernetesClusterSnapshot"
+  );
+
+const kubernetesInventoryAdapter =
+  require(
+    "../inventory/kubernetesInventoryAdapter"
+  );
+
+class KubernetesInventoryService {
+---
+  "../../persistence/operational/operationalModels"
+);
+
+const KubernetesClusterSnapshot =
+  require(
+    "../../models/KubernetesClusterSnapshot"
+  );
+
+const kubernetesInventoryAdapter =
+  require(
+    "../inventory/kubernetesInventoryAdapter"
+  );
+
+class KubernetesInventoryService {
+  async persistDiscovery({
+    tenantId,
+---
+     * Therefore success=true means inventory reconciliation actually
+     * completed rather than merely Kubernetes API discovery completing.
+     */
+
+    const snapshot =
+      await KubernetesClusterSnapshot
+        .create({
+          tenantId,
+
+          organizationId,
+
+          environmentId,
+
+          integrationId,
+
+          discoveredAt:
+---
+
+============================================================
+services/idempotency/idempotencyClaimService.js
+============================================================
+
+### IdempotencyRecord
+const crypto =
+  require(
+    "node:crypto"
+  );
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  IDEMPOTENCY_DECISION,
+  assertValidIdempotencyOperation,
+} =
+  require(
+---
+    "node:crypto"
+  );
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  IDEMPOTENCY_DECISION,
+  assertValidIdempotencyOperation,
+} =
+  require(
+    "./idempotencyContracts"
+  );
+---
+
+class IdempotencyClaimService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+---
+class IdempotencyClaimService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+  async acquire(
+---
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+  async acquire(
+    input = {}
+---
+    // Unique compound index guarantees that only one concurrent insert wins.
+    // ========================================================================
+
+    try {
+      const created =
+        await this.IdempotencyRecord
+          .create({
+            ...filter,
+
+            status:
+              IDEMPOTENCY_STATUS
+                .PROCESSING,
+
+            ownerId:
+              input.ownerId,
+
+---
+    // ========================================================================
+    // 2. EXISTING RECORD
+    // ========================================================================
+
+    const existing =
+      await this.IdempotencyRecord
+        .findOne(
+          filter
+        );
+
+    if (
+      !existing
+    ) {
+      throw Object.assign(
+        new Error(
+          "Idempotency record disappeared during duplicate claim resolution"
+---
+      //
+      // Atomic conditional update prevents two workers reclaiming together.
+      // ======================================================================
+
+      const reclaimed =
+        await this.IdempotencyRecord
+          .findOneAndUpdate(
+            {
+              ...filter,
+
+              status:
+                IDEMPOTENCY_STATUS
+                  .PROCESSING,
+
+              leaseExpiresAt: {
+                $lte:
+---
+
+      /*
+       * Another worker won the reclaim race.
+       */
+      const raceWinner =
+        await this.IdempotencyRecord
+          .findOne(
+            filter
+          );
+
+      return this.result({
+        decision:
+          IDEMPOTENCY_DECISION
+            .DUPLICATE_PROCESSING,
+
+        acquired:
+---
+            "Previous operation failure is not retryable.",
+        });
+      }
+
+      const retried =
+        await this.IdempotencyRecord
+          .findOneAndUpdate(
+            {
+              ...filter,
+
+              status:
+                IDEMPOTENCY_STATUS
+                  .FAILED,
+
+              "failure.retryable":
+                true,
+---
+            "Retryable failed operation was acquired for another attempt.",
+        });
+      }
+
+      const current =
+        await this.IdempotencyRecord
+          .findOne(
+            filter
+          );
+
+      return this.result({
+        decision:
+          IDEMPOTENCY_DECISION
+            .DUPLICATE_PROCESSING,
+
+        acquired:
+---
+  async markDuplicate(
+    record,
+    now
+  ) {
+    try {
+      await this.IdempotencyRecord
+        .updateOne(
+          {
+            _id:
+              record._id,
+          },
+
+          {
+            $inc: {
+              duplicateCount:
+                1,
+---
+
+### ExecutionRequest
+
+            recoveryDecisionId:
+              input.recoveryDecisionId ||
+              null,
+
+            executionRequestId:
+              input.executionRequestId ||
+              null,
+
+            verificationId:
+              input.verificationId ||
+              null,
+
+            lifecycleId:
+              input.lifecycleId ||
+              null,
+---
+            recoveryDecisionId:
+              input.recoveryDecisionId ||
+              null,
+
+            executionRequestId:
+              input.executionRequestId ||
+              null,
+
+            verificationId:
+              input.verificationId ||
+              null,
+
+            lifecycleId:
+              input.lifecycleId ||
+              null,
+
+---
+
+============================================================
+services/idempotency/idempotencyCompletionService.js
+============================================================
+
+### IdempotencyRecord
+ * 5. COMPLETED records cannot be changed to FAILED.
+ * 6. FAILED records cannot be changed to COMPLETED.
+ * 7. This service never grants execution authorization.
+ */
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  assertValidIdempotencyOperation,
+} =
+  require(
+    "./idempotencyContracts"
+---
+ * 7. This service never grants execution authorization.
+ */
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  assertValidIdempotencyOperation,
+} =
+  require(
+    "./idempotencyContracts"
+  );
+
+---
+
+class IdempotencyCompletionService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+  }
+
+  // ==========================================================================
+  // COMPLETE
+  // ==========================================================================
+
+  async complete(
+    input = {}
+---
+class IdempotencyCompletionService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+  }
+
+  // ==========================================================================
+  // COMPLETE
+  // ==========================================================================
+
+  async complete(
+    input = {}
+  ) {
+---
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+  }
+
+  // ==========================================================================
+  // COMPLETE
+  // ==========================================================================
+
+  async complete(
+    input = {}
+  ) {
+    this.assertInput(
+---
+      this.buildOwnershipFilter(
+        input
+      );
+
+    const completed =
+      await this.IdempotencyRecord
+        .findOneAndUpdate(
+          filter,
+
+          {
+            $set: {
+              status:
+                IDEMPOTENCY_STATUS
+                  .COMPLETED,
+
+              result:
+---
+        input.failure,
+        now
+      );
+
+    const failed =
+      await this.IdempotencyRecord
+        .findOneAndUpdate(
+          filter,
+
+          {
+            $set: {
+              status:
+                IDEMPOTENCY_STATUS
+                  .FAILED,
+
+              failure,
+---
+  async resolveOwnershipFailure(
+    input,
+    action
+  ) {
+    const record =
+      await this.IdempotencyRecord
+        .findOne({
+          organizationId:
+            input.organizationId,
+
+          environmentId:
+            input.environmentId,
+
+          operation:
+            input.operation,
+
+---
+
+============================================================
+services/idempotency/idempotencyLeaseService.js
+============================================================
+
+### IdempotencyRecord
+ * - requires ownerId + claimToken
+ * - never authorizes execution
+ * - never executes recovery
+ */
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  assertValidIdempotencyOperation,
+} =
+  require(
+    "./idempotencyContracts"
+---
+ * - never executes recovery
+ */
+
+const IdempotencyRecord =
+  require(
+    "../../models/IdempotencyRecord"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  assertValidIdempotencyOperation,
+} =
+  require(
+    "./idempotencyContracts"
+  );
+
+---
+
+class IdempotencyLeaseService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+---
+class IdempotencyLeaseService {
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+  async heartbeat(
+---
+  constructor(
+    options = {}
+  ) {
+    this.IdempotencyRecord =
+      options.IdempotencyRecord ||
+      IdempotencyRecord;
+
+    this.defaultLeaseMs =
+      normalizeLeaseMs(
+        options.defaultLeaseMs,
+        60000
+      );
+  }
+
+  async heartbeat(
+    input = {}
+---
+        now.getTime() +
+        leaseMs
+      );
+
+    const record =
+      await this.IdempotencyRecord
+        .findOneAndUpdate(
+          {
+            organizationId:
+              input.organizationId,
+
+            environmentId:
+              input.environmentId,
+
+            operation:
+              input.operation,
+---
+      query.operation =
+        input.operation;
+    }
+
+    const records =
+      await this.IdempotencyRecord
+        .find(
+          query
+        )
+        .sort({
+          leaseExpiresAt:
+            1,
+        })
+        .limit(
+          limit
+        );
+---
+
+  async resolveHeartbeatFailure(
+    input
+  ) {
+    const record =
+      await this.IdempotencyRecord
+        .findOne({
+          organizationId:
+            input.organizationId,
+
+          environmentId:
+            input.environmentId,
+
+          operation:
+            input.operation,
+
+---
+
+============================================================
+services/recoveryRuntime/runtimeStaleOperationDetector.js
+============================================================
+
+### RuntimeRecoveryCheckpoint
+ * - does not enqueue retry
+ * - does not execute infrastructure actions
+ * - does not grant execution authorization
+ */
+
+const RuntimeRecoveryCheckpoint =
+  require(
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const {
+  RUNTIME_STAGE,
+  CHECKPOINT_STATUS,
+  INTERRUPTION_REASON,
+  RESUME_SAFETY,
+
+---
+ * - does not grant execution authorization
+ */
+
+const RuntimeRecoveryCheckpoint =
+  require(
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const {
+  RUNTIME_STAGE,
+  CHECKPOINT_STATUS,
+  INTERRUPTION_REASON,
+  RESUME_SAFETY,
+
+  assertNoExecutionAuthorization,
+} =
+---
+
+class RuntimeStaleOperationDetector {
+  constructor(
+    options = {}
+  ) {
+    this.RuntimeRecoveryCheckpoint =
+      options.RuntimeRecoveryCheckpoint ||
+      RuntimeRecoveryCheckpoint;
+  }
+
+  // ==========================================================================
+  // SCAN
+  // ==========================================================================
+
+  async scan(
+    input = {}
+---
+class RuntimeStaleOperationDetector {
+  constructor(
+    options = {}
+  ) {
+    this.RuntimeRecoveryCheckpoint =
+      options.RuntimeRecoveryCheckpoint ||
+      RuntimeRecoveryCheckpoint;
+  }
+
+  // ==========================================================================
+  // SCAN
+  // ==========================================================================
+
+  async scan(
+    input = {}
+  ) {
+---
+  constructor(
+    options = {}
+  ) {
+    this.RuntimeRecoveryCheckpoint =
+      options.RuntimeRecoveryCheckpoint ||
+      RuntimeRecoveryCheckpoint;
+  }
+
+  // ==========================================================================
+  // SCAN
+  // ==========================================================================
+
+  async scan(
+    input = {}
+  ) {
+    this.assertInput(
+---
+      this.buildScanFilter(
+        input
+      );
+
+    const checkpoints =
+      await this.RuntimeRecoveryCheckpoint
+        .find(
+          filter
+        );
+
+    const items =
+      checkpoints.map(
+        (
+          checkpoint
+        ) =>
+          this.classify(
+---
+
+### ExecutionAuthorization
+  RUNTIME_STAGE,
+  CHECKPOINT_STATUS,
+  INTERRUPTION_REASON,
+  RESUME_SAFETY,
+
+  assertNoExecutionAuthorization,
+} =
+  require(
+    "./recoveryRuntimeContracts"
+  );
+
+const DETECTION_CLASS =
+  Object.freeze({
+    LIVE:
+      "LIVE",
+
+---
+        "Runtime stale-operation scan input is required",
+        "RUNTIME_STALE_INPUT_REQUIRED"
+      );
+    }
+
+    assertNoExecutionAuthorization(
+      input
+    );
+  }
+}
+
+function normalizeDate(
+  value
+) {
+  const date =
+    value
+---
+
+============================================================
+services/replayOrchestration/durableReplayService.js
+============================================================
+
+### WorkflowReplayRecord
+const os =
+  require(
+    "node:os"
+  );
+
+const WorkflowReplayRecord =
+  require(
+    "../../models/WorkflowReplayRecord"
+  );
+
+const workflowRecoveryOrchestrator =
+  require(
+    "./workflowRecoveryOrchestrator"
+  );
+
+const {
+---
+    "node:os"
+  );
+
+const WorkflowReplayRecord =
+  require(
+    "../../models/WorkflowReplayRecord"
+  );
+
+const workflowRecoveryOrchestrator =
+  require(
+    "./workflowRecoveryOrchestrator"
+  );
+
+const {
+  assertReplayRequest,
+  assertNoReplayExecutionAuthority,
+---
+
+class DurableReplayService {
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.orchestrator =
+      options.orchestrator ||
+      workflowRecoveryOrchestrator;
+
+    this.workerId =
+      options.workerId ||
+      [
+---
+class DurableReplayService {
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.orchestrator =
+      options.orchestrator ||
+      workflowRecoveryOrchestrator;
+
+    this.workerId =
+      options.workerId ||
+      [
+        "replay",
+---
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.orchestrator =
+      options.orchestrator ||
+      workflowRecoveryOrchestrator;
+
+    this.workerId =
+      options.workerId ||
+      [
+        "replay",
+        os.hostname(),
+---
+    const now =
+      this.now();
+
+    const record =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayKey,
+          },
+
+          {
+            $setOnInsert: {
+              replayId,
+
+              replayKey,
+---
+    const claimToken =
+      this.generateClaimToken();
+
+    const claimed =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayId,
+
+            status: {
+              $in: [
+                "REQUESTED",
+                "FAILED",
+                "RUNNING",
+              ],
+---
+    }
+
+
+    const existing =
+      await this
+        .WorkflowReplayRecord
+        .findOne({
+          replayId,
+        })
+        .lean();
+
+    if (
+      !existing
+    ) {
+      throw Object.assign(
+        new Error(
+---
+        dispatch;
+    }
+
+    const updated =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayId,
+
+            status:
+              "RUNNING",
+
+            "owner.workerId":
+              this.workerId,
+
+---
+        ?.retryable ===
+      true;
+
+    const updated =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayId,
+
+            status:
+              "RUNNING",
+
+            "owner.workerId":
+              this.workerId,
+
+---
+
+============================================================
+services/replayOrchestration/replayRuntimeIntegration.js
+============================================================
+
+### WorkflowReplayRecord
+ * - bypass Phase 11.3 durable workflow handoff
+ *
+ * ============================================================================
+ */
+
+const WorkflowReplayRecord =
+  require(
+    "../../models/WorkflowReplayRecord"
+  );
+
+const durableReplayService =
+  require(
+    "./durableReplayService"
+  );
+
+const {
+---
+ * ============================================================================
+ */
+
+const WorkflowReplayRecord =
+  require(
+    "../../models/WorkflowReplayRecord"
+  );
+
+const durableReplayService =
+  require(
+    "./durableReplayService"
+  );
+
+const {
+  REPLAY_SOURCE,
+  REPLAY_MODE,
+---
+
+class ReplayRuntimeIntegration {
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.durableReplayService =
+      options.durableReplayService ||
+      durableReplayService;
+
+    this.now =
+      options.now ||
+      (() =>
+---
+class ReplayRuntimeIntegration {
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.durableReplayService =
+      options.durableReplayService ||
+      durableReplayService;
+
+    this.now =
+      options.now ||
+      (() =>
+        new Date());
+---
+  constructor(
+    options = {}
+  ) {
+    this.WorkflowReplayRecord =
+      options.WorkflowReplayRecord ||
+      WorkflowReplayRecord;
+
+    this.durableReplayService =
+      options.durableReplayService ||
+      durableReplayService;
+
+    this.now =
+      options.now ||
+      (() =>
+        new Date());
+
+---
+     *
+     * Those represent intentional durable states.
+     */
+    const records =
+      await this
+        .WorkflowReplayRecord
+        .find({
+          $or: [
+            {
+              status:
+                "FAILED",
+
+              "failure.retryable":
+                true,
+            },
+
+---
+    const now =
+      this.now();
+
+    const updated =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayId:
+              record.replayId,
+
+            status:
+              "RUNNING",
+
+            "owner.claimToken":
+              record.owner
+---
+      safe !==
+      true
+    ) {
+      const blocked =
+        await this
+          .WorkflowReplayRecord
+          .findOneAndUpdate(
+            {
+              replayId,
+
+              status:
+                "WAITING_RECONCILIATION",
+            },
+
+            {
+              $set: {
+---
+    const now =
+      this.now();
+
+    const updated =
+      await this
+        .WorkflowReplayRecord
+        .findOneAndUpdate(
+          {
+            replayId,
+
+            status:
+              expectedStatus,
+          },
+
+          {
+            $set: {
+---
+    this.assertReplayId(
+      replayId
+    );
+
+    return this
+      .WorkflowReplayRecord
+      .findOne({
+        replayId,
+      })
+      .lean();
+  }
+
+
+  // ==========================================================================
+  // VALIDATION
+  // ==========================================================================
+---
+
+============================================================
+services/replayOrchestration/workflowRecoveryPlanner.js
+============================================================
+
+### RuntimeRecoveryCheckpoint
+ *
+ * It only produces a deterministic replay plan.
+ *
+ * ============================================================================
+ */
+const RuntimeRecoveryCheckpoint =
+  require(
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const ExecutionRequest =
+  require(
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+---
+ *
+ * ============================================================================
+ */
+const RuntimeRecoveryCheckpoint =
+  require(
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const ExecutionRequest =
+  require(
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+---
+  constructor(
+    options = {}
+  ) {
+    this.RuntimeCheckpoint =
+  options.RuntimeCheckpoint ||
+  options.RuntimeRecoveryCheckpoint ||
+  RuntimeRecoveryCheckpoint;
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+---
+    options = {}
+  ) {
+    this.RuntimeCheckpoint =
+  options.RuntimeCheckpoint ||
+  options.RuntimeRecoveryCheckpoint ||
+  RuntimeRecoveryCheckpoint;
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+---
+
+### ExecutionRequest
+const RuntimeRecoveryCheckpoint =
+  require(
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const ExecutionRequest =
+  require(
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+---
+    "../../models/RuntimeRecoveryCheckpoint"
+  );
+
+const ExecutionRequest =
+  require(
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+---
+    this.RuntimeCheckpoint =
+  options.RuntimeCheckpoint ||
+  options.RuntimeRecoveryCheckpoint ||
+  RuntimeRecoveryCheckpoint;
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+---
+  options.RuntimeCheckpoint ||
+  options.RuntimeRecoveryCheckpoint ||
+  RuntimeRecoveryCheckpoint;
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+---
+  options.RuntimeRecoveryCheckpoint ||
+  RuntimeRecoveryCheckpoint;
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+---
+      incidentId,
+    };
+
+    const [
+      checkpoints,
+      executionRequest,
+      verification,
+      lifecycle,
+      outboxEvents,
+    ] =
+      await Promise.all([
+        this.RuntimeCheckpoint
+          .find(
+            scope
+          )
+          .sort({
+---
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.ExecutionRequest
+          .findOne(
+            scope
+          )
+          .sort({
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.RecoveryVerification
+---
+          checkpoints
+        )
+          ? checkpoints
+          : [],
+
+      executionRequest:
+        executionRequest ||
+        null,
+
+      verification:
+        verification ||
+        null,
+
+      lifecycle:
+        lifecycle ||
+        null,
+---
+        )
+          ? checkpoints
+          : [],
+
+      executionRequest:
+        executionRequest ||
+        null,
+
+      verification:
+        verification ||
+        null,
+
+      lifecycle:
+        lifecycle ||
+        null,
+
+---
+    if (
+      this.isCheckpointCompleted(
+        executionCheckpoint
+      ) ||
+      this.isExecutionDefinitelyComplete(
+        snapshot.executionRequest
+      )
+    ) {
+      return this.buildPlan({
+        decision:
+          REPLAY_DECISION
+            .RESUME,
+
+        safety:
+          REPLAY_SAFETY
+            .SAFE,
+---
+    // 4. EXECUTION AMBIGUOUS
+    // ========================================================================
+
+    if (
+      this.isExecutionAmbiguous({
+        executionRequest:
+          snapshot.executionRequest,
+
+        checkpoint:
+          executionCheckpoint,
+      })
+    ) {
+      return this.buildPlan({
+        decision:
+          REPLAY_DECISION
+            .RECONCILE,
+---
+    // ========================================================================
+
+    if (
+      this.isExecutionAmbiguous({
+        executionRequest:
+          snapshot.executionRequest,
+
+        checkpoint:
+          executionCheckpoint,
+      })
+    ) {
+      return this.buildPlan({
+        decision:
+          REPLAY_DECISION
+            .RECONCILE,
+
+---
+  // ==========================================================================
+  // EXECUTION STATE
+  // ==========================================================================
+
+  isExecutionDefinitelyComplete(
+    executionRequest
+  ) {
+    if (
+      !executionRequest
+    ) {
+      return false;
+    }
+
+    return [
+      "COMPLETED",
+      "SUCCEEDED",
+---
+
+  isExecutionDefinitelyComplete(
+    executionRequest
+  ) {
+    if (
+      !executionRequest
+    ) {
+      return false;
+    }
+
+    return [
+      "COMPLETED",
+      "SUCCEEDED",
+      "SUCCESS",
+      "EXECUTED",
+    ].includes(
+---
+      "COMPLETED",
+      "SUCCEEDED",
+      "SUCCESS",
+      "EXECUTED",
+    ].includes(
+      executionRequest.status
+    );
+  }
+
+
+  isExecutionAmbiguous({
+    executionRequest,
+    checkpoint,
+  }) {
+    /*
+     * Dangerous state:
+---
+    );
+  }
+
+
+  isExecutionAmbiguous({
+    executionRequest,
+    checkpoint,
+  }) {
+    /*
+     * Dangerous state:
+     *
+     * checkpoint says processing/running
+     * but no durable final execution result exists.
+     *
+     * Infrastructure mutation MAY already have occurred.
+     *
+---
+      ].includes(
+        checkpoint.status
+      );
+
+    const executionUnresolved =
+      executionRequest &&
+      [
+        "PROCESSING",
+        "RUNNING",
+        "EXECUTING",
+        "UNKNOWN",
+      ].includes(
+        executionRequest.status
+      );
+
+    return (
+---
+        "PROCESSING",
+        "RUNNING",
+        "EXECUTING",
+        "UNKNOWN",
+      ].includes(
+        executionRequest.status
+      );
+
+    return (
+      checkpointRunning ||
+      executionUnresolved
+    );
+  }
+
+
+  // ==========================================================================
+---
+
+### RecoveryVerification
+const ExecutionRequest =
+  require(
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+---
+    "../../models/ExecutionRequest"
+  );
+
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+---
+
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+---
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+---
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+---
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.RecoveryVerification
+          .findOne(
+            scope
+          )
+          .sort({
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.IncidentLifecycle
+---
+
+### IncidentLifecycle
+const RecoveryVerification =
+  require(
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const {
+---
+    "../../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const {
+  REPLAY_DECISION,
+  REPLAY_SAFETY,
+---
+
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+---
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+  // MAIN ENTRY
+---
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+  // MAIN ENTRY
+  // ==========================================================================
+---
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.IncidentLifecycle
+          .findOne(
+            scope
+          )
+          .sort({
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.WorkflowOutboxEvent
+---
+
+### WorkflowOutboxEvent
+const IncidentLifecycle =
+  require(
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const {
+  REPLAY_DECISION,
+  REPLAY_SAFETY,
+  REPLAY_REASON,
+  assertNoReplayExecutionAuthority,
+} =
+---
+    "../../models/IncidentLifecycle"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const {
+  REPLAY_DECISION,
+  REPLAY_SAFETY,
+  REPLAY_REASON,
+  assertNoReplayExecutionAuthority,
+} =
+  require(
+    "./replayOrchestrationContracts"
+---
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+  // MAIN ENTRY
+  // ==========================================================================
+
+  async plan(
+---
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+  // MAIN ENTRY
+  // ==========================================================================
+
+  async plan(
+    request = {}
+---
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.WorkflowOutboxEvent =
+      options.WorkflowOutboxEvent ||
+      WorkflowOutboxEvent;
+  }
+
+
+  // ==========================================================================
+  // MAIN ENTRY
+  // ==========================================================================
+
+  async plan(
+    request = {}
+  ) {
+---
+            updatedAt:
+              -1,
+          })
+          .lean(),
+
+        this.WorkflowOutboxEvent
+          .find(
+            scope
+          )
+          .sort({
+            createdAt:
+              1,
+          })
+          .lean(),
+      ]);
+
+---
+
+============================================================
+services/workflowOutbox/workflowOutboxPersistenceService.js
+============================================================
+
+### WorkflowOutboxEvent
+} =
+  require(
+    "../../persistence/repositories"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const workflowOutboxIdentity =
+  require(
+    "./workflowOutboxIdentity"
+  );
+
+const {
+---
+    "../../persistence/repositories"
+  );
+
+const WorkflowOutboxEvent =
+  require(
+    "../../models/WorkflowOutboxEvent"
+  );
+
+const workflowOutboxIdentity =
+  require(
+    "./workflowOutboxIdentity"
+  );
+
+const {
+  OUTBOX_STATUS,
+  OUTBOX_ERROR_CODE,
+---
+ *
+ *   workflowOutboxRepository
+ *
+ * Legacy unit tests:
+ *
+ *   WorkflowOutboxEvent test double
+ *
+ * The compatibility path is intentionally limited to the injected
+ * Mongoose/model-style dependency. PostgreSQL remains strictly tenant scoped.
+ *
+ * IMPORTANT:
+ *
+ * The outbox never grants execution authority.
+ * ============================================================================
+ */
+
+---
+class WorkflowOutboxPersistenceService {
+  constructor(
+    options = {}
+  ) {
+    /*
+     * Existing tests historically inject WorkflowOutboxEvent.
+     *
+     * Preserve that API while production uses the repository abstraction.
+     */
+    if (
+      options.WorkflowOutboxEvent
+    ) {
+      this.repository =
+        createLegacyModelRepository(
+          options.WorkflowOutboxEvent
+        );
+---
+     * Existing tests historically inject WorkflowOutboxEvent.
+     *
+     * Preserve that API while production uses the repository abstraction.
+     */
+    if (
+      options.WorkflowOutboxEvent
+    ) {
+      this.repository =
+        createLegacyModelRepository(
+          options.WorkflowOutboxEvent
+        );
+
+      this.requiresTenantScope =
+        false;
+    } else if (
+      options.repository
+---
+    if (
+      options.WorkflowOutboxEvent
+    ) {
+      this.repository =
+        createLegacyModelRepository(
+          options.WorkflowOutboxEvent
+        );
+
+      this.requiresTenantScope =
+        false;
+    } else if (
+      options.repository
+    ) {
+      this.repository =
+        options.repository;
+
+---
+
+============================================================
+workers/executionWorker.js
+============================================================
+
+### RuntimeRecoveryCheckpoint
+     * Production:
+     *   runtime checkpointing enabled.
+     *
+     * Existing Jest tests:
+     *   disabled unless explicitly enabled, preventing accidental access
+     *   to the real Mongo-backed RuntimeRecoveryCheckpoint model.
+     */
+    this.runtimeCheckpointEnabled =
+      options.runtimeCheckpointEnabled !==
+        undefined
+        ? options.runtimeCheckpointEnabled ===
+          true
+        : process.env.NODE_ENV !==
+          "test";
+  }
+
+---
+
+### ExecutionRequest
+ * Responsibilities:
+ *
+ * - validate immutable execution identity
+ * - maintain durable execution runtime checkpoint
+ * - protect execution using deterministic idempotency
+ * - load the persisted ExecutionRequest
+ * - load the persisted ExecutionAuthorization
+ * - revalidate authorization at execution time
+ * - revalidate immutable execution plan identity
+ * - mark execution RUNNING / SUCCEEDED / FAILED / BLOCKED
+ * - hand approved execution to the configured execution dependency
+ * - publish lifecycle events
+ *
+ * IMPORTANT:
+ *
+ * Runtime recovery NEVER automatically replays an interrupted execution.
+---
+} =
+  require(
+    "../services/idempotency/idempotencyContracts"
+  );
+
+const ExecutionRequest =
+  require(
+    "../models/ExecutionRequest"
+  );
+
+const ExecutionAuthorization =
+  require(
+    "../models/ExecutionAuthorization"
+  );
+
+const executionQueueService =
+---
+    "../services/idempotency/idempotencyContracts"
+  );
+
+const ExecutionRequest =
+  require(
+    "../models/ExecutionRequest"
+  );
+
+const ExecutionAuthorization =
+  require(
+    "../models/ExecutionAuthorization"
+  );
+
+const executionQueueService =
+  require(
+    "../services/execution/executionQueueService"
+---
+
+class ExecutionWorker {
+  constructor(
+    options = {}
+  ) {
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+---
+class ExecutionWorker {
+  constructor(
+    options = {}
+  ) {
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+
+---
+  constructor(
+    options = {}
+  ) {
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+
+    // ========================================================================
+---
+
+    const operationKey =
+      [
+        "execution",
+        job.incidentId,
+        identity.executionRequestId,
+        identity.executionPlanId,
+        identity.executionPlanHash,
+      ].join(
+        ":"
+      );
+
+    // ========================================================================
+    // 1. ENSURE DURABLE EXECUTION CHECKPOINT
+    // ========================================================================
+
+---
+        workflowIdentity: {
+          recoveryDecisionId:
+            job.recoveryDecisionId ||
+            null,
+
+          executionRequestId:
+            identity
+              .executionRequestId,
+
+          executionPlanHash:
+            identity
+              .executionPlanHash,
+        },
+
+        executionAuthorized:
+          false,
+---
+            job.recoveryDecisionId ||
+            null,
+
+          executionRequestId:
+            identity
+              .executionRequestId,
+
+          executionPlanHash:
+            identity
+              .executionPlanHash,
+        },
+
+        executionAuthorized:
+          false,
+      });
+
+---
+  // ==========================================================================
+
+  resolveExecutionIdentity(
+    job
+  ) {
+    const executionRequestId =
+      job.executionRequestId ||
+      job.requestId ||
+      job.executionRequest
+        ?.executionRequestId;
+
+    const executionPlan =
+      job.executionPlan ||
+      job.plan ||
+      {};
+
+---
+
+  resolveExecutionIdentity(
+    job
+  ) {
+    const executionRequestId =
+      job.executionRequestId ||
+      job.requestId ||
+      job.executionRequest
+        ?.executionRequestId;
+
+    const executionPlan =
+      job.executionPlan ||
+      job.plan ||
+      {};
+
+    const executionPlanId =
+---
+    job
+  ) {
+    const executionRequestId =
+      job.executionRequestId ||
+      job.requestId ||
+      job.executionRequest
+        ?.executionRequestId;
+
+    const executionPlan =
+      job.executionPlan ||
+      job.plan ||
+      {};
+
+    const executionPlanId =
+      job.executionPlanId ||
+      executionPlan.planId ||
+---
+  ) {
+    const executionRequestId =
+      job.executionRequestId ||
+      job.requestId ||
+      job.executionRequest
+        ?.executionRequestId;
+
+    const executionPlan =
+      job.executionPlan ||
+      job.plan ||
+      {};
+
+    const executionPlanId =
+      job.executionPlanId ||
+      executionPlan.planId ||
+      executionPlan.executionPlanId;
+---
+      job.executionPlanHash ||
+      executionPlan.planHash ||
+      executionPlan.executionPlanHash;
+
+    if (
+      !executionRequestId ||
+      !executionPlanId ||
+      !executionPlanHash
+    ) {
+      throw Object.assign(
+        new Error(
+          "Execution worker requires immutable execution identity"
+        ),
+        {
+          code:
+            "EXECUTION_JOB_IDENTITY_REQUIRED",
+---
+        }
+      );
+    }
+
+    return {
+      executionRequestId,
+
+      executionPlan,
+
+      executionPlanId,
+
+      executionPlanHash,
+    };
+  }
+
+  // ==========================================================================
+---
+      this.resolveExecutionIdentity(
+        job
+      );
+
+    const {
+      executionRequestId,
+      executionPlan,
+      executionPlanId,
+      executionPlanHash,
+    } =
+      identity;
+
+    const wrapped =
+      await this.idempotentWorker
+        .run({
+          // ==================================================================
+---
+
+            operation:
+              IDEMPOTENCY_OPERATION
+                .EXECUTION,
+
+            executionRequestId,
+
+            executionPlanId,
+
+            executionPlanHash,
+          },
+
+          ownerId:
+            this.workerId,
+
+          // ==================================================================
+---
+              job.environmentId,
+
+            incidentId:
+              job.incidentId,
+
+            executionRequestId,
+
+            executionPlanId,
+
+            executionPlanHash,
+
+            authorizationId:
+              job.authorizationId ||
+              null,
+
+            executionPlan,
+---
+          references: {
+            incidentId:
+              job.incidentId ||
+              null,
+
+            executionRequestId,
+
+            recoveryDecisionId:
+              job.recoveryDecisionId ||
+              null,
+
+            eventId:
+              job.eventId ||
+              job.jobId ||
+              null,
+
+---
+              job.jobId ||
+              null,
+
+            correlationId:
+              job.correlationId ||
+              executionRequestId,
+          },
+
+          // ==================================================================
+          // IDEMPOTENCY LEASE
+          // ==================================================================
+
+          leaseMs:
+            dependencies
+              .executionLeaseMs ||
+            120000,
+---
+   *
+   * Phase 11.3 does NOT replace the existing execution engine.
+   *
+   * The original protected Phase 8 path remains responsible for:
+   *
+   * - loading ExecutionRequest
+   * - loading ExecutionAuthorization
+   * - immutable plan validation
+   * - policy / approval enforcement
+   * - infrastructure execution
+   * - execution result persistence
+   *
+   * Only after that path returns do we consider creating a durable
+   * verification handoff.
+   */
+  const result =
+---
+
+        reason:
+          persistedValidation
+            .reason,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        executionPerformed:
+          false,
+
+---
+          persistedValidation
+            .reason,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        executionPerformed:
+          false,
+
+        executionStarted:
+          false,
+---
+
+        reason:
+          identityValidation
+            .reason,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        executionPerformed:
+          false,
+
+---
+          identityValidation
+            .reason,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        executionPerformed:
+          false,
+
+        executionStarted:
+          false,
+---
+          true,
+
+        blocked:
+          false,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        result,
+
+        executionPerformed:
+---
+        blocked:
+          false,
+
+        executionRequestId:
+          request
+            .executionRequestId,
+
+        authorizationId:
+          authorization
+            .authorizationId,
+
+        result,
+
+        executionPerformed:
+          true,
+
+---
+    // REQUEST ID
+    // ========================================================================
+
+    if (
+      String(
+        request.executionRequestId
+      ) !==
+      String(
+        job.executionRequestId
+      )
+    ) {
+      return {
+        allowed:
+          false,
+
+        reason:
+---
+    if (
+      String(
+        request.executionRequestId
+      ) !==
+      String(
+        job.executionRequestId
+      )
+    ) {
+      return {
+        allowed:
+          false,
+
+        reason:
+          "Execution job request identity does not match persisted execution request.",
+      };
+    }
+---
+
+  async loadRequest(
+    job
+  ) {
+    const request =
+      await this.ExecutionRequest
+        .findOne({
+          executionRequestId:
+            job.executionRequestId,
+
+          organizationId:
+            job.organizationId,
+
+          environmentId:
+            job.environmentId,
+
+---
+    job
+  ) {
+    const request =
+      await this.ExecutionRequest
+        .findOne({
+          executionRequestId:
+            job.executionRequestId,
+
+          organizationId:
+            job.organizationId,
+
+          environmentId:
+            job.environmentId,
+
+          incidentId:
+            job.incidentId,
+---
+  ) {
+    const request =
+      await this.ExecutionRequest
+        .findOne({
+          executionRequestId:
+            job.executionRequestId,
+
+          organizationId:
+            job.organizationId,
+
+          environmentId:
+            job.environmentId,
+
+          incidentId:
+            job.incidentId,
+        });
+---
+    authorization,
+  }) {
+    try {
+      await this.queue
+        .publishStarted({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+---
+    try {
+      await this.queue
+        .publishStarted({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+
+          environmentId:
+---
+    result,
+  }) {
+    try {
+      await this.queue
+        .publishCompleted({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+---
+    try {
+      await this.queue
+        .publishCompleted({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+
+          environmentId:
+---
+    error,
+  }) {
+    try {
+      await this.queue
+        .publishFailed({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+---
+    try {
+      await this.queue
+        .publishFailed({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+
+          environmentId:
+---
+    reason,
+  }) {
+    try {
+      await this.queue
+        .publishBlocked({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+---
+    try {
+      await this.queue
+        .publishBlocked({
+          executionRequestId:
+            request
+              .executionRequestId,
+
+          authorizationId:
+            authorization
+              .authorizationId,
+
+          organizationId:
+            request
+              .organizationId,
+
+          environmentId:
+---
+    }
+
+    for (
+      const field
+      of [
+        "executionRequestId",
+        "organizationId",
+        "environmentId",
+        "incidentId",
+      ]
+    ) {
+      if (
+        !job[field]
+      ) {
+        throw Object.assign(
+          new Error(
+---
+
+### ExecutionAuthorization
+ *
+ * - validate immutable execution identity
+ * - maintain durable execution runtime checkpoint
+ * - protect execution using deterministic idempotency
+ * - load the persisted ExecutionRequest
+ * - load the persisted ExecutionAuthorization
+ * - revalidate authorization at execution time
+ * - revalidate immutable execution plan identity
+ * - mark execution RUNNING / SUCCEEDED / FAILED / BLOCKED
+ * - hand approved execution to the configured execution dependency
+ * - publish lifecycle events
+ *
+ * IMPORTANT:
+ *
+ * Runtime recovery NEVER automatically replays an interrupted execution.
+ *
+---
+const ExecutionRequest =
+  require(
+    "../models/ExecutionRequest"
+  );
+
+const ExecutionAuthorization =
+  require(
+    "../models/ExecutionAuthorization"
+  );
+
+const executionQueueService =
+  require(
+    "../services/execution/executionQueueService"
+  );
+
+const {
+---
+    "../models/ExecutionRequest"
+  );
+
+const ExecutionAuthorization =
+  require(
+    "../models/ExecutionAuthorization"
+  );
+
+const executionQueueService =
+  require(
+    "../services/execution/executionQueueService"
+  );
+
+const {
+  AUTHORIZATION_DECISION,
+  AUTHORIZATION_STATUS,
+---
+  AUTHORIZATION_DECISION,
+  AUTHORIZATION_STATUS,
+  EXECUTION_REQUEST_STATE,
+} =
+  require(
+    "../services/execution/executionAuthorizationContracts"
+  );
+
+  const executionVerificationOutboxIntegrationService =
+  require(
+    "../services/workflowOutbox/executionVerificationOutboxIntegrationService"
+  );
+
+class ExecutionWorker {
+  constructor(
+    options = {}
+---
+  ) {
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+
+    // ========================================================================
+    // PHASE 11.1 IDEMPOTENCY
+    // ========================================================================
+---
+    this.ExecutionRequest =
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+
+    // ========================================================================
+    // PHASE 11.1 IDEMPOTENCY
+    // ========================================================================
+
+---
+      options.ExecutionRequest ||
+      ExecutionRequest;
+
+    this.ExecutionAuthorization =
+      options.ExecutionAuthorization ||
+      ExecutionAuthorization;
+
+    this.queue =
+      options.queue ||
+      executionQueueService;
+
+    // ========================================================================
+    // PHASE 11.1 IDEMPOTENCY
+    // ========================================================================
+
+    this.idempotentWorker =
+---
+   * Phase 11.3 does NOT replace the existing execution engine.
+   *
+   * The original protected Phase 8 path remains responsible for:
+   *
+   * - loading ExecutionRequest
+   * - loading ExecutionAuthorization
+   * - immutable plan validation
+   * - policy / approval enforcement
+   * - infrastructure execution
+   * - execution result persistence
+   *
+   * Only after that path returns do we consider creating a durable
+   * verification handoff.
+   */
+  const result =
+    await this
+---
+        }
+      );
+    }
+
+    const authorization =
+      await this.ExecutionAuthorization
+        .findOne({
+          authorizationId,
+
+          organizationId:
+            request.organizationId,
+
+          environmentId:
+            request.environmentId,
+
+          incidentId:
+---
+
+============================================================
+workers/lifecycleWorker.js
+============================================================
+
+### ExecutionRequest
+
+                    recoveryDecisionId:
+                      verification
+                        .recoveryDecisionId,
+
+                    executionRequestId:
+                      verification
+                        .executionRequestId,
+
+                    routingResult: {
+                      route:
+                        "REQUEST_RETRY",
+                    },
+
+                    criticResult:
+                      verification
+---
+                      verification
+                        .recoveryDecisionId,
+
+                    executionRequestId:
+                      verification
+                        .executionRequestId,
+
+                    routingResult: {
+                      route:
+                        "REQUEST_RETRY",
+                    },
+
+                    criticResult:
+                      verification
+                        .criticResult,
+
+---
+
+                    recoveryDecisionId:
+                      verification
+                        .recoveryDecisionId,
+
+                    executionRequestId:
+                      verification
+                        .executionRequestId,
+
+                    executionPlanId:
+                      verification
+                        .executionPlanId,
+
+                    executionPlanHash:
+                      verification
+                        .executionPlanHash,
+---
+                      verification
+                        .recoveryDecisionId,
+
+                    executionRequestId:
+                      verification
+                        .executionRequestId,
+
+                    executionPlanId:
+                      verification
+                        .executionPlanId,
+
+                    executionPlanHash:
+                      verification
+                        .executionPlanHash,
+
+                    routingResult: {
+---
+
+                recoveryDecisionId:
+                  verification
+                    .recoveryDecisionId,
+
+                executionRequestId:
+                  verification
+                    .executionRequestId,
+
+                routingResult:
+                  verification
+                    .routingResult,
+
+                criticResult:
+                  verification
+                    .criticResult,
+---
+                  verification
+                    .recoveryDecisionId,
+
+                executionRequestId:
+                  verification
+                    .executionRequestId,
+
+                routingResult:
+                  verification
+                    .routingResult,
+
+                criticResult:
+                  verification
+                    .criticResult,
+
+                retryAllowed:
+---
+
+                recoveryDecisionId:
+                  verification
+                    .recoveryDecisionId,
+
+                executionRequestId:
+                  verification
+                    .executionRequestId,
+
+                executionPlanId:
+                  verification
+                    .executionPlanId,
+
+                executionPlanHash:
+                  verification
+                    .executionPlanHash,
+---
+                  verification
+                    .recoveryDecisionId,
+
+                executionRequestId:
+                  verification
+                    .executionRequestId,
+
+                executionPlanId:
+                  verification
+                    .executionPlanId,
+
+                executionPlanHash:
+                  verification
+                    .executionPlanHash,
+
+                routingResult:
+---
+
+### RecoveryVerification
+} =
+  require(
+    "../services/idempotency/idempotencyContracts"
+  );
+
+const RecoveryVerification =
+  require(
+    "../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../models/IncidentLifecycle"
+  );
+
+  const runtimeCheckpointPersistenceService =
+---
+    "../services/idempotency/idempotencyContracts"
+  );
+
+const RecoveryVerification =
+  require(
+    "../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../models/IncidentLifecycle"
+  );
+
+  const runtimeCheckpointPersistenceService =
+  require(
+    "../services/recoveryRuntime/runtimeCheckpointPersistenceService"
+---
+
+class LifecycleWorker {
+  constructor(
+    options = {}
+  ) {
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+---
+class LifecycleWorker {
+  constructor(
+    options = {}
+  ) {
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+---
+  constructor(
+    options = {}
+  ) {
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+    this.stateMachine =
+---
+  ) {
+    if (
+      job.verificationId
+    ) {
+      return this
+        .RecoveryVerification
+        .findOne({
+          verificationId:
+            job.verificationId,
+
+          organizationId:
+            job.organizationId,
+
+          environmentId:
+            job.environmentId,
+
+---
+            job.incidentId,
+        });
+    }
+
+    return this
+      .RecoveryVerification
+      .findOne({
+        organizationId:
+          job.organizationId,
+
+        environmentId:
+          job.environmentId,
+
+        incidentId:
+          job.incidentId,
+
+---
+
+### IncidentLifecycle
+const RecoveryVerification =
+  require(
+    "../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../models/IncidentLifecycle"
+  );
+
+  const runtimeCheckpointPersistenceService =
+  require(
+    "../services/recoveryRuntime/runtimeCheckpointPersistenceService"
+  );
+
+const {
+---
+    "../models/RecoveryVerification"
+  );
+
+const IncidentLifecycle =
+  require(
+    "../models/IncidentLifecycle"
+  );
+
+  const runtimeCheckpointPersistenceService =
+  require(
+    "../services/recoveryRuntime/runtimeCheckpointPersistenceService"
+  );
+
+const {
+  RUNTIME_STAGE,
+  RESUME_SAFETY,
+---
+const closureEligibilityGuard =
+  require(
+    "../services/lifecycle/closureEligibilityGuard"
+  );
+
+const incidentLifecycleStateMachine =
+  require(
+    "../services/lifecycle/incidentLifecycleStateMachine"
+  );
+
+const incidentClosureService =
+  require(
+    "../services/lifecycle/incidentClosureService"
+  );
+
+const recoveryRetryOrchestrator =
+---
+    "../services/lifecycle/closureEligibilityGuard"
+  );
+
+const incidentLifecycleStateMachine =
+  require(
+    "../services/lifecycle/incidentLifecycleStateMachine"
+  );
+
+const incidentClosureService =
+  require(
+    "../services/lifecycle/incidentClosureService"
+  );
+
+const recoveryRetryOrchestrator =
+  require(
+    "../services/lifecycle/recoveryRetryOrchestrator"
+---
+  LIFECYCLE_EVENT,
+  STABILITY_RESULT,
+  ESCALATION_REASON,
+} =
+  require(
+    "../services/lifecycle/incidentLifecycleContracts"
+  );
+
+const {
+  AUDIT_EVENT_TYPE,
+} =
+  require(
+    "../services/lifecycle/lifecycleAuditService"
+  );
+
+class LifecycleWorker {
+---
+  ) {
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+    this.stateMachine =
+      options.stateMachine ||
+      incidentLifecycleStateMachine;
+---
+    this.RecoveryVerification =
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+    this.stateMachine =
+      options.stateMachine ||
+      incidentLifecycleStateMachine;
+
+---
+      options.RecoveryVerification ||
+      RecoveryVerification;
+
+    this.IncidentLifecycle =
+      options.IncidentLifecycle ||
+      IncidentLifecycle;
+
+    this.closureGuard =
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+    this.stateMachine =
+      options.stateMachine ||
+      incidentLifecycleStateMachine;
+
+    this.closureService =
+---
+      options.closureGuard ||
+      closureEligibilityGuard;
+
+    this.stateMachine =
+      options.stateMachine ||
+      incidentLifecycleStateMachine;
+
+    this.closureService =
+      options.closureService ||
+      incidentClosureService;
+
+    this.retryOrchestrator =
+      options.retryOrchestrator ||
+      recoveryRetryOrchestrator;
+
+    this.rollbackOrchestrator =
+---
+
+  async loadLifecycle(
+    job
+  ) {
+    return this
+      .IncidentLifecycle
+      .findOne({
+        organizationId:
+          job.organizationId,
+
+        environmentId:
+          job.environmentId,
+
+        incidentId:
+          job.incidentId,
+      });
+---

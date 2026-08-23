@@ -10,6 +10,26 @@ class IncidentDiagnosisRepository {
     );
   }
 
+  async findByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentDiagnosisRepository.findByIdentifier() is not implemented"
+    );
+  }
+
+  async findHistory(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentDiagnosisRepository.findHistory() is not implemented"
+    );
+  }
+
   async create(
     _data,
     _transaction = null

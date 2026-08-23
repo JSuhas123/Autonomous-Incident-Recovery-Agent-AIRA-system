@@ -1,16 +1,17 @@
-/**
+﻿/**
  * Auth Middleware Security Tests
  * Tests authentication, signature verification, timestamp validation
  */
 
 const authMiddleware = require('../../middleware/authMiddleware');
-const TenantConfig = require('../../models/TenantConfig');
+const { TenantConfig } = require('../../persistence/operational/identityModels');
+const { organizationRepository } = require('../../persistence/repositories');
 const crypto = require('crypto');
 const { dbService } = require('../../services/infrastructure');
 const { connectDatabase, disconnectDatabase } = dbService;
 
 describe('Auth Middleware Security Tests', () => {
-  const TEST_TENANT = 'test-auth-tenant';
+  let TEST_TENANT = 'test-auth-tenant';
   const TEST_KEY_ID = 'test-key-123';
   const TEST_SECRET = 'test-secret-456';
   
@@ -25,8 +26,8 @@ describe('Auth Middleware Security Tests', () => {
   });
 
   beforeEach(async () => {
+    TEST_TENANT = 'security-auth-' + Date.now() + '-' + Math.random().toString(36).slice(2);
     // Clean up
-    await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
 
     // Create test tenant with API key
     testTenant = new TenantConfig({
@@ -36,18 +37,28 @@ describe('Auth Middleware Security Tests', () => {
       apiKeys: [
         {
           keyId: TEST_KEY_ID,
-          keyHash: crypto.createHmac('sha256', TEST_SECRET).update(TEST_KEY_ID).digest('hex'),
-          secretHash: crypto.createHmac('sha256', 'secret').update(TEST_SECRET).digest('hex'),
+          keyHash: crypto.createHash('sha256').update(TEST_KEY_ID).digest('hex'),
+          secretHash: crypto.createHash('sha256').update(TEST_SECRET).digest('hex'),
           active: true,
           status: 'active',
         }
       ],
     });
     await testTenant.save();
+    const loadedTenant = await TenantConfig.findOne({ tenantId: TEST_TENANT });
+    console.log('TENANT_DEBUG=', JSON.stringify(loadedTenant, null, 2));
+
+    await organizationRepository.create({
+      tenantId: TEST_TENANT,
+      name: 'Auth Test Organization',
+      status: 'active',
+      metadata: {
+        testFixture: true
+      }
+    });
   });
 
   afterEach(async () => {
-    await TenantConfig.deleteOne({ tenantId: TEST_TENANT });
   });
 
   describe('Header Validation', () => {
@@ -580,3 +591,9 @@ describe('Auth Middleware Security Tests', () => {
     });
   });
 });
+
+
+
+
+
+

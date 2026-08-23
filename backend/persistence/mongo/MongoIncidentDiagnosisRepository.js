@@ -58,6 +58,130 @@ class MongoIncidentDiagnosisRepository
     return query;
   }
 
+  async findByIdentifier(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    identifier,
+    transaction = null
+  ) {
+    const normalized =
+      String(
+        identifier ||
+        ""
+      ).trim();
+
+    if (!normalized) {
+      return null;
+    }
+
+    /*
+     * diagnosisId is a public/provider-neutral identifier.
+     *
+     * Mongo _id is included only when the incoming identifier
+     * actually has ObjectId shape.
+     */
+    const clauses = [
+      {
+        diagnosisId:
+          normalized,
+      },
+    ];
+
+    if (
+      /^[0-9a-f]{24}$/i.test(
+        normalized
+      )
+    ) {
+      clauses.unshift({
+        _id:
+          normalized,
+      });
+    }
+
+    let query =
+      IncidentDiagnosis
+        .findOne({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+
+          $or:
+            clauses,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findHistory(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    options = {},
+    transaction = null
+  ) {
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    let query =
+      IncidentDiagnosis
+        .find({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+        })
+        .sort({
+          revision:
+            -1,
+        })
+        .limit(
+          limit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
   async create(
     data,
     transaction = null

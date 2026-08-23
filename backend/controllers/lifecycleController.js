@@ -3,9 +3,7 @@
 /**
  * AIRA Lifecycle Controller
  *
- * Phase 10.14
- *
- * Exposes lifecycle control-plane APIs.
+ * Lifecycle control-plane API.
  *
  * SAFETY:
  *
@@ -16,19 +14,18 @@
  * - does not authorize infrastructure execution
  */
 
-const IncidentLifecycle =
+const {
+  incidentLifecycleRepository,
+} =
   require(
-    "../models/IncidentLifecycle"
+    "../persistence/repositories"
   );
 
-const IncidentLifecycleTransition =
+const {
+  recoveryVerificationRepository,
+} =
   require(
-    "../models/IncidentLifecycleTransition"
-  );
-
-const RecoveryVerification =
-  require(
-    "../models/RecoveryVerification"
+    "../persistence/repositories/recoveryVerificationProvider"
   );
 
 const lifecycleQueueService =
@@ -37,10 +34,6 @@ const lifecycleQueueService =
   );
 
 class LifecycleController {
-  // ==========================================================================
-  // QUEUE LIFECYCLE PROCESSING
-  // ==========================================================================
-
   async requestLifecycleProcessing(
     req,
     res,
@@ -68,8 +61,8 @@ class LifecycleController {
       }
 
       const verification =
-        await RecoveryVerification
-          .findOne({
+        await recoveryVerificationRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -77,11 +70,7 @@ class LifecycleController {
               scope.environmentId,
 
             incidentId,
-
-            isCurrent:
-              true,
-          })
-          .lean();
+          });
 
       if (
         !verification
@@ -167,10 +156,6 @@ class LifecycleController {
     }
   }
 
-  // ==========================================================================
-  // CURRENT LIFECYCLE
-  // ==========================================================================
-
   async getCurrentLifecycle(
     req,
     res,
@@ -187,9 +172,19 @@ class LifecycleController {
       } =
         req.params;
 
+      if (
+        !incidentId
+      ) {
+        throw this.error(
+          "incidentId is required",
+          "LIFECYCLE_API_INCIDENT_REQUIRED",
+          400
+        );
+      }
+
       const lifecycle =
-        await IncidentLifecycle
-          .findOne({
+        await incidentLifecycleRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -197,8 +192,7 @@ class LifecycleController {
               scope.environmentId,
 
             incidentId,
-          })
-          .lean();
+          });
 
       if (
         !lifecycle
@@ -243,10 +237,6 @@ class LifecycleController {
     }
   }
 
-  // ==========================================================================
-  // HISTORY
-  // ==========================================================================
-
   async getLifecycleHistory(
     req,
     res,
@@ -263,37 +253,51 @@ class LifecycleController {
       } =
         req.params;
 
+      if (
+        !incidentId
+      ) {
+        throw this.error(
+          "incidentId is required",
+          "LIFECYCLE_API_INCIDENT_REQUIRED",
+          400
+        );
+      }
+
       const limit =
         Math.min(
           500,
           Math.max(
             1,
             Number(
-              req.query.limit ||
+              req.query
+                .limit ||
               100
             )
           )
         );
 
       const transitions =
-        await IncidentLifecycleTransition
-          .find({
-            organizationId:
-              scope.organizationId,
+        await incidentLifecycleRepository
+          .getHistory(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            revision:
-              1,
-          })
-          .limit(
+              incidentId,
+            },
+
             limit
-          )
-          .lean();
+          );
+
+      const safeTransitions =
+        Array.isArray(
+          transitions
+        )
+          ? transitions
+          : [];
 
       return res
         .status(
@@ -306,9 +310,11 @@ class LifecycleController {
           incidentId,
 
           count:
-            transitions.length,
+            safeTransitions
+              .length,
 
-          transitions,
+          transitions:
+            safeTransitions,
         });
     } catch (
       error
@@ -318,10 +324,6 @@ class LifecycleController {
       );
     }
   }
-
-  // ==========================================================================
-  // STABILITY
-  // ==========================================================================
 
   async getStabilityStatus(
     req,
@@ -339,9 +341,19 @@ class LifecycleController {
       } =
         req.params;
 
+      if (
+        !incidentId
+      ) {
+        throw this.error(
+          "incidentId is required",
+          "LIFECYCLE_API_INCIDENT_REQUIRED",
+          400
+        );
+      }
+
       const lifecycle =
-        await IncidentLifecycle
-          .findOne({
+        await incidentLifecycleRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -349,8 +361,7 @@ class LifecycleController {
               scope.environmentId,
 
             incidentId,
-          })
-          .lean();
+          });
 
       if (
         !lifecycle
@@ -419,10 +430,6 @@ class LifecycleController {
     }
   }
 
-  // ==========================================================================
-  // CONTROL STATUS
-  // ==========================================================================
-
   async getControlStatus(
     req,
     res,
@@ -439,9 +446,19 @@ class LifecycleController {
       } =
         req.params;
 
+      if (
+        !incidentId
+      ) {
+        throw this.error(
+          "incidentId is required",
+          "LIFECYCLE_API_INCIDENT_REQUIRED",
+          400
+        );
+      }
+
       const lifecycle =
-        await IncidentLifecycle
-          .findOne({
+        await incidentLifecycleRepository
+          .findCurrent({
             organizationId:
               scope.organizationId,
 
@@ -449,8 +466,7 @@ class LifecycleController {
               scope.environmentId,
 
             incidentId,
-          })
-          .lean();
+          });
 
       if (
         !lifecycle
@@ -554,10 +570,6 @@ class LifecycleController {
       );
     }
   }
-
-  // ==========================================================================
-  // SERIALIZATION
-  // ==========================================================================
 
   serializeLifecycle(
     lifecycle
@@ -665,10 +677,6 @@ class LifecycleController {
         false,
     };
   }
-
-  // ==========================================================================
-  // SCOPE
-  // ==========================================================================
 
   resolveScope(
     req

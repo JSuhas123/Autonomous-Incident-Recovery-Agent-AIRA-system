@@ -28,6 +28,45 @@ class ExecutionAuthorizationRepository {
       "ExecutionAuthorizationRepository.createExecutionRequest() is not implemented"
     );
   }
+
+  async findAuthorizationByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findAuthorizationByIdentifier() is not implemented"
+    );
+  }
+
+  async findExecutionRequestByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findExecutionRequestByIdentifier() is not implemented"
+    );
+  }
+
+  async findIncidentExecutionHistory(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.findIncidentExecutionHistory() is not implemented"
+    );
+  }
+
+  async saveExecutionRequest(
+    _request,
+    _transaction = null
+  ) {
+    throw new Error(
+      "ExecutionAuthorizationRepository.saveExecutionRequest() is not implemented"
+    );
+  }
 }
 
 module.exports =

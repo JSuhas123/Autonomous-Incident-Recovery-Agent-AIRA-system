@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const crypto =
   require("node:crypto");
@@ -9,7 +9,7 @@ const {
   SIGNAL_SOURCES,
 } =
   require(
-    "../../models/Signal"
+    "./signalConstants"
   );
 
 const PROVIDER_SOURCE_MAP =

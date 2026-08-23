@@ -517,6 +517,304 @@ class PostgresExecutionAuthorizationRepository
       transaction
     );
   }
+
+  async findAuthorizationByIdentifier(
+    scope,
+    identifier,
+    transaction = null
+  ) {
+    const normalized =
+      normalizeId(
+        identifier
+      );
+
+    if (!normalized) {
+      return null;
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.authorizations
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND (
+                  public_id = $3
+                  OR database_id = $3
+                  OR legacy_mongo_id = $3
+                  OR id::text = $3
+                )
+              LIMIT 1
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              normalized,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapAuthorization(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
+
+  async findExecutionRequestByIdentifier(
+    scope,
+    identifier,
+    transaction = null
+  ) {
+    const normalized =
+      normalizeId(
+        identifier
+      );
+
+    if (!normalized) {
+      return null;
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.execution_requests
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND (
+                  public_id = $3
+                  OR database_id = $3
+                  OR legacy_mongo_id = $3
+                  OR id::text = $3
+                )
+              LIMIT 1
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              normalized,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapExecutionRequest(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
+
+  async findIncidentExecutionHistory(
+    scope,
+    options = {},
+    transaction = null
+  ) {
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await requireIncident(
+            this.scope,
+            client,
+            resolved,
+            scope.incidentId
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.execution_requests
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+              ORDER BY created_at DESC
+              LIMIT $4
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+              limit,
+            ]
+          );
+
+        return result.rows.map(
+          (
+            row
+          ) =>
+            mapExecutionRequest(
+              row,
+              scope
+            )
+        );
+      },
+      transaction
+    );
+  }
+
+  async saveExecutionRequest(
+    request,
+    transaction = null
+  ) {
+    const scope =
+      requireScope(
+        request
+      );
+
+    const identifier =
+      normalizeId(
+        request._id ||
+        request.executionRequestId
+      );
+
+    if (!identifier) {
+      throw Object.assign(
+        new Error(
+          "Execution request identifier is required"
+        ),
+        {
+          code:
+            "POSTGRES_EXECUTION_REQUEST_IDENTIFIER_REQUIRED",
+        }
+      );
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const document =
+          serializeDocument(
+            request
+          );
+
+        const result =
+          await client.query(
+            `
+              UPDATE execution.execution_requests
+              SET
+                state = $1,
+                queued_at = $2,
+                started_at = $3,
+                completed_at = $4,
+                cancelled_at = $5,
+                failure = $6::jsonb,
+                result = $7::jsonb,
+                rollback = $8::jsonb,
+                metadata = $9::jsonb,
+                document = $10::jsonb
+              WHERE
+                organization_id = $11
+                AND environment_id = $12
+                AND (
+                  public_id = $13
+                  OR database_id = $13
+                  OR legacy_mongo_id = $13
+                  OR id::text = $13
+                )
+              RETURNING *
+            `,
+            [
+              request.state,
+
+              request.queuedAt ||
+                null,
+
+              request.startedAt ||
+                null,
+
+              request.completedAt ||
+                null,
+
+              request.cancelledAt ||
+                null,
+
+              request.failure == null
+                ? null
+                : JSON.stringify(
+                    request.failure
+                  ),
+
+              request.result == null
+                ? null
+                : JSON.stringify(
+                    request.result
+                  ),
+
+              request.rollback == null
+                ? null
+                : JSON.stringify(
+                    request.rollback
+                  ),
+
+              JSON.stringify(
+                request.metadata ||
+                {}
+              ),
+
+              JSON.stringify(
+                document
+              ),
+
+              resolved.organizationUuid,
+
+              resolved.environmentUuid,
+
+              identifier,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapExecutionRequest(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
 }
 
 async function resolveRecoveryDecision(
@@ -702,6 +1000,31 @@ function mapExecutionRequest(
 
     requestedAt:
       row.requested_at,
+
+    queuedAt:
+      row.queued_at,
+
+    startedAt:
+      row.started_at,
+
+    completedAt:
+      row.completed_at,
+
+    cancelledAt:
+      row.cancelled_at,
+
+    failure:
+      row.failure,
+
+    result:
+      row.result,
+
+    rollback:
+      row.rollback,
+
+    metadata:
+      row.metadata ||
+      {},
 
     createdAt:
       row.created_at,

@@ -2,7 +2,7 @@
 
 const express = require("express");
 const Joi = require("joi");
-const mongoose = require("mongoose");
+const { isDatabaseIdentifier } = require("../utils/identifier");
 
 const {
   CATALOGUE,
@@ -12,9 +12,8 @@ const {
 
 const {
   IntegrationConnection,
-} = require("../models/IntegrationConnection");
-
-const Service = require("../models/Service");
+  Service,
+} = require("../persistence/operational/operationalModels");
 
 const {
   encryptSecret,
@@ -311,7 +310,7 @@ async function validateScopedServiceIds(
   const invalidId =
     uniqueIds.find(
       (id) =>
-        !mongoose.Types.ObjectId.isValid(
+        !isDatabaseIdentifier(
           id
         )
     );

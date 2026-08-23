@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Lifecycle Worker
@@ -8,27 +8,27 @@
  * Orchestrates:
  *
  * Phase 9 verification result
- *        ↓
+ *        â†“
  * closure eligibility
- *        ↓
+ *        â†“
  * stability observation
- *        ↓
+ *        â†“
  * regression / retry / rollback / escalation
- *        ↓
+ *        â†“
  * lifecycle persistence
- *        ↓
+ *        â†“
  * audit + notification
  *
  * Phase 11.1.11 adds:
  *
  * lifecycle queue delivery
- *        ↓
+ *        â†“
  * deterministic idempotency identity
- *        ↓
+ *        â†“
  * atomic claim
- *        ↓
- * duplicate? ──────→ return safely
- *        ↓
+ *        â†“
+ * duplicate? â”€â”€â”€â”€â”€â”€â†’ return safely
+ *        â†“
  * existing Phase 10 lifecycle processing
  *
  * SAFETY:
@@ -56,15 +56,12 @@ const {
     "../services/idempotency/idempotencyContracts"
   );
 
-const RecoveryVerification =
-  require(
-    "../models/RecoveryVerification"
-  );
-
-const IncidentLifecycle =
-  require(
-    "../models/IncidentLifecycle"
-  );
+const {
+  RecoveryVerification,
+  IncidentLifecycle,
+} = require(
+  "../persistence/operational/lifecycleModels"
+);
 
   const runtimeCheckpointPersistenceService =
   require(
@@ -218,7 +215,7 @@ class LifecycleWorker {
       lifecycleQueueService;
 
     // ========================================================================
-    // PHASE 11.1.11 — IDEMPOTENCY
+    // PHASE 11.1.11 â€” IDEMPOTENCY
     // ========================================================================
 
     this.idempotentWorker =
@@ -231,8 +228,8 @@ class LifecycleWorker {
  *
  * In test mode:
  *
- * - explicitly injected idempotentWorker → idempotency ON
- * - no injected idempotentWorker         → legacy Phase 10 path
+ * - explicitly injected idempotentWorker â†’ idempotency ON
+ * - no injected idempotentWorker         â†’ legacy Phase 10 path
  *
  * In production:
  *
@@ -264,7 +261,7 @@ this.workerId =
   );
 
 // ==========================================================================
-// PHASE 11.2.11 — RUNTIME CHECKPOINT
+// PHASE 11.2.11 â€” RUNTIME CHECKPOINT
 // ==========================================================================
 
 this.runtimeCheckpoint =
@@ -1076,7 +1073,7 @@ async processWithIdempotency(
           .OPEN;
 
       // ======================================================================
-      // 1. RECOVERED → STABILITY OBSERVATION
+      // 1. RECOVERED â†’ STABILITY OBSERVATION
       // ======================================================================
 
       if (

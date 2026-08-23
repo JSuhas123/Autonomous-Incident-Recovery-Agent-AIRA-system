@@ -1,16 +1,24 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
-
-const Service =
+const {
+  isDatabaseIdentifier,
+} =
   require(
-    "../../models/Service"
+    "../../utils/identifier"
   );
 
-const ServiceDependency =
+const {
+  Service,
+} =
   require(
-    "../../models/ServiceDependency"
+    "../../persistence/operational/operationalModels"
+  );
+
+const {
+  ServiceDependency,
+} =
+  require(
+    "../../persistence/operational/inventoryModels"
   );
 
 class ServiceDependencyService {
@@ -48,8 +56,7 @@ class ServiceDependencyService {
   _validObjectId(value) {
     return Boolean(
       value &&
-      mongoose.Types.ObjectId
-        .isValid(
+      isDatabaseIdentifier(
           value
         )
     );

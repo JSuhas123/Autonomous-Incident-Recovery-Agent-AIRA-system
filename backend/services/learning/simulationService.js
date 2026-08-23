@@ -1,8 +1,11 @@
-'use strict';
+﻿"use strict";
 
+const {
+  SimulationResult,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 const crypto = require('crypto');
-const SimulationResult = require('../../models/SimulationResult');
-
 /**
  * Simulation Service
  *
@@ -507,7 +510,7 @@ class SimulationService {
       actualTrace.recommendedAction
     ) {
       differences.push(
-        `Action: ${simTrace.recommendedAction} → ${actualTrace.recommendedAction}`
+        `Action: ${simTrace.recommendedAction} â†’ ${actualTrace.recommendedAction}`
       );
     }
 
@@ -532,7 +535,7 @@ class SimulationService {
       0.05
     ) {
       differences.push(
-        `Confidence: ${(simulationConfidence * 100).toFixed(0)}% → ${(actualConfidence * 100).toFixed(0)}%`
+        `Confidence: ${(simulationConfidence * 100).toFixed(0)}% â†’ ${(actualConfidence * 100).toFixed(0)}%`
       );
     }
 

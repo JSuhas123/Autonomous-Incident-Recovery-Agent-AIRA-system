@@ -1,27 +1,35 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
-
-const Service =
+const {
+  isDatabaseIdentifier,
+} =
   require(
-    "../../models/Service"
+    "../../utils/identifier"
   );
 
-const InfrastructureResource =
-  require(
-    "../../models/InfrastructureResource"
-  );
+const {
+  Service,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
-const ServiceDependency =
-  require(
-    "../../models/ServiceDependency"
-  );
+const {
+  InfrastructureResource,
+} = require(
+  "../../persistence/operational/inventoryModels"
+);
 
-const ResourceRelationship =
-  require(
-    "../../models/ResourceRelationship"
-  );
+const {
+  ServiceDependency,
+} = require(
+  "../../persistence/operational/inventoryModels"
+);
+
+const {
+  ResourceRelationship,
+} = require(
+  "../../persistence/operational/inventoryModels"
+);
 
 class IncidentImpactService {
   constructor() {
@@ -844,18 +852,15 @@ class IncidentImpactService {
     }
 
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
+      !isDatabaseIdentifier(
           incident
             .organizationId
         ) ||
-      !mongoose.Types.ObjectId
-        .isValid(
+      !isDatabaseIdentifier(
           incident
             .environmentId
         ) ||
-      !mongoose.Types.ObjectId
-        .isValid(
+      !isDatabaseIdentifier(
           incident
             .serviceId
         )

@@ -27,6 +27,16 @@ class AgentIntelligenceRunRepository {
       "AgentIntelligenceRunRepository.findLatestForIncident() is not implemented"
     );
   }
+
+  async findByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "AgentIntelligenceRunRepository.findByIdentifier() is not implemented"
+    );
+  }
 }
 
 module.exports =

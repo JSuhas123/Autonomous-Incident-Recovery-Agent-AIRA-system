@@ -1,0 +1,19 @@
+﻿
+> autonomous-backend-incident-recovery-agent-backend@1.0.0 test
+> jest --detectOpenHandles --forceExit --runInBand
+
+  console.log
+    [system-health] Deployment mode: SINGLE_INSTANCE
+
+      at new log (services/infrastructure/systemHealthService.js:26:13)
+
+  console.log
+    [lock] ≡ƒöÆ Lock safety enforced by systemHealthService (dynamic based on deployment mode)
+
+      at new log (services/infrastructure/distributedLockService.js:37:13)
+
+  console.log
+    [db] | Connected to PostgreSQL | database=aira | user=aira
+
+      at log (services/infrastructure/dbService.js:346:13)
+

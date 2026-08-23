@@ -1,3 +1,12 @@
+"use strict";
+
+const {
+  AuditEvent,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
+
 /**
  * PHASE 2: ACTION AUDIT TRAIL SERVICE
  * 
@@ -15,7 +24,6 @@
  * - Timestamped with correlation IDs
  */
 
-const AuditEvent = require('../../models/AuditEvent');
 const { getStructuredLoggingService } = require('./structuredLoggingService');
 
 class ActionAuditService {
@@ -39,7 +47,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: 'DECISION_MADE',
         eventId: decisionId,
@@ -92,7 +100,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: 'ACTION_EXECUTED',
         eventId: actionId,
@@ -146,7 +154,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: 'ACTION_APPROVED',
         eventId: actionId,
@@ -194,7 +202,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: 'ACTION_REJECTED',
         eventId: actionId,
@@ -241,7 +249,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: `SECURITY_${eventType}`,
         correlationId,
@@ -281,7 +289,7 @@ class ActionAuditService {
     context = {},
   }) {
     try {
-      const audit = new AuditEvent({
+      const audit = await AuditEvent.create({
         tenantId,
         eventType: `ERROR_${errorType}`,
         correlationId,

@@ -25,6 +25,41 @@ function sessionFrom(
     : null;
 }
 
+function identifierClauses(
+  identifier,
+  publicField
+) {
+  const normalized =
+    String(
+      identifier ||
+      ""
+    ).trim();
+
+  if (!normalized) {
+    return [];
+  }
+
+  const clauses = [
+    {
+      [publicField]:
+        normalized,
+    },
+  ];
+
+  if (
+    /^[0-9a-f]{24}$/i.test(
+      normalized
+    )
+  ) {
+    clauses.unshift({
+      _id:
+        normalized,
+    });
+  }
+
+  return clauses;
+}
+
 class MongoRecoveryDecisionRepository
   extends RecoveryDecisionRepository {
   async createRun(
@@ -36,9 +71,7 @@ class MongoRecoveryDecisionRepository
         transaction
       );
 
-    if (
-      !session
-    ) {
+    if (!session) {
       return RecoveryDecisionRun
         .create(
           data
@@ -87,9 +120,160 @@ class MongoRecoveryDecisionRepository
         transaction
       );
 
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findByIdentifier(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    identifier,
+    transaction = null
+  ) {
+    const clauses =
+      identifierClauses(
+        identifier,
+        "decisionId"
+      );
+
     if (
-      session
+      clauses.length ===
+      0
     ) {
+      return null;
+    }
+
+    let query =
+      RecoveryDecision
+        .findOne({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+
+          $or:
+            clauses,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findHistory(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    options = {},
+    transaction = null
+  ) {
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    let query =
+      RecoveryDecision
+        .find({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+        })
+        .sort({
+          revision:
+            -1,
+        })
+        .limit(
+          limit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findRunByIdentifier(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    identifier,
+    transaction = null
+  ) {
+    const clauses =
+      identifierClauses(
+        identifier,
+        "runId"
+      );
+
+    if (
+      clauses.length ===
+      0
+    ) {
+      return null;
+    }
+
+    let query =
+      RecoveryDecisionRun
+        .findOne({
+          organizationId,
+
+          environmentId,
+
+          incidentId,
+
+          $or:
+            clauses,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
       query =
         query.session(
           session
@@ -124,14 +308,13 @@ class MongoRecoveryDecisionRepository
         transaction
       );
 
-    return decision
-      .save(
-        session
-          ? {
-              session,
-            }
-          : undefined
-      );
+    return decision.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
   }
 
   async createDecision(
@@ -143,9 +326,7 @@ class MongoRecoveryDecisionRepository
         transaction
       );
 
-    if (
-      !session
-    ) {
+    if (!session) {
       return RecoveryDecision
         .create(
           data
@@ -193,14 +374,13 @@ class MongoRecoveryDecisionRepository
         transaction
       );
 
-    return run
-      .save(
-        session
-          ? {
-              session,
-            }
-          : undefined
-      );
+    return run.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
   }
 }
 

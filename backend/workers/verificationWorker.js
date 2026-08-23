@@ -1,28 +1,28 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Verification Worker
  *
  * Phase 9.12
- * Phase 11.1.10 — Idempotent Verification
- * Phase 11.2.10 — Durable Runtime Checkpoint Integration
+ * Phase 11.1.10 â€” Idempotent Verification
+ * Phase 11.2.10 â€” Durable Runtime Checkpoint Integration
  *
  * Runs complete post-execution verification lifecycle:
  *
  * execution request
- *      ↓
+ *      â†“
  * verification plan
- *      ↓
+ *      â†“
  * health / metrics / logs / incident verification
- *      ↓
+ *      â†“
  * evidence aggregation
- *      ↓
+ *      â†“
  * decision
- *      ↓
+ *      â†“
  * critic
- *      ↓
+ *      â†“
  * outcome routing
- *      ↓
+ *      â†“
  * persistence
  *
  * SAFETY:
@@ -52,17 +52,17 @@ const {
     "../services/idempotency/idempotencyContracts"
   );
 
-const ExecutionRequest =
+const {
+  executionAuthorizationRepository,
+} =
   require(
-    "../models/ExecutionRequest"
+    "../persistence/repositories"
   );
 
 const verificationPlanBuilderService =
   require(
     "../services/verification/verificationPlanBuilderService"
   );
-
-  
 
 const healthVerificationService =
   require(
@@ -136,9 +136,18 @@ class VerificationWorker {
   constructor(
     options = {}
   ) {
+    this.executionAuthorizationRepository =
+      options.executionAuthorizationRepository ||
+      executionAuthorizationRepository;
+
+    /*
+     * Backward-compatible Jest injection only.
+     *
+     * Production never imports the ExecutionRequest Mongoose model here.
+     */
     this.ExecutionRequest =
       options.ExecutionRequest ||
-      ExecutionRequest;
+      null;
 
     this.planBuilder =
       options.planBuilder ||
@@ -184,51 +193,36 @@ class VerificationWorker {
       options.queue ||
       verificationQueueService;
 
-    // ==========================================================================
-// PHASE 11.3 — DURABLE VERIFICATION -> LIFECYCLE HANDOFF
-// ==========================================================================
+    const hasInjectedOutboxIntegration =
+      Object.prototype
+        .hasOwnProperty
+        .call(
+          options,
+          "outboxIntegration"
+        );
 
-const hasInjectedOutboxIntegration =
-  Object.prototype
-    .hasOwnProperty
-    .call(
-      options,
-      "outboxIntegration"
-    );
+    this.outboxIntegration =
+      hasInjectedOutboxIntegration
+        ? options.outboxIntegration
+        : verificationLifecycleOutboxIntegrationService;
 
-this.outboxIntegration =
-  hasInjectedOutboxIntegration
-    ? options.outboxIntegration
-    : verificationLifecycleOutboxIntegrationService;
-
-if (
-  options.outboxEnabled !==
-  undefined
-) {
-  this.outboxEnabled =
-    options.outboxEnabled ===
-    true;
-} else if (
-  hasInjectedOutboxIntegration
-) {
-  this.outboxEnabled =
-    true;
-} else {
-  /*
-   * Production:
-   *   durable handoff ON by default.
-   *
-   * Existing Phase 9/11 tests:
-   *   remain isolated unless an outbox integration is injected.
-   */
-  this.outboxEnabled =
-    process.env.NODE_ENV !==
-    "test";
-}
-
-    // ==========================================================================
-    // PHASE 11.1 IDEMPOTENCY
-    // ==========================================================================
+    if (
+      options.outboxEnabled !==
+      undefined
+    ) {
+      this.outboxEnabled =
+        options.outboxEnabled ===
+        true;
+    } else if (
+      hasInjectedOutboxIntegration
+    ) {
+      this.outboxEnabled =
+        true;
+    } else {
+      this.outboxEnabled =
+        process.env.NODE_ENV !==
+        "test";
+    }
 
     const hasInjectedIdempotentWorker =
       Object.prototype
@@ -243,18 +237,6 @@ if (
         ? options.idempotentWorker
         : idempotentWorkerService;
 
-    /*
-     * Compatibility:
-     *
-     * Production:
-     *   idempotency enabled by default.
-     *
-     * Phase 11 tests:
-     *   injected idempotentWorker enables idempotency.
-     *
-     * Existing Phase 9 unit tests:
-     *   Jest + no injected worker uses original Phase 9 path.
-     */
     if (
       options.idempotencyEnabled !==
       undefined
@@ -283,22 +265,10 @@ if (
         ":"
       );
 
-    // ==========================================================================
-    // PHASE 11.2 RUNTIME CHECKPOINT
-    // ==========================================================================
-
     this.runtimeCheckpoint =
       options.runtimeCheckpoint ||
       runtimeCheckpointPersistenceService;
 
-    /*
-     * Production:
-     *   runtime checkpointing enabled.
-     *
-     * Existing Jest suites:
-     *   disabled unless explicitly enabled so older tests never touch
-     *   the real Mongo-backed RuntimeRecoveryCheckpoint collection.
-     */
     this.runtimeCheckpointEnabled =
       options.runtimeCheckpointEnabled !==
         undefined
@@ -308,12 +278,6 @@ if (
           "test";
   }
 
-  // ==========================================================================
-  // PUBLIC PROCESS ENTRY
-  //
-  // Phase 11.2 checkpoint boundary sits outside Phase 11.1 idempotency.
-  // ==========================================================================
-
   async process(
     job = {},
     dependencies = {}
@@ -321,10 +285,6 @@ if (
     this.assertJob(
       job
     );
-
-    // ==========================================================================
-    // EXISTING / LEGACY TEST PATH
-    // ==========================================================================
 
     if (
       this.runtimeCheckpointEnabled ===
@@ -335,10 +295,6 @@ if (
         dependencies
       );
     }
-
-    // ==========================================================================
-    // IMMUTABLE VERIFICATION IDENTITY
-    // ==========================================================================
 
     const executionRequestId =
       job.executionRequestId ||
@@ -394,10 +350,6 @@ if (
         ":"
       );
 
-    // ==========================================================================
-    // 1. ENSURE DURABLE CHECKPOINT
-    // ==========================================================================
-
     await this.runtimeCheckpoint
       .ensureCheckpoint({
         organizationId:
@@ -431,10 +383,6 @@ if (
           false,
       });
 
-    // ==========================================================================
-    // 2. CLAIM CHECKPOINT
-    // ==========================================================================
-
     const claim =
       await this.runtimeCheckpoint
         .claim({
@@ -464,10 +412,6 @@ if (
           executionAuthorized:
             false,
         });
-
-    // ==========================================================================
-    // 3. CHECKPOINT ALREADY OWNED / TERMINAL
-    // ==========================================================================
 
     if (
       claim.claimed !==
@@ -522,22 +466,11 @@ if (
       claim.claimToken;
 
     try {
-      // ========================================================================
-      // 4. EXISTING PHASE 11.1 + PHASE 9 VERIFICATION
-      // ========================================================================
-
       const result =
         await this.processWithIdempotency(
           job,
           dependencies
         );
-
-      // ========================================================================
-      // 5. COMPLETE CHECKPOINT
-      //
-      // Verification itself is observational and does not repeat the external
-      // infrastructure mutation.
-      // ========================================================================
 
       await this.runtimeCheckpoint
         .complete({
@@ -586,13 +519,6 @@ if (
     } catch (
       error
     ) {
-      // ========================================================================
-      // 6. FAILED VERIFICATION CHECKPOINT
-      //
-      // Verification can safely be reconstructed because it does not mutate
-      // infrastructure.
-      // ========================================================================
-
       try {
         await this.runtimeCheckpoint
           .fail({
@@ -641,9 +567,6 @@ if (
       } catch (
         checkpointError
       ) {
-        /*
-         * Preserve original verification error.
-         */
         error.runtimeCheckpointError =
           checkpointError;
       }
@@ -652,60 +575,38 @@ if (
     }
   }
 
-  // ==========================================================================
-  // PHASE 11.1 IDEMPOTENT PROCESSOR
-  //
-  // This is the previous process() implementation.
-  // ==========================================================================
-
   async processWithIdempotency(
     job = {},
     dependencies = {}
   ) {
-    // ==========================================================================
-    // VALIDATE BASIC JOB CONTRACT
-    // ==========================================================================
-
     this.assertJob(
       job
     );
 
-    // ==========================================================================
-    // LEGACY PHASE 9 PATH
-    //
-    // Existing Phase 9 tests must reach the original verification processor.
-    // They were created before Phase 11 and often do not provide a separate
-    // verificationPlanId / verificationPlanHash in the queue job itself.
-    // ==========================================================================
-
     if (
-  this.idempotencyEnabled ===
-  false
-) {
-  const legacyResult =
-    await this.processVerification(
-      job,
-      dependencies
-    );
+      this.idempotencyEnabled ===
+      false
+    ) {
+      const legacyResult =
+        await this.processVerification(
+          job,
+          dependencies
+        );
 
-  return this.attachLifecycleOutboxHandoff({
-    job: {
-      ...job,
+      return this.attachLifecycleOutboxHandoff({
+        job: {
+          ...job,
 
-      executionAuthorized:
-        false,
-    },
+          executionAuthorized:
+            false,
+        },
 
-    result:
-      legacyResult,
+        result:
+          legacyResult,
 
-    dependencies,
-  });
-}
-
-    // ==========================================================================
-    // PHASE 11 IDEMPOTENT PATH
-    // ==========================================================================
+        dependencies,
+      });
+    }
 
     const executionRequestId =
       job.executionRequestId ||
@@ -733,10 +634,6 @@ if (
       verificationPlan
         .planHash ||
       null;
-
-    // ==========================================================================
-    // IMMUTABLE IDEMPOTENCY IDENTITY
-    // ==========================================================================
 
     if (
       !executionRequestId ||
@@ -768,10 +665,6 @@ if (
       executionAuthorized:
         false,
     };
-
-    // ==========================================================================
-    // IDEMPOTENCY WRAPPER
-    // ==========================================================================
 
     const wrapped =
       await this.idempotentWorker
@@ -885,231 +778,195 @@ if (
             false,
         });
 
-    // ==========================================================================
-    // DUPLICATE / NON-ACQUIRED
-    // ==========================================================================
-
     if (
-  wrapped.executed ===
-  false
-) {
-  const duplicateResult = {
-    processed:
-      true,
+      wrapped.executed ===
+      false
+    ) {
+      const duplicateResult = {
+        processed:
+          true,
 
-    success:
-      wrapped.decision ===
-        "DUPLICATE_COMPLETED",
+        success:
+          wrapped.decision ===
+            "DUPLICATE_COMPLETED",
 
-    duplicate:
-      wrapped.duplicate ===
-      true,
+        duplicate:
+          wrapped.duplicate ===
+          true,
 
-    verificationPerformed:
-      false,
+        verificationPerformed:
+          false,
 
-    idempotencyDecision:
-      wrapped.decision,
+        idempotencyDecision:
+          wrapped.decision,
 
-    idempotencyKey:
-      wrapped.idempotencyKey,
+        idempotencyKey:
+          wrapped.idempotencyKey,
 
-    previousResult:
-      wrapped.previousResult ||
-      null,
+        previousResult:
+          wrapped.previousResult ||
+          null,
 
-    resultReference:
-      wrapped.resultReference ||
-      null,
+        resultReference:
+          wrapped.resultReference ||
+          null,
 
-    reason:
-      wrapped.reason ||
-      null,
+        reason:
+          wrapped.reason ||
+          null,
 
-    executionAuthorized:
-      false,
-  };
+        executionAuthorized:
+          false,
+      };
 
-  /*
-   * Only a completed duplicate has a trustworthy persisted business result
-   * from which a potentially missing lifecycle handoff can be reconstructed.
-   *
-   * PROCESSING / LEASE_ACTIVE / other non-acquired states must NOT create
-   * another workflow transition.
-   */
-  if (
-    wrapped.decision !==
-      "DUPLICATE_COMPLETED" ||
-    !wrapped.previousResult
-  ) {
-    return duplicateResult;
-  }
+      if (
+        wrapped.decision !==
+          "DUPLICATE_COMPLETED" ||
+        !wrapped.previousResult
+      ) {
+        return duplicateResult;
+      }
 
-  const handoff =
-    await this.createLifecycleOutboxHandoff({
-      job:
-        effectiveJob,
+      const handoff =
+        await this.createLifecycleOutboxHandoff({
+          job:
+            effectiveJob,
 
-      result:
-        wrapped.previousResult,
+          result:
+            wrapped.previousResult,
 
-      dependencies,
-    });
+          dependencies,
+        });
 
-  return {
-    ...duplicateResult,
+      return {
+        ...duplicateResult,
 
-    outboxHandoff:
-      handoff,
+        outboxHandoff:
+          handoff,
 
-    executionAuthorized:
-      false,
-  };
-}
-
-    // ==========================================================================
-    // ORIGINAL / RETRY / RECLAIMED PROCESSING
-    // ==========================================================================
+        executionAuthorized:
+          false,
+      };
+    }
 
     const outboxHandoff =
-  await this.createLifecycleOutboxHandoff({
-    job:
-      effectiveJob,
+      await this.createLifecycleOutboxHandoff({
+        job:
+          effectiveJob,
 
-    result:
-      wrapped.result,
+        result:
+          wrapped.result,
 
-    dependencies,
-  });
+        dependencies,
+      });
 
-return {
-  processed:
-    true,
-
-  success:
-    true,
-
-  duplicate:
-    false,
-
-  verificationPerformed:
-    true,
-
-  idempotencyDecision:
-    wrapped.decision,
-
-  idempotencyKey:
-    wrapped.idempotencyKey,
-
-  result:
-    wrapped.result,
-
-  outboxHandoff,
-
-  executionAuthorized:
-    false,
-};
-  }
-
-  // ==========================================================================
-  // ORIGINAL PHASE 9 VERIFICATION PIPELINE
-  // ==========================================================================
-
-  // ============================================================================
-// PHASE 11.3.11C
-// VERIFICATION -> DURABLE LIFECYCLE HANDOFF
-// ============================================================================
-
-async attachLifecycleOutboxHandoff({
-  job,
-  result,
-  dependencies = {},
-} = {}) {
-  const outboxHandoff =
-    await this.createLifecycleOutboxHandoff({
-      job,
-      result,
-      dependencies,
-    });
-
-  /*
-   * Preserve legacy result shape.
-   */
-  if (
-    !result ||
-    typeof result !==
-      "object"
-  ) {
-    return result;
-  }
-
-  return {
-    ...result,
-
-    outboxHandoff,
-
-    executionAuthorized:
-      false,
-  };
-}
-
-
-// ============================================================================
-// CREATE DURABLE LIFECYCLE HANDOFF
-// ============================================================================
-
-async createLifecycleOutboxHandoff({
-  job,
-  result,
-  dependencies = {},
-} = {}) {
-  if (
-    this.outboxEnabled !==
-    true
-  ) {
-    return null;
-  }
-
-  /*
-   * A blocked verification has not produced a persisted verification outcome
-   * suitable for lifecycle processing.
-   */
-  if (
-    result?.blocked ===
-    true ||
-    result?.verificationStarted ===
-    false
-  ) {
     return {
-      handoffCreated:
+      processed:
+        true,
+
+      success:
+        true,
+
+      duplicate:
         false,
 
-      required:
-        false,
+      verificationPerformed:
+        true,
 
-      reason:
-        "VERIFICATION_NOT_COMPLETED",
+      idempotencyDecision:
+        wrapped.decision,
+
+      idempotencyKey:
+        wrapped.idempotencyKey,
+
+      result:
+        wrapped.result,
+
+      outboxHandoff,
 
       executionAuthorized:
         false,
     };
   }
 
-  return this
-    .outboxIntegration
-    .createFromResult({
-      job: {
-        ...job,
+  async attachLifecycleOutboxHandoff({
+    job,
+    result,
+    dependencies = {},
+  } = {}) {
+    const outboxHandoff =
+      await this.createLifecycleOutboxHandoff({
+        job,
+        result,
+        dependencies,
+      });
+
+    if (
+      !result ||
+      typeof result !==
+        "object"
+    ) {
+      return result;
+    }
+
+    return {
+      ...result,
+
+      outboxHandoff,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+  async createLifecycleOutboxHandoff({
+    job,
+    result,
+    dependencies = {},
+  } = {}) {
+    if (
+      this.outboxEnabled !==
+      true
+    ) {
+      return null;
+    }
+
+    if (
+      result?.blocked ===
+        true ||
+      result?.verificationStarted ===
+        false
+    ) {
+      return {
+        handoffCreated:
+          false,
+
+        required:
+          false,
+
+        reason:
+          "VERIFICATION_NOT_COMPLETED",
 
         executionAuthorized:
           false,
-      },
+      };
+    }
 
-      result,
+    return this
+      .outboxIntegration
+      .createFromResult({
+        job: {
+          ...job,
 
-      dependencies,
-    });
-}
+          executionAuthorized:
+            false,
+        },
+
+        result,
+
+        dependencies,
+      });
+  }
 
   async processVerification(
     job,
@@ -1120,18 +977,10 @@ async createLifecycleOutboxHandoff({
     });
 
     try {
-      // =========================================================================
-      // 1. LOAD EXECUTION REQUEST
-      // =========================================================================
-
       const executionRequest =
         await this.loadExecutionRequest(
           job
         );
-
-      // =========================================================================
-      // 2. SAFETY CHECK EXECUTION STATE
-      // =========================================================================
 
       const executionValidation =
         this.validateExecutionRequest(
@@ -1181,10 +1030,6 @@ async createLifecycleOutboxHandoff({
         };
       }
 
-      // =========================================================================
-      // 3. BUILD VERIFICATION PLAN
-      // =========================================================================
-
       const verificationPlan =
         await this.planBuilder
           .build(
@@ -1229,10 +1074,6 @@ async createLifecycleOutboxHandoff({
             dependencies
           );
 
-      // =========================================================================
-      // 4. HEALTH VERIFICATION
-      // =========================================================================
-
       const healthResult =
         await this.healthVerifier
           .verify(
@@ -1255,10 +1096,6 @@ async createLifecycleOutboxHandoff({
             },
             dependencies
           );
-
-      // =========================================================================
-      // 5. METRICS VERIFICATION
-      // =========================================================================
 
       const metricsResult =
         await this.metricsVerifier
@@ -1283,10 +1120,6 @@ async createLifecycleOutboxHandoff({
             dependencies
           );
 
-      // =========================================================================
-      // 6. LOG VERIFICATION
-      // =========================================================================
-
       const logResult =
         await this.logVerifier
           .verify(
@@ -1310,10 +1143,6 @@ async createLifecycleOutboxHandoff({
             dependencies
           );
 
-      // =========================================================================
-      // 7. INCIDENT STATE VERIFICATION
-      // =========================================================================
-
       const incidentResult =
         await this.incidentVerifier
           .verify(
@@ -1336,10 +1165,6 @@ async createLifecycleOutboxHandoff({
             },
             dependencies
           );
-
-      // =========================================================================
-      // 8. AGGREGATE EVIDENCE
-      // =========================================================================
 
       const evidencePackage =
         await this.aggregator
@@ -1382,10 +1207,6 @@ async createLifecycleOutboxHandoff({
             dependencies
           );
 
-      // =========================================================================
-      // 9. DECISION
-      // =========================================================================
-
       const decision =
         await this.decisionEngine
           .decide(
@@ -1410,10 +1231,6 @@ async createLifecycleOutboxHandoff({
             },
             dependencies
           );
-
-      // =========================================================================
-      // 10. CRITIC
-      // =========================================================================
 
       const criticResult =
         await this.critic
@@ -1441,10 +1258,6 @@ async createLifecycleOutboxHandoff({
             },
             dependencies
           );
-
-      // =========================================================================
-      // 11. ROUTING
-      // =========================================================================
 
       const routingResult =
         await this.router
@@ -1474,10 +1287,6 @@ async createLifecycleOutboxHandoff({
             },
             dependencies
           );
-
-      // =========================================================================
-      // 12. PERSIST
-      // =========================================================================
 
       const persisted =
         await this.persistence
@@ -1533,10 +1342,6 @@ async createLifecycleOutboxHandoff({
           ?.verificationId ||
         null;
 
-      // =========================================================================
-      // 13. PUBLISH COMPLETED
-      // =========================================================================
-
       await this.safePublishCompleted({
         job,
 
@@ -1556,10 +1361,6 @@ async createLifecycleOutboxHandoff({
           persisted,
         },
       });
-
-      // =========================================================================
-      // 14. RETURN SIDE-EFFECT-FREE PHASE 9 RESULT
-      // =========================================================================
 
       return {
         processed:
@@ -1613,10 +1414,6 @@ async createLifecycleOutboxHandoff({
     }
   }
 
-  // ==========================================================================
-  // RETRY CLASSIFICATION
-  // ==========================================================================
-
   isVerificationRetryable(
     error
   ) {
@@ -1631,10 +1428,8 @@ async createLifecycleOutboxHandoff({
       "ECONNRESET",
       "ETIMEDOUT",
       "ECONNREFUSED",
-
       "DATABASE_TEMPORARY_FAILURE",
       "QUEUE_TEMPORARY_FAILURE",
-
       "METRICS_PROVIDER_TEMPORARY_FAILURE",
       "LOG_PROVIDER_TEMPORARY_FAILURE",
       "OBSERVABILITY_TEMPORARY_FAILURE",
@@ -1643,28 +1438,58 @@ async createLifecycleOutboxHandoff({
     );
   }
 
-  // ==========================================================================
-  // LOAD EXECUTION REQUEST
-  // ==========================================================================
-
   async loadExecutionRequest(
     job
   ) {
-    const request =
-      await this.ExecutionRequest
-        .findOne({
-          executionRequestId:
-            job.executionRequestId,
+    let request;
 
-          organizationId:
-            job.organizationId,
+    if (
+      this.ExecutionRequest &&
+      typeof this.ExecutionRequest.findOne ===
+        "function"
+    ) {
+      request =
+        await this.ExecutionRequest
+          .findOne({
+            executionRequestId:
+              job.executionRequestId,
 
-          environmentId:
-            job.environmentId,
+            organizationId:
+              job.organizationId,
 
-          incidentId:
-            job.incidentId,
-        });
+            environmentId:
+              job.environmentId,
+
+            incidentId:
+              job.incidentId,
+          });
+    } else {
+      request =
+        await this.executionAuthorizationRepository
+          .findExecutionRequestByIdentifier(
+            {
+              organizationId:
+                job.organizationId,
+
+              environmentId:
+                job.environmentId,
+            },
+            job.executionRequestId
+          );
+
+      if (
+        request &&
+        String(
+          request.incidentId
+        ) !==
+          String(
+            job.incidentId
+          )
+      ) {
+        request =
+          null;
+      }
+    }
 
     if (
       !request
@@ -1685,10 +1510,6 @@ async createLifecycleOutboxHandoff({
 
     return request;
   }
-
-  // ==========================================================================
-  // EXECUTION STATE SAFETY
-  // ==========================================================================
 
   validateExecutionRequest(
     request
@@ -1745,10 +1566,6 @@ async createLifecycleOutboxHandoff({
         null,
     };
   }
-
-  // ==========================================================================
-  // EVENTS
-  // ==========================================================================
 
   async safePublishStarted({
     job,
@@ -1880,10 +1697,6 @@ async createLifecycleOutboxHandoff({
     }
   }
 
-  // ==========================================================================
-  // INPUT
-  // ==========================================================================
-
   assertJob(
     job
   ) {
@@ -1949,7 +1762,6 @@ async createLifecycleOutboxHandoff({
     }
   }
 }
-
 module.exports =
   new VerificationWorker();
 

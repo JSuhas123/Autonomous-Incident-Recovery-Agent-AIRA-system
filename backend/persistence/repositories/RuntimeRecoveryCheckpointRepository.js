@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 class RuntimeRecoveryCheckpointRepository {
   async create(
@@ -26,6 +26,17 @@ class RuntimeRecoveryCheckpointRepository {
   ) {
     throw new Error(
       "RuntimeRecoveryCheckpointRepository.findOne() is not implemented"
+    );
+  }
+
+
+  async list(
+    _filter,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "RuntimeRecoveryCheckpointRepository.list() is not implemented"
     );
   }
 }

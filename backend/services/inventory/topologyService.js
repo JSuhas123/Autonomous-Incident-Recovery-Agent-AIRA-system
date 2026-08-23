@@ -1,26 +1,26 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
-
-const Service =
+const {
+  isDatabaseIdentifier,
+} =
   require(
-    "../../models/Service"
+    "../../utils/identifier"
   );
 
-const InfrastructureResource =
+const {
+  Service,
+} =
   require(
-    "../../models/InfrastructureResource"
+    "../../persistence/operational/operationalModels"
   );
 
-const ServiceDependency =
+const {
+  InfrastructureResource,
+  ServiceDependency,
+  ResourceRelationship,
+} =
   require(
-    "../../models/ServiceDependency"
-  );
-
-const ResourceRelationship =
-  require(
-    "../../models/ResourceRelationship"
+    "../../persistence/operational/inventoryModels"
   );
 
 class TopologyService {
@@ -70,8 +70,7 @@ class TopologyService {
   ) {
     return Boolean(
       value &&
-      mongoose.Types.ObjectId
-        .isValid(
+      isDatabaseIdentifier(
           value
         )
     );

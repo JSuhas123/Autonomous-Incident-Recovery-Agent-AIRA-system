@@ -1,41 +1,75 @@
 "use strict";
 
-const express = require("express");
-const Joi = require("joi");
+const express =
+  require(
+    "express"
+  );
 
-const Subscription = require("../models/Subscription");
+const Joi =
+  require(
+    "joi"
+  );
+
+const {
+  subscriptionRepository,
+} =
+  require(
+    "../persistence/repositories"
+  );
 
 const {
   PLAN_VALUES,
-} = require("../constants/plans");
+} =
+  require(
+    "../constants/plans"
+  );
 
 const {
   ORGANIZATION_ROLES,
-} = require("../constants/roles");
+} =
+  require(
+    "../constants/roles"
+  );
 
 const {
   sessionAuthMiddleware,
-} = require("../middleware/sessionAuthMiddleware");
+} =
+  require(
+    "../middleware/sessionAuthMiddleware"
+  );
 
 const {
   requestContextMiddleware,
-} = require("../middleware/requestContextMiddleware");
+} =
+  require(
+    "../middleware/requestContextMiddleware"
+  );
 
 const {
   csrfProtection,
-} = require("../middleware/csrfMiddleware");
+} =
+  require(
+    "../middleware/csrfMiddleware"
+  );
 
-const EntitlementService = require(
-  "../services/core/entitlementService"
-);
+const EntitlementService =
+  require(
+    "../services/core/entitlementService"
+  );
 
-const router = express.Router();
+const router =
+  express.Router();
 
-const changePlanSchema = Joi.object({
-  plan: Joi.string()
-    .valid(...PLAN_VALUES)
-    .required(),
-});
+const changePlanSchema =
+  Joi.object({
+    plan:
+      Joi.string()
+        .valid(
+          ...PLAN_VALUES
+        )
+        .required(),
+  });
+
 
 function ensureDevelopmentToolsEnabled(
   req,
@@ -51,29 +85,41 @@ function ensureDevelopmentToolsEnabled(
     process.env.NODE_ENV ===
     "production";
 
-  /*
-   * Absolutely unavailable in production.
-   */
-  if (isProduction) {
-    return res.status(404).json({
-      error: "Resource not found",
-      code: "RESOURCE_NOT_FOUND",
-    });
+  if (
+    isProduction
+  ) {
+    return res
+      .status(
+        404
+      )
+      .json({
+        error:
+          "Resource not found",
+
+        code:
+          "RESOURCE_NOT_FOUND",
+      });
   }
 
-  /*
-   * Even in local/dev environments, require an
-   * explicit opt-in environment variable.
-   */
-  if (!explicitlyEnabled) {
-    return res.status(404).json({
-      error: "Resource not found",
-      code: "RESOURCE_NOT_FOUND",
-    });
+  if (
+    !explicitlyEnabled
+  ) {
+    return res
+      .status(
+        404
+      )
+      .json({
+        error:
+          "Resource not found",
+
+        code:
+          "RESOURCE_NOT_FOUND",
+      });
   }
 
   return next();
 }
+
 
 function requireOwner(
   req,
@@ -81,17 +127,27 @@ function requireOwner(
   next
 ) {
   if (
-    req.context?.role !==
-    ORGANIZATION_ROLES.OWNER
+    req.context
+      ?.role !==
+    ORGANIZATION_ROLES
+      .OWNER
   ) {
-    return res.status(403).json({
-      error: "Owner role required",
-      code: "OWNER_REQUIRED",
-    });
+    return res
+      .status(
+        403
+      )
+      .json({
+        error:
+          "Owner role required",
+
+        code:
+          "OWNER_REQUIRED",
+      });
   }
 
   return next();
 }
+
 
 function validateBody(
   schema
@@ -104,32 +160,49 @@ function validateBody(
     const {
       error,
       value,
-    } = schema.validate(
-      req.body || {},
-      {
-        abortEarly: false,
-        stripUnknown: true,
-      }
-    );
+    } =
+      schema.validate(
+        req.body ||
+        {},
+        {
+          abortEarly:
+            false,
 
-    if (error) {
-      return res.status(400).json({
-        error: "Validation failed",
-        code: "VALIDATION_ERROR",
+          stripUnknown:
+            true,
+        }
+      );
 
-        details:
-          error.details.map(
-            (detail) => ({
-              field:
-                detail.path.join(
-                  "."
-                ),
+    if (
+      error
+    ) {
+      return res
+        .status(
+          400
+        )
+        .json({
+          error:
+            "Validation failed",
 
-              message:
-                detail.message,
-            })
-          ),
-      });
+          code:
+            "VALIDATION_ERROR",
+
+          details:
+            error.details.map(
+              (
+                detail
+              ) => ({
+                field:
+                  detail.path
+                    .join(
+                      "."
+                    ),
+
+                message:
+                  detail.message,
+              })
+            ),
+        });
     }
 
     req.validatedBody =
@@ -139,19 +212,13 @@ function validateBody(
   };
 }
 
-/*
- * Every development route still requires:
- *
- * real login
- * real organization membership
- * owner role
- * CSRF for mutations
- */
+
 router.use(
   ensureDevelopmentToolsEnabled,
   sessionAuthMiddleware,
   requestContextMiddleware
 );
+
 
 /**
  * GET /api/v1/dev/subscription
@@ -177,18 +244,23 @@ router.get(
       return res.json(
         snapshot
       );
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
+
 
 /**
  * POST /api/v1/dev/subscription/plan
  *
  * Development/testing ONLY.
  *
- * This does not involve payment/billing.
+ * Does not involve billing/payment.
  */
 router.post(
   "/subscription/plan",
@@ -211,60 +283,126 @@ router.post(
       } =
         req.validatedBody;
 
-      const subscription =
-        await Subscription
-          .findOneAndUpdate(
-            {
-              organizationId:
-                req.context
-                  .organizationId,
-            },
+      const organizationId =
+        String(
+          req.context
+            .organizationId
+        );
 
+      /*
+       * Phase 13:
+       *
+       * Never call Subscription.findOneAndUpdate() directly.
+       *
+       * First resolve the canonical subscription through the
+       * provider-neutral repository.
+       */
+      let subscription =
+        await subscriptionRepository
+          .findOne({
+            organizationId,
+          });
+
+      if (
+        subscription
+      ) {
+        await subscriptionRepository
+          .updateOne(
+            {
+              organizationId,
+            },
             {
               $set: {
                 plan,
+
                 status:
                   "active",
-              },
-            },
 
-            {
-              new: true,
-              upsert: true,
-              setDefaultsOnInsert:
-                true,
+                updatedAt:
+                  new Date(),
+              },
             }
           );
+      } else {
+        subscription =
+          await subscriptionRepository
+            .create({
+              organizationId,
+
+              plan,
+
+              status:
+                "active",
+
+              startedAt:
+                new Date(),
+
+              metadata: {
+                source:
+                  "development_plan_override",
+              },
+            });
+      }
+
+      /*
+       * Re-read after update so Mongo and PostgreSQL return the same
+       * provider-neutral domain document.
+       */
+      subscription =
+        await subscriptionRepository
+          .findOne({
+            organizationId,
+          });
+
+      if (
+        !subscription
+      ) {
+        throw Object.assign(
+          new Error(
+            "Subscription could not be resolved after plan override"
+          ),
+          {
+            code:
+              "DEVELOPMENT_SUBSCRIPTION_NOT_FOUND",
+          }
+        );
+      }
 
       const snapshot =
         await EntitlementService
           .getEntitlementSnapshot(
-            req.context
-              .organizationId
+            organizationId
           );
 
       console.warn(
         [
           "[development]",
           "Plan override",
-          `organization=${req.context.organizationId}`,
+          `organization=${organizationId}`,
           `user=${req.context.userId}`,
           `plan=${plan}`,
-        ].join(" | ")
+        ].join(
+          " | "
+        )
       );
 
       return res.json({
-        success: true,
+        success:
+          true,
 
         subscription: {
           id:
-            subscription._id
-              .toString(),
+            String(
+              subscription._id ||
+              subscription.publicId ||
+              ""
+            ),
 
           organizationId:
-            subscription
-              .organizationId
-              .toString(),
+            String(
+              subscription
+                .organizationId
+            ),
 
           plan:
             subscription.plan,
@@ -275,11 +413,16 @@ router.post(
 
         ...snapshot,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
+
 
 module.exports =
   router;

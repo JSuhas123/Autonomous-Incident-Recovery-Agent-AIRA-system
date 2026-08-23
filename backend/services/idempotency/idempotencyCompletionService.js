@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Idempotency Completion Service
@@ -19,9 +19,7 @@
  */
 
 const IdempotencyRecord =
-  require(
-    "../../models/IdempotencyRecord"
-  );
+  require("../../persistence/operational/PostgresIdempotencyRecord");
 
 const {
   IDEMPOTENCY_STATUS,

@@ -1,0 +1,525 @@
+"use strict";
+
+/**
+ * AIRA Idempotency Record
+ *
+ * Phase 11.1.2
+ *
+ * Durable ownership record for operations that must not
+ * produce duplicate side effects.
+ *
+ * IMPORTANT:
+ *
+ * This model does NOT grant execution authorization.
+ *
+ * The unique compound index provides the database-level
+ * duplicate protection boundary.
+ */
+
+const mongoose =
+  require(
+    "mongoose"
+  );
+
+const {
+  IDEMPOTENCY_STATUS,
+  IDEMPOTENCY_OPERATION,
+} =
+  require(
+    "../services/idempotency/idempotencyContracts"
+  );
+
+const idempotencyRecordSchema =
+  new mongoose.Schema(
+    {
+      // ======================================================================
+      // TENANT / ENVIRONMENT BOUNDARY
+      // ======================================================================
+
+      organizationId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+
+        trim:
+          true,
+      },
+
+      environmentId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        index:
+          true,
+
+        trim:
+          true,
+      },
+
+      // ======================================================================
+      // IDEMPOTENCY IDENTITY
+      // ======================================================================
+
+      operation: {
+        type:
+          String,
+
+        required:
+          true,
+
+        enum:
+          Object.values(
+            IDEMPOTENCY_OPERATION
+          ),
+
+        index:
+          true,
+      },
+
+      idempotencyKey: {
+        type:
+          String,
+
+        required:
+          true,
+
+        trim:
+          true,
+      },
+
+      // ======================================================================
+      // PROCESSING STATE
+      // ======================================================================
+
+      status: {
+        type:
+          String,
+
+        required:
+          true,
+
+        enum:
+          Object.values(
+            IDEMPOTENCY_STATUS
+          ),
+
+        default:
+          IDEMPOTENCY_STATUS
+            .PROCESSING,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // OWNER
+      //
+      // Identifies the worker/process that currently owns PROCESSING.
+      // ======================================================================
+
+      ownerId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      claimToken: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // DOMAIN REFERENCES
+      // ======================================================================
+
+      incidentId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      recoveryDecisionId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      executionRequestId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      verificationId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      lifecycleId: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      eventId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      correlationId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // INPUT FINGERPRINT
+      //
+      // Later we will hash canonical input into this field.
+      //
+      // Same key + different fingerprint must NOT silently reuse the result.
+      // ======================================================================
+
+      requestFingerprint: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // RESULT
+      //
+      // Allows duplicate requests to return/reference the original result
+      // instead of repeating the side effect.
+      // ======================================================================
+
+      result: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          null,
+      },
+
+      resultReference: {
+        type:
+          String,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // FAILURE
+      // ======================================================================
+
+      failure: {
+        code: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        message: {
+          type:
+            String,
+
+          default:
+            null,
+        },
+
+        retryable: {
+          type:
+            Boolean,
+
+          default:
+            false,
+        },
+
+        failedAt: {
+          type:
+            Date,
+
+          default:
+            null,
+        },
+      },
+
+      // ======================================================================
+      // CLAIM / LEASE
+      // ======================================================================
+
+      claimedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      heartbeatAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      leaseExpiresAt: {
+        type:
+          Date,
+
+        default:
+          null,
+
+        index:
+          true,
+      },
+
+      // ======================================================================
+      // TERMINAL TIMESTAMPS
+      // ======================================================================
+
+      completedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      expiredAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // ATTEMPT / REDELIVERY INFORMATION
+      // ======================================================================
+
+      attemptCount: {
+        type:
+          Number,
+
+        default:
+          0,
+
+        min:
+          0,
+      },
+
+      duplicateCount: {
+        type:
+          Number,
+
+        default:
+          0,
+
+        min:
+          0,
+      },
+
+      lastDuplicateAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+      // ======================================================================
+      // METADATA
+      // ======================================================================
+
+      metadata: {
+        type:
+          mongoose.Schema.Types.Mixed,
+
+        default:
+          {},
+      },
+
+      schemaVersion: {
+        type:
+          Number,
+
+        required:
+          true,
+
+        default:
+          1,
+
+        min:
+          1,
+      },
+    },
+    {
+      timestamps:
+        true,
+
+      versionKey:
+        false,
+
+      collection:
+        "idempotency_records",
+    }
+  );
+
+// ============================================================================
+// CRITICAL UNIQUE BOUNDARY
+//
+// The same idempotency key may exist:
+// - for another tenant
+// - for another environment
+// - for another operation
+//
+// But never twice inside the exact same scope.
+// ============================================================================
+
+idempotencyRecordSchema.index(
+  {
+    organizationId:
+      1,
+
+    environmentId:
+      1,
+
+    operation:
+      1,
+
+    idempotencyKey:
+      1,
+  },
+  {
+    unique:
+      true,
+
+    name:
+      "uniq_idempotency_scope_operation_key",
+  }
+);
+
+// ============================================================================
+// WORKER RECOVERY INDEX
+//
+// Used later to find PROCESSING records whose lease expired.
+// ============================================================================
+
+idempotencyRecordSchema.index(
+  {
+    status:
+      1,
+
+    leaseExpiresAt:
+      1,
+  },
+  {
+    name:
+      "idx_idempotency_stale_claims",
+  }
+);
+
+// ============================================================================
+// INCIDENT LOOKUP
+// ============================================================================
+
+idempotencyRecordSchema.index(
+  {
+    organizationId:
+      1,
+
+    environmentId:
+      1,
+
+    incidentId:
+      1,
+
+    createdAt:
+      -1,
+  },
+  {
+    name:
+      "idx_idempotency_incident_history",
+  }
+);
+
+// ============================================================================
+// EXECUTION LOOKUP
+// ============================================================================
+
+idempotencyRecordSchema.index(
+  {
+    organizationId:
+      1,
+
+    environmentId:
+      1,
+
+    executionRequestId:
+      1,
+  },
+  {
+    name:
+      "idx_idempotency_execution_request",
+  }
+);
+
+module.exports =
+  mongoose.model(
+    "IdempotencyRecord",
+    idempotencyRecordSchema
+  );

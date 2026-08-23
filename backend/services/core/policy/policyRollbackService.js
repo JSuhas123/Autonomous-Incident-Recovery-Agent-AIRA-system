@@ -4,7 +4,7 @@
  * Monitors success metrics and triggers rollback on degradation
  */
 
-const mongoose = require('mongoose');
+const mongoose = require("../../../persistence/operational/mongooseCompat");
 
 // Policy version tracking schema
 const policyVersionSchema = new mongoose.Schema(

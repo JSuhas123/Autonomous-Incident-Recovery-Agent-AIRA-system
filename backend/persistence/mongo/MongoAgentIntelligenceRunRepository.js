@@ -108,16 +108,6 @@ class MongoAgentIntelligenceRunRepository
         .sort({
           createdAt:
             -1,
-        })
-        .select({
-          createdAt:
-            1,
-
-          status:
-            1,
-
-          completedAt:
-            1,
         });
 
     const session =

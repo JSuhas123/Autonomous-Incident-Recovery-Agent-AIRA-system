@@ -3,13 +3,12 @@
 const express = require("express");
 const Joi = require("joi");
 
-const Monitor = require("../models/Monitor");
-const MonitorCheck = require("../models/MonitorCheck");
-const Service = require("../models/Service");
-
 const {
+  Monitor,
+  MonitorCheck,
+  Service,
   sanitizeHeaders,
-} = require("../models/Monitor");
+} = require("../persistence/operational/operationalModels");
 
 const {
   executeCheck,

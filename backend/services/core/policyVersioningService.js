@@ -1,5 +1,9 @@
-const crypto = require("crypto");
-const PolicyVersion = require("../../models/PolicyVersion");
+﻿const crypto = require("crypto");
+const {
+  PolicyVersion,
+} = require(
+  "../../persistence/operational/runtimeModels"
+);
 
 /**
  * Policy Versioning Service
@@ -276,3 +280,4 @@ class PolicyVersioningService {
 }
 
 module.exports = new PolicyVersioningService();
+

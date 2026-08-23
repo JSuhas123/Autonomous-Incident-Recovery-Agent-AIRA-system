@@ -4,7 +4,7 @@ const {
   INCIDENT_STATUSES,
 } =
   require(
-    "../../models/Incident"
+    "../../constants/incidents"
   );
 
 // ============================================================================
@@ -199,7 +199,7 @@ class IncidentStateMachine {
   }
 
   // ==========================================================================
-  // TRANSITION INCIDENT DOCUMENT
+  // TRANSITION INCIDENT
   // ==========================================================================
 
   transition(
@@ -277,6 +277,19 @@ class IncidentStateMachine {
         targetStatus,
         currentStatus
       );
+
+    /*
+     * PostgreSQL documents are provider-neutral plain objects,
+     * so do not assume Mongoose initialized this array.
+     */
+    if (
+      !Array.isArray(
+        incident.timeline
+      )
+    ) {
+      incident.timeline =
+        [];
+    }
 
     incident.timeline
       .push({
@@ -359,9 +372,6 @@ class IncidentStateMachine {
         break;
 
       case "open":
-        /*
-         * Reopen semantics.
-         */
         incident
           .resolvedAt =
           null;

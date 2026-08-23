@@ -1,29 +1,19 @@
 "use strict";
 
-const mongoose =
+const {
+  incidentRepository,
+  signalRepository,
+  signalCorrelationRepository,
+} =
   require(
-    "mongoose"
+    "../../persistence/repositories"
   );
 
 const {
-  Incident,
+  ACTIVE_INCIDENT_STATUSES,
 } =
   require(
-    "../../models/Incident"
-  );
-
-const {
-  Signal,
-} =
-  require(
-    "../../models/Signal"
-  );
-
-const {
-  SignalCorrelation,
-} =
-  require(
-    "../../models/SignalCorrelation"
+    "../../constants/incidents"
   );
 
 const incidentService =
@@ -55,90 +45,141 @@ class IncidentMergeService {
       );
     }
 
-    const clauses = [];
+    const organizationId =
+      String(
+        incident.organizationId
+      );
 
-    if (
-      incident
-        .correlationGroupId
-    ) {
-      clauses.push({
-        correlationGroupId:
-          incident
-            .correlationGroupId,
-      });
-    }
+    const environmentId =
+      String(
+        incident.environmentId
+      );
 
-    if (
-      incident
-        .signalFingerprint
-    ) {
-      clauses.push({
-        signalFingerprint:
-          incident
-            .signalFingerprint,
-      });
-    }
+    /*
+     * PostgreSQL IncidentRepository intentionally supports a constrained,
+     * canonical filter language.
+     *
+     * Instead of pushing Mongo-style:
+     *
+     *   $or
+     *   _id.$ne
+     *   signalIds.$in
+     *
+     * into the persistence layer, retrieve the tenant/service/status candidate
+     * set first and perform correlation matching provider-neutrally here.
+     */
+    const candidates =
+      await incidentRepository
+        .findMany({
+          organizationId,
 
-    if (
+          environmentId,
+
+          serviceId:
+            incident.serviceId,
+
+          status: {
+            $in:
+              ACTIVE_INCIDENT_STATUSES,
+          },
+        });
+
+    const incidentSignalIds =
+      new Set(
+        (
+          incident.signalIds ||
+          []
+        ).map(
+          (
+            value
+          ) =>
+            String(
+              value
+            )
+        )
+      );
+
+    return (
       Array.isArray(
-        incident.signalIds
-      ) &&
-      incident
-        .signalIds
-        .length >
-      0
-    ) {
-      clauses.push({
-        signalIds: {
-          $in:
-            incident
-              .signalIds,
-        },
-      });
-    }
+        candidates
+      )
+        ? candidates
+        : []
+    )
+      .filter(
+        (
+          candidate
+        ) =>
+          !this.sameIdentifier(
+            candidate._id,
+            incident._id
+          )
+      )
+      .filter(
+        (
+          candidate
+        ) => {
+          if (
+            incident.correlationGroupId &&
+            candidate.correlationGroupId &&
+            String(
+              candidate.correlationGroupId
+            ) ===
+              String(
+                incident.correlationGroupId
+              )
+          ) {
+            return true;
+          }
 
-    if (
-      clauses.length ===
-      0
-    ) {
-      return [];
-    }
+          if (
+            incident.signalFingerprint &&
+            candidate.signalFingerprint &&
+            candidate.signalFingerprint ===
+              incident.signalFingerprint
+          ) {
+            return true;
+          }
 
-    return Incident
-      .find({
-        _id: {
-          $ne:
-            incident._id,
-        },
+          if (
+            incidentSignalIds.size >
+              0 &&
+            Array.isArray(
+              candidate.signalIds
+            )
+          ) {
+            return candidate.signalIds
+              .some(
+                (
+                  signalId
+                ) =>
+                  incidentSignalIds.has(
+                    String(
+                      signalId
+                    )
+                  )
+              );
+          }
 
-        organizationId:
-          incident
-            .organizationId,
-
-        environmentId:
-          incident
-            .environmentId,
-
-        serviceId:
-          incident
-            .serviceId,
-
-        status: {
-          $in: [
-            "open",
-            "acknowledged",
-            "investigating",
-            "recovering",
-          ],
-        },
-
-        $or:
-          clauses,
-      })
-      .sort({
-        detectedAt:
-          1,
-      });
+          return false;
+        }
+      )
+      .sort(
+        (
+          first,
+          second
+        ) =>
+          new Date(
+            first.detectedAt ||
+            first.createdAt ||
+            0
+          ) -
+          new Date(
+            second.detectedAt ||
+            second.createdAt ||
+            0
+          )
+      );
   }
 
   // ==========================================================================
@@ -161,26 +202,27 @@ class IncidentMergeService {
     /*
      * Oldest incident survives.
      *
-     * This keeps references stable and prevents unnecessary
-     * incident identity churn.
+     * This keeps incident identity stable and avoids unnecessary reference
+     * churn across downstream diagnosis/execution/audit records.
      */
     return [
       ...incidents,
-    ]
-      .sort(
-        (
-          first,
-          second
-        ) =>
-          new Date(
-            first.detectedAt ||
-            first.createdAt
-          ) -
-          new Date(
-            second.detectedAt ||
-            second.createdAt
-          )
-      )[0];
+    ].sort(
+      (
+        first,
+        second
+      ) =>
+        new Date(
+          first.detectedAt ||
+          first.createdAt ||
+          0
+        ) -
+        new Date(
+          second.detectedAt ||
+          second.createdAt ||
+          0
+        )
+    )[0];
   }
 
   // ==========================================================================
@@ -207,29 +249,44 @@ class IncidentMergeService {
     }
 
     if (
-      String(
-        primary._id
-      ) ===
-      String(
+      this.sameIdentifier(
+        primary._id,
         duplicate._id
       )
     ) {
       return primary;
     }
 
+    this.assertSameScope(
+      primary,
+      duplicate
+    );
+
     const signalIds =
       Array.from(
         new Set([
           ...(
-            primary
-              .signalIds ||
+            primary.signalIds ||
             []
+          ).map(
+            (
+              value
+            ) =>
+              String(
+                value
+              )
           ),
 
           ...(
-            duplicate
-              .signalIds ||
+            duplicate.signalIds ||
             []
+          ).map(
+            (
+              value
+            ) =>
+              String(
+                value
+              )
           ),
         ])
       )
@@ -241,14 +298,12 @@ class IncidentMergeService {
       Array.from(
         new Set([
           ...(
-            primary
-              .providers ||
+            primary.providers ||
             []
           ),
 
           ...(
-            duplicate
-              .providers ||
+            duplicate.providers ||
             []
           ),
         ])
@@ -265,67 +320,65 @@ class IncidentMergeService {
 
     primary.occurrenceCount =
       (
-        primary
-          .occurrenceCount ||
+        Number(
+          primary.occurrenceCount
+        ) ||
         0
       ) +
       (
-        duplicate
-          .occurrenceCount ||
+        Number(
+          duplicate.occurrenceCount
+        ) ||
         0
       );
 
     primary.evidenceCount =
       (
-        primary
-          .evidenceCount ||
+        Number(
+          primary.evidenceCount
+        ) ||
         0
       ) +
       (
-        duplicate
-          .evidenceCount ||
+        Number(
+          duplicate.evidenceCount
+        ) ||
         0
       );
 
     primary.lastObservedAt =
       this.latestDate(
-        primary
-          .lastObservedAt,
-        duplicate
-          .lastObservedAt
+        primary.lastObservedAt,
+        duplicate.lastObservedAt
       );
 
     primary.lastSignalAt =
       this.latestDate(
-        primary
-          .lastSignalAt,
-        duplicate
-          .lastSignalAt
+        primary.lastSignalAt,
+        duplicate.lastSignalAt
       );
 
     primary.correlationConfidence =
       Math.max(
-        primary
-          .correlationConfidence ||
-        0,
+        Number(
+          primary.correlationConfidence
+        ) ||
+          0,
 
-        duplicate
-          .correlationConfidence ||
-        0
+        Number(
+          duplicate.correlationConfidence
+        ) ||
+          0
       );
 
     primary.correlationGroupId =
-      primary
-        .correlationGroupId ||
-      duplicate
-        .correlationGroupId ||
+      primary.correlationGroupId ||
+      duplicate.correlationGroupId ||
       null;
 
     primary.signalFingerprint =
-      primary
-        .signalFingerprint ||
-      duplicate
-        .signalFingerprint ||
+      primary.signalFingerprint ||
+      duplicate.signalFingerprint ||
       null;
 
     primary.severity =
@@ -333,6 +386,15 @@ class IncidentMergeService {
         primary.severity,
         duplicate.severity
       );
+
+    if (
+      !Array.isArray(
+        primary.timeline
+      )
+    ) {
+      primary.timeline =
+        [];
+    }
 
     primary.timeline.push({
       occurredAt:
@@ -345,11 +407,15 @@ class IncidentMergeService {
         "system",
 
       description:
-        `Merged incident ${duplicate._id} into this incident after correlation evidence identified a shared failure.`,
+        `Merged incident ${String(
+          duplicate._id
+        )} into this incident after correlation evidence identified a shared failure.`,
 
       metadata: {
         mergedIncidentId:
-          duplicate._id,
+          String(
+            duplicate._id
+          ),
 
         signalCount:
           signalIds.length,
@@ -359,23 +425,39 @@ class IncidentMergeService {
       },
     });
 
-    await primary
-      .save();
+    // ------------------------------------------------------------------------
+    // SAVE PRIMARY
+    // ------------------------------------------------------------------------
+
+    const persistedPrimary =
+      await incidentRepository
+        .save(
+          primary
+        );
+
+    if (
+      persistedPrimary
+    ) {
+      primary =
+        persistedPrimary;
+    }
 
     // ------------------------------------------------------------------------
     // REPOINT SIGNALS
     // ------------------------------------------------------------------------
 
-    await Signal
+    await signalRepository
       .updateMany(
         {
           organizationId:
-            primary
-              .organizationId,
+            String(
+              primary.organizationId
+            ),
 
           environmentId:
-            primary
-              .environmentId,
+            String(
+              primary.environmentId
+            ),
 
           incidentId:
             duplicate._id,
@@ -392,24 +474,29 @@ class IncidentMergeService {
     // REPOINT CORRELATION GROUP
     // ------------------------------------------------------------------------
 
+    /*
+     * correlationGroupId is unique within organization/environment.
+     * updateOne() is therefore the correct abstraction; the previous
+     * Mongoose updateMany() was unnecessary.
+     */
     if (
-      duplicate
-        .correlationGroupId
+      duplicate.correlationGroupId
     ) {
-      await SignalCorrelation
-        .updateMany(
+      await signalCorrelationRepository
+        .updateOne(
           {
             organizationId:
-              primary
-                .organizationId,
+              String(
+                primary.organizationId
+              ),
 
             environmentId:
-              primary
-                .environmentId,
+              String(
+                primary.environmentId
+              ),
 
             correlationGroupId:
-              duplicate
-                .correlationGroupId,
+              duplicate.correlationGroupId,
           },
           {
             $set: {
@@ -425,29 +512,29 @@ class IncidentMergeService {
     // ------------------------------------------------------------------------
 
     if (
-      [
-        "open",
-        "acknowledged",
-        "investigating",
-        "recovering",
-      ].includes(
-        duplicate.status
-      )
+      ACTIVE_INCIDENT_STATUSES
+        .includes(
+          duplicate.status
+        )
     ) {
       /*
-       * To obey the state machine, first resolve then close.
+       * Preserve the incident state machine:
+       *
+       * active
+       *   ↓
+       * resolved
+       *   ↓
+       * closed
        */
       await incidentService
         .transitionStatus(
           duplicate._id,
           {
             organizationId:
-              duplicate
-                .organizationId,
+              duplicate.organizationId,
 
             environmentId:
-              duplicate
-                .environmentId,
+              duplicate.environmentId,
 
             targetStatus:
               "resolved",
@@ -456,20 +543,39 @@ class IncidentMergeService {
               "system",
 
             reason:
-              `Incident merged into ${primary._id}.`,
+              `Incident merged into ${String(
+                primary._id
+              )}.`,
 
             metadata: {
               mergedInto:
-                primary._id,
+                String(
+                  primary._id
+                ),
             },
           }
         );
 
+      /*
+       * Re-read through the provider-neutral repository instead of
+       * Incident.findById().
+       */
       const refreshed =
-        await Incident
-          .findById(
-            duplicate._id
-          );
+        await incidentRepository
+          .findOne({
+            _id:
+              duplicate._id,
+
+            organizationId:
+              String(
+                duplicate.organizationId
+              ),
+
+            environmentId:
+              String(
+                duplicate.environmentId
+              ),
+          });
 
       if (
         refreshed &&
@@ -481,12 +587,10 @@ class IncidentMergeService {
             refreshed._id,
             {
               organizationId:
-                refreshed
-                  .organizationId,
+                refreshed.organizationId,
 
               environmentId:
-                refreshed
-                  .environmentId,
+                refreshed.environmentId,
 
               targetStatus:
                 "closed",
@@ -495,21 +599,43 @@ class IncidentMergeService {
                 "system",
 
               reason:
-                `Duplicate incident closed after merge into ${primary._id}.`,
+                `Duplicate incident closed after merge into ${String(
+                  primary._id
+                )}.`,
 
               metadata: {
                 mergedInto:
-                  primary._id,
+                  String(
+                    primary._id
+                  ),
               },
             }
           );
       }
     }
 
-    return Incident
-      .findById(
-        primary._id
-      );
+    // ------------------------------------------------------------------------
+    // RETURN CANONICAL PRIMARY
+    // ------------------------------------------------------------------------
+
+    return (
+      await incidentRepository
+        .findOne({
+          _id:
+            primary._id,
+
+          organizationId:
+            String(
+              primary.organizationId
+            ),
+
+          environmentId:
+            String(
+              primary.environmentId
+            ),
+        })
+    ) ||
+      primary;
   }
 
   // ==========================================================================
@@ -540,11 +666,10 @@ class IncidentMergeService {
       };
     }
 
-    const all =
-      [
-        incident,
-        ...candidates,
-      ];
+    const all = [
+      incident,
+      ...candidates,
+    ];
 
     let primary =
       this.choosePrimary(
@@ -553,11 +678,11 @@ class IncidentMergeService {
 
     const duplicates =
       all.filter(
-        (item) =>
-          String(
-            item._id
-          ) !==
-          String(
+        (
+          item
+        ) =>
+          !this.sameIdentifier(
+            item._id,
             primary._id
           )
       );
@@ -570,11 +695,10 @@ class IncidentMergeService {
       of duplicates
     ) {
       primary =
-        await this
-          .merge(
-            primary,
-            duplicate
-          );
+        await this.merge(
+          primary,
+          duplicate
+        );
 
       mergedIncidentIds.push(
         String(
@@ -597,7 +721,75 @@ class IncidentMergeService {
   }
 
   // ==========================================================================
-  // HELPERS
+  // SCOPE VALIDATION
+  // ==========================================================================
+
+  assertSameScope(
+    primary,
+    duplicate
+  ) {
+    if (
+      String(
+        primary.organizationId
+      ) !==
+        String(
+          duplicate.organizationId
+        ) ||
+      String(
+        primary.environmentId
+      ) !==
+        String(
+          duplicate.environmentId
+        )
+    ) {
+      throw Object.assign(
+        new Error(
+          "Cross-tenant or cross-environment incident merge is forbidden"
+        ),
+        {
+          code:
+            "INCIDENT_MERGE_SCOPE_MISMATCH",
+
+          status:
+            403,
+        }
+      );
+    }
+  }
+
+  // ==========================================================================
+  // IDENTIFIER
+  // ==========================================================================
+
+  sameIdentifier(
+    first,
+    second
+  ) {
+    if (
+      first ===
+        null ||
+      first ===
+        undefined ||
+      second ===
+        null ||
+      second ===
+        undefined
+    ) {
+      return false;
+    }
+
+    return (
+      String(
+        first
+      ) ===
+      String(
+        second
+      )
+    );
+  }
+
+  // ==========================================================================
+  // SEVERITY
   // ==========================================================================
 
   higherSeverity(
@@ -632,6 +824,10 @@ class IncidentMergeService {
       ? second
       : first;
   }
+
+  // ==========================================================================
+  // DATE
+  // ==========================================================================
 
   latestDate(
     first,

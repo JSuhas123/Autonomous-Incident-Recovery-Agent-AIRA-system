@@ -1,9 +1,17 @@
+"use strict";
+
+const {
+  FailedMessage,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
+
 /**
  * Dead Letter Queue (DLQ) Service
  * Handles failed message processing with exponential backoff
  */
 
-const FailedMessage = require('../../models/FailedMessage');
 const { v4: uuidv4 } = require('uuid');
 
 class DLQService {

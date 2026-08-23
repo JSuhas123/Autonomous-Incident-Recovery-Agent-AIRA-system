@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const crypto =
   require(
@@ -197,6 +197,77 @@ class PostgresRuntimeRecoveryCheckpointRepository
               scope
             )
           : null;
+      },
+      transaction
+    );
+  }
+
+  async list(
+    filter,
+    options = {},
+    transaction = null
+  ) {
+    const scope =
+      requireScope(
+        filter
+      );
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await requireIncident(
+            this.scope,
+            client,
+            resolved,
+            filter.incidentId
+          );
+
+        const {
+          where,
+          values,
+        } =
+          buildCheckpointFilter(
+            filter,
+            incident.id
+          );
+
+        const limit =
+          Math.min(
+            1000,
+            Math.max(
+              1,
+              Number(
+                options.limit ||
+                1000
+              )
+            )
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM workflow.runtime_recovery_checkpoints
+              WHERE ${where}
+              ORDER BY updated_at DESC
+              LIMIT ${limit}
+            `,
+            values
+          );
+
+        return result.rows.map(
+          (
+            row
+          ) =>
+            mapCheckpoint(
+              row,
+              scope
+            )
+        );
       },
       transaction
     );

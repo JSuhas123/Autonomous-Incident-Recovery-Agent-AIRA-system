@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Runtime Stale Operation Detector
@@ -23,10 +23,11 @@
  * - does not grant execution authorization
  */
 
-const RuntimeRecoveryCheckpoint =
-  require(
-    "../../models/RuntimeRecoveryCheckpoint"
-  );
+const {
+  runtimeRecoveryCheckpointRepository,
+} = require(
+  "../../persistence/repositories"
+);
 
 const {
   RUNTIME_STAGE,
@@ -74,9 +75,15 @@ class RuntimeStaleOperationDetector {
   constructor(
     options = {}
   ) {
-    this.RuntimeRecoveryCheckpoint =
+    this.repository =
+      options.repository ||
       options.RuntimeRecoveryCheckpoint ||
-      RuntimeRecoveryCheckpoint;
+      runtimeRecoveryCheckpointRepository;
+
+    this.legacyModel =
+      Boolean(
+        options.RuntimeRecoveryCheckpoint
+      );
   }
 
   // ==========================================================================
@@ -101,10 +108,13 @@ class RuntimeStaleOperationDetector {
       );
 
     const checkpoints =
-      await this.RuntimeRecoveryCheckpoint
-        .find(
-          filter
-        );
+      this.legacyModel
+        ? await this.repository.find(
+            filter
+          )
+        : await this.repository.list(
+            filter
+          );
 
     const items =
       checkpoints.map(

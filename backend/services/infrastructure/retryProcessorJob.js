@@ -1,3 +1,12 @@
+﻿"use strict";
+
+const {
+  FailedMessage,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
+
 /**
  * Retry Processor Job
  * Scheduled job to process retry queue and move messages due for retry
@@ -14,8 +23,11 @@
  * manually investigated and cleared.
  */
 
-const FailedMessage = require('../../models/FailedMessage');
-const TenantConfig = require('../../models/TenantConfig');
+const {
+  TenantConfig,
+} = require(
+  "../../persistence/operational/identityModels"
+);
 const retryHandler = require('./retryHandler');
 
 // Lazy getter for metricsService to avoid circular dependencies
@@ -57,7 +69,7 @@ class RetryProcessorJob {
 
     this.isRunning = true;
     console.log(
-      `[retry-processor] ✓ Started retry processor job (runs every ${this.config.intervalMinutes} minutes)`
+      `[retry-processor] âœ“ Started retry processor job (runs every ${this.config.intervalMinutes} minutes)`
     );
 
     // Run immediately, then on interval
@@ -73,7 +85,7 @@ class RetryProcessorJob {
       clearInterval(this.timerId);
       this.timerId = null;
       this.isRunning = false;
-      console.log('[retry-processor] ✓ Stopped retry processor job');
+      console.log('[retry-processor] âœ“ Stopped retry processor job');
     }
   }
 
@@ -112,7 +124,7 @@ class RetryProcessorJob {
           
           if (!cbCheck.allowed && cbCheck.isCircuitBreakerOpen) {
             console.warn(
-              `[retry-processor] ⚠️ Circuit breaker OPEN for tenant=${tenantId} | Reason: ${cbCheck.reason}`
+              `[retry-processor] âš ï¸ Circuit breaker OPEN for tenant=${tenantId} | Reason: ${cbCheck.reason}`
             );
             results.circuitBreakersOpen.push({
               tenantId,
@@ -129,7 +141,7 @@ class RetryProcessorJob {
 
           if (retryableMessages && retryableMessages.length > 0) {
             console.log(
-              `[retry-processor] ✓ Found ${retryableMessages.length} messages for retry in tenant=${tenantId}`
+              `[retry-processor] âœ“ Found ${retryableMessages.length} messages for retry in tenant=${tenantId}`
             );
             results.messagesChecked += retryableMessages.length;
           }
@@ -149,7 +161,7 @@ class RetryProcessorJob {
             }
             if (dlqStats.permanentFailures > 0) {
               console.warn(
-                `[retry-processor] ⚠️  Tenant=${tenantId} has ${dlqStats.permanentFailures} permanent failures in DLQ` +
+                `[retry-processor] âš ï¸  Tenant=${tenantId} has ${dlqStats.permanentFailures} permanent failures in DLQ` +
                 ` | Poison Pills: ${cbState.poisonPills} | Circuit Breaker: ${cbState.state}`
               );
             }
@@ -171,7 +183,7 @@ class RetryProcessorJob {
 
       // Log summary
       console.log(
-        `[retry-processor] ✓ Retry cycle completed (${duration}ms):`,
+        `[retry-processor] âœ“ Retry cycle completed (${duration}ms):`,
         {
           tenantsProcessed: results.tenantsProcessed,
           messagesChecked: results.messagesChecked,
@@ -190,3 +202,4 @@ class RetryProcessorJob {
 }
 
 module.exports = new RetryProcessorJob();
+

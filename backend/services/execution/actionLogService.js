@@ -1,4 +1,11 @@
-const AuditEvent = require("../../models/AuditEvent");
+"use strict";
+
+const {
+  AuditEvent,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
 
 /**
  * Action Log Service
@@ -64,7 +71,7 @@ class ActionLogService {
    */
   static async createActionLog(actionLogData) {
     try {
-      const auditEvent = new AuditEvent({
+      const auditEvent = await AuditEvent.create({
         tenantId: actionLogData.tenantId || "default",
         eventType: "action_executed",
         eventId: actionLogData.actionId || `action-${Date.now()}`,

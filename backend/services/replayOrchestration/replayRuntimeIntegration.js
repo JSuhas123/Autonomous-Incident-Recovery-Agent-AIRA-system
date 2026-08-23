@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /*
  * ============================================================================
@@ -32,10 +32,11 @@
  * ============================================================================
  */
 
-const WorkflowReplayRecord =
-  require(
-    "../../models/WorkflowReplayRecord"
-  );
+const {
+  WorkflowReplayRecord,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 
 const durableReplayService =
   require(
@@ -397,7 +398,7 @@ class ReplayRuntimeIntegration {
 
 
   // ==========================================================================
-  // MANUAL REVIEW → RESUME
+  // MANUAL REVIEW â†’ RESUME
   // ==========================================================================
 
   async approveManualReplay(
@@ -478,7 +479,7 @@ class ReplayRuntimeIntegration {
 
 
   // ==========================================================================
-  // RECONCILIATION → RESUME
+  // RECONCILIATION â†’ RESUME
   // ==========================================================================
 
   async resolveReconciliation(
@@ -658,7 +659,7 @@ class ReplayRuntimeIntegration {
 
 
   // ==========================================================================
-  // WAITING STATE → REQUESTED
+  // WAITING STATE â†’ REQUESTED
   // ==========================================================================
 
   async transitionWaitingReplay({

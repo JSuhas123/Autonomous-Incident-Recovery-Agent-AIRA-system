@@ -3,25 +3,27 @@
 /**
  * AIRA Execution Controller
  *
- * Phase 8.16
+ * Provider-neutral Phase 13 execution API.
  *
- * Exposes controlled execution lifecycle APIs.
+ * HTTP is only responsible for:
+ * - validating caller input
+ * - invoking the authorization pipeline
+ * - persisting through repository/service boundaries
+ * - queueing authorized execution requests
+ * - exposing execution lifecycle state
  *
- * DOES NOT:
- *
- * - accept raw shell commands
- * - bypass authorization
- * - execute infrastructure directly from HTTP
+ * This controller never:
+ * - imports Mongo models
+ * - accepts raw shell commands
+ * - performs infrastructure execution directly
+ * - bypasses authorization
  */
 
-const ExecutionAuthorization =
+const {
+  executionAuthorizationRepository,
+} =
   require(
-    "../models/ExecutionAuthorization"
-  );
-
-const ExecutionRequest =
-  require(
-    "../models/ExecutionRequest"
+    "../persistence/repositories"
   );
 
 const executionAuthorizationEngine =
@@ -171,7 +173,7 @@ class ExecutionController {
             },
 
             req.executionDependencies ||
-            {}
+              {}
           );
 
       // ======================================================================
@@ -183,11 +185,11 @@ class ExecutionController {
           .review(
             engineResult,
             req.executionCriticDependencies ||
-            {}
+              {}
           );
 
       // ======================================================================
-      // 3. PERSIST
+      // 3. PERSIST AUTHORIZATION + EXECUTION REQUEST
       // ======================================================================
 
       const persisted =
@@ -198,7 +200,7 @@ class ExecutionController {
           });
 
       // ======================================================================
-      // 4. QUEUE ONLY IF REQUEST CREATED
+      // 4. QUEUE ONLY WHEN A REQUEST WAS CREATED
       // ======================================================================
 
       let queueResult =
@@ -222,14 +224,40 @@ class ExecutionController {
         request.queuedAt =
           new Date();
 
-        await request
-          .save();
+        /*
+         * Important Phase 13 boundary:
+         *
+         * Never call request.save() here.
+         *
+         * Mongo returns a Mongoose document while PostgreSQL returns a
+         * provider-neutral domain object. The repository owns persistence.
+         */
+        const savedRequest =
+          await executionAuthorizationRepository
+            .saveExecutionRequest(
+              request
+            );
+
+        /*
+         * Keep the object returned to the caller aligned with the canonical
+         * persisted state whenever the repository returns one.
+         */
+        if (
+          savedRequest
+        ) {
+          persisted.executionRequest =
+            savedRequest;
+        }
+
+        const queueRequest =
+          persisted
+            .executionRequest;
 
         queueResult =
           await executionQueueService
             .enqueue({
               executionRequestId:
-                request
+                queueRequest
                   .executionRequestId,
 
               authorizationId:
@@ -238,15 +266,15 @@ class ExecutionController {
                   .authorizationId,
 
               organizationId:
-                request
+                queueRequest
                   .organizationId,
 
               environmentId:
-                request
+                queueRequest
                   .environmentId,
 
               incidentId:
-                request
+                queueRequest
                   .incidentId,
             });
       }
@@ -352,35 +380,23 @@ class ExecutionController {
       } =
         req.params;
 
-      if (
-        !authorizationId
-      ) {
-        throw Object.assign(
-          new Error(
-            "authorizationId is required"
-          ),
-          {
-            code:
-              "EXECUTION_AUTHORIZATION_ID_REQUIRED",
-
-            status:
-              400,
-          }
-        );
-      }
+      this.assertAuthorizationId(
+        authorizationId
+      );
 
       const authorization =
-        await ExecutionAuthorization
-          .findOne({
-            authorizationId,
+        await executionAuthorizationRepository
+          .findAuthorizationByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
+              environmentId:
+                scope.environmentId,
+            },
 
-            environmentId:
-              scope.environmentId,
-          })
-          .lean();
+            authorizationId
+          );
 
       if (
         !authorization
@@ -445,35 +461,23 @@ class ExecutionController {
       } =
         req.params;
 
-      if (
-        !executionRequestId
-      ) {
-        throw Object.assign(
-          new Error(
-            "executionRequestId is required"
-          ),
-          {
-            code:
-              "EXECUTION_REQUEST_ID_REQUIRED",
-
-            status:
-              400,
-          }
-        );
-      }
+      this.assertExecutionRequestId(
+        executionRequestId
+      );
 
       const request =
-        await ExecutionRequest
-          .findOne({
-            executionRequestId,
+        await executionAuthorizationRepository
+          .findExecutionRequestByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
+              environmentId:
+                scope.environmentId,
+            },
 
-            environmentId:
-              scope.environmentId,
-          })
-          .lean();
+            executionRequestId
+          );
 
       if (
         !request
@@ -543,36 +547,29 @@ class ExecutionController {
       );
 
       const limit =
-        Math.min(
-          100,
-          Math.max(
-            1,
-            Number(
-              req.query.limit ||
-              20
-            )
-          )
+        this.normalizeLimit(
+          req.query
+            ?.limit,
+          20
         );
 
       const requests =
-        await ExecutionRequest
-          .find({
-            organizationId:
-              scope.organizationId,
+        await executionAuthorizationRepository
+          .findIncidentExecutionHistory(
+            {
+              organizationId:
+                scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+              environmentId:
+                scope.environmentId,
 
-            incidentId,
-          })
-          .sort({
-            createdAt:
-              -1,
-          })
-          .limit(
-            limit
-          )
-          .lean();
+              incidentId,
+            },
+
+            {
+              limit,
+            }
+          );
 
       return res
         .status(
@@ -626,17 +623,23 @@ class ExecutionController {
       } =
         req.params;
 
+      this.assertExecutionRequestId(
+        executionRequestId
+      );
+
       const request =
-        await ExecutionRequest
-          .findOne({
-            executionRequestId,
+        await executionAuthorizationRepository
+          .findExecutionRequestByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
+              environmentId:
+                scope.environmentId,
+            },
 
-            environmentId:
-              scope.environmentId,
-          });
+            executionRequestId
+          );
 
       if (
         !request
@@ -693,15 +696,18 @@ class ExecutionController {
           });
       }
 
+      const now =
+        new Date();
+
       request.state =
         EXECUTION_REQUEST_STATE
           .CANCELLED;
 
       request.cancelledAt =
-        new Date();
+        now;
 
       request.completedAt =
-        new Date();
+        now;
 
       request.metadata = {
         ...(
@@ -722,8 +728,15 @@ class ExecutionController {
           "Cancelled by operator.",
       };
 
-      await request
-        .save();
+      const savedRequest =
+        await executionAuthorizationRepository
+          .saveExecutionRequest(
+            request
+          );
+
+      const canonicalRequest =
+        savedRequest ||
+        request;
 
       return res
         .status(
@@ -738,7 +751,7 @@ class ExecutionController {
 
           executionRequest:
             this.serializeExecutionRequest(
-              request
+              canonicalRequest
             ),
 
           executionStarted:
@@ -773,18 +786,23 @@ class ExecutionController {
       } =
         req.params;
 
+      this.assertExecutionRequestId(
+        executionRequestId
+      );
+
       const request =
-        await ExecutionRequest
-          .findOne({
-            executionRequestId,
+        await executionAuthorizationRepository
+          .findExecutionRequestByIdentifier(
+            {
+              organizationId:
+                scope.organizationId,
 
-            organizationId:
-              scope.organizationId,
+              environmentId:
+                scope.environmentId,
+            },
 
-            environmentId:
-              scope.environmentId,
-          })
-          .lean();
+            executionRequestId
+          );
 
       if (
         !request
@@ -905,7 +923,7 @@ class ExecutionController {
     }
 
     /*
-     * No arbitrary command field is supported.
+     * Raw execution primitives remain forbidden.
      */
     if (
       body.command ||
@@ -926,6 +944,97 @@ class ExecutionController {
         }
       );
     }
+  }
+
+  assertAuthorizationId(
+    authorizationId
+  ) {
+    if (
+      !authorizationId
+    ) {
+      throw Object.assign(
+        new Error(
+          "authorizationId is required"
+        ),
+        {
+          code:
+            "EXECUTION_AUTHORIZATION_ID_REQUIRED",
+
+          status:
+            400,
+        }
+      );
+    }
+  }
+
+  assertExecutionRequestId(
+    executionRequestId
+  ) {
+    if (
+      !executionRequestId
+    ) {
+      throw Object.assign(
+        new Error(
+          "executionRequestId is required"
+        ),
+        {
+          code:
+            "EXECUTION_REQUEST_ID_REQUIRED",
+
+          status:
+            400,
+        }
+      );
+    }
+  }
+
+  assertIncidentId(
+    incidentId
+  ) {
+    if (
+      !incidentId
+    ) {
+      throw Object.assign(
+        new Error(
+          "incidentId is required"
+        ),
+        {
+          code:
+            "INCIDENT_ID_REQUIRED",
+
+          status:
+            400,
+        }
+      );
+    }
+  }
+
+  normalizeLimit(
+    value,
+    fallback = 20
+  ) {
+    const parsed =
+      Number(
+        value
+      );
+
+    if (
+      !Number.isFinite(
+        parsed
+      )
+    ) {
+      return fallback;
+    }
+
+    return Math.min(
+      100,
+      Math.max(
+        1,
+        Math.floor(
+          parsed
+        )
+      )
+    );
   }
 
   // ==========================================================================
@@ -969,35 +1078,38 @@ class ExecutionController {
     }
 
     return {
-      organizationId,
-      environmentId,
-    };
-  }
-
-  assertIncidentId(
-    incidentId
-  ) {
-    if (
-      !incidentId
-    ) {
-      throw Object.assign(
-        new Error(
-          "incidentId is required"
+      organizationId:
+        String(
+          organizationId
         ),
-        {
-          code:
-            "INCIDENT_ID_REQUIRED",
 
-          status:
-            400,
-        }
-      );
-    }
+      environmentId:
+        String(
+          environmentId
+        ),
+    };
   }
 
   // ==========================================================================
   // SERIALIZATION
   // ==========================================================================
+
+  identifierString(
+    value
+  ) {
+    if (
+      value ===
+        null ||
+      value ===
+        undefined
+    ) {
+      return null;
+    }
+
+    return String(
+      value
+    );
+  }
 
   serializeAuthorization(
     authorization
@@ -1014,12 +1126,16 @@ class ExecutionController {
           .authorizationId,
 
       incidentId:
-        authorization
-          .incidentId,
+        this.identifierString(
+          authorization
+            .incidentId
+        ),
 
       recoveryDecisionId:
-        authorization
-          .recoveryDecisionId,
+        this.identifierString(
+          authorization
+            .recoveryDecisionId
+        ),
 
       recoveryDecisionRevision:
         authorization
@@ -1126,16 +1242,22 @@ class ExecutionController {
           .executionRequestId,
 
       authorizationId:
-        request
-          .authorizationId,
+        this.identifierString(
+          request
+            .authorizationId
+        ),
 
       incidentId:
-        request
-          .incidentId,
+        this.identifierString(
+          request
+            .incidentId
+        ),
 
       recoveryDecisionId:
-        request
-          .recoveryDecisionId,
+        this.identifierString(
+          request
+            .recoveryDecisionId
+        ),
 
       recoveryDecisionRevision:
         request

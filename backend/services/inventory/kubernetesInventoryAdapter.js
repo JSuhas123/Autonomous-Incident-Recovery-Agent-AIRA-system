@@ -1,27 +1,27 @@
 "use strict";
 
+const {
+  KubernetesResource,
+  KubernetesResourceRelation,
+} =
+  require(
+    "../../persistence/operational/operationalModels"
+  );
+
+const {
+  InfrastructureResource,
+  ResourceRelationship,
+} =
+  require(
+    "../../persistence/operational/inventoryModels"
+  );
+
 const crypto =
   require("node:crypto");
 
-const KubernetesResource =
-  require(
-    "../../models/KubernetesResource"
-  );
 
-const KubernetesResourceRelation =
-  require(
-    "../../models/KubernetesResourceRelation"
-  );
 
-const InfrastructureResource =
-  require(
-    "../../models/InfrastructureResource"
-  );
 
-const ResourceRelationship =
-  require(
-    "../../models/ResourceRelationship"
-  );
 
 const inventoryService =
   require(

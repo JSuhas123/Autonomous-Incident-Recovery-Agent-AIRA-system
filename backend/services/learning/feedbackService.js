@@ -1,7 +1,12 @@
-const crypto = require("crypto");
-const Feedback = require("../../models/Feedback");
-const FeedbackOutcome = require("../../models/FeedbackOutcome");
+﻿"use strict";
 
+const {
+  Feedback,
+  FeedbackOutcome,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
+const crypto = require("crypto");
 /**
  * Unified Feedback Service
  * 
@@ -9,7 +14,7 @@ const FeedbackOutcome = require("../../models/FeedbackOutcome");
  * 1. Simple feedback: Human verdict on decision quality (correct/incorrect/partial)
  * 2. Outcome feedback: Detailed action outcome + confidence analysis for learning
  * 
- * Flow: Decision → Action → Outcome → Feedback Recording → Weight Adjustment
+ * Flow: Decision â†’ Action â†’ Outcome â†’ Feedback Recording â†’ Weight Adjustment
  */
 
 class FeedbackService {
@@ -562,3 +567,4 @@ class FeedbackService {
 
 // Export as class (instantiate with dependencies or use static methods)
 module.exports = FeedbackService;
+

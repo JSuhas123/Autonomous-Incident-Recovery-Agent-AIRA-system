@@ -1,27 +1,19 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
-
 const {
-  Incident,
+  incidentRepository,
+  signalRepository,
+  signalCorrelationRepository,
 } =
   require(
-    "../../models/Incident"
+    "../../persistence/repositories"
   );
 
 const {
-  Signal,
+  isDatabaseIdentifier,
 } =
   require(
-    "../../models/Signal"
-  );
-
-const {
-  SignalCorrelation,
-} =
-  require(
-    "../../models/SignalCorrelation"
+    "../../utils/identifier"
   );
 
 const incidentEventService =
@@ -47,28 +39,38 @@ class IncidentDetailService {
       context
     );
 
+    const normalizedIncidentId =
+      String(
+        incidentId ||
+        ""
+      ).trim();
+
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
-          incidentId
-        )
+      !isDatabaseIdentifier(
+        normalizedIncidentId
+      )
     ) {
       return null;
     }
 
     const incident =
-      await Incident
+      await incidentRepository
         .findOne({
           _id:
-            incidentId,
+            normalizedIncidentId,
 
           organizationId:
-            context.organizationId,
+            String(
+              context
+                .organizationId
+            ),
 
           environmentId:
-            context.environmentId,
-        })
-        .lean();
+            String(
+              context
+                .environmentId
+            ),
+        });
 
     if (!incident) {
       return null;
@@ -161,7 +163,9 @@ class IncidentDetailService {
 
         signals:
           signals.map(
-            (signal) =>
+            (
+              signal
+            ) =>
               this
                 .serializeSignal(
                   signal
@@ -244,11 +248,13 @@ class IncidentDetailService {
             ) =>
               new Date(
                 first
-                  .occurredAt
+                  .occurredAt ||
+                0
               ) -
               new Date(
                 second
-                  .occurredAt
+                  .occurredAt ||
+                0
               )
           ),
     };
@@ -261,62 +267,148 @@ class IncidentDetailService {
   async loadSignals(
     incident
   ) {
-    const filter = {
+    const baseFilter = {
       organizationId:
-        incident
-          .organizationId,
+        String(
+          incident
+            .organizationId
+        ),
 
       environmentId:
-        incident
-          .environmentId,
+        String(
+          incident
+            .environmentId
+        ),
     };
 
     /*
-     * incidentId is strongest.
-     *
-     * signalIds fallback covers older records that may have been
-     * linked before incidentId propagation completed.
+     * Prefer canonical incident ownership first.
      */
-    const clauses = [
-      {
-        incidentId:
-          incident._id,
-      },
-    ];
+    const directSignals =
+      await signalRepository
+        .list(
+          {
+            ...baseFilter,
 
-    if (
+            incidentId:
+              incident._id,
+          },
+          {
+            sort: {
+              observedAt:
+                1,
+            },
+
+            limit:
+              500,
+          }
+        );
+
+    const directList =
       Array.isArray(
+        directSignals
+      )
+        ? directSignals
+        : [];
+
+    /*
+     * Older signals may only be linked through the incident's signalIds array.
+     * Fetch those separately rather than relying on repository-level $or
+     * semantics that are not guaranteed across providers.
+     */
+    if (
+      !Array.isArray(
         incident.signalIds
-      ) &&
+      ) ||
       incident
         .signalIds
-        .length >
-      0
+        .length ===
+        0
     ) {
-      clauses.push({
-        signalId: {
-          $in:
-            incident
-              .signalIds,
-        },
-      });
+      return directList;
     }
 
-    filter.$or =
-      clauses;
+    const fallbackSignals =
+      await signalRepository
+        .list(
+          {
+            ...baseFilter,
 
-    return Signal
-      .find(
-        filter
+            signalId: {
+              $in:
+                incident
+                  .signalIds,
+            },
+          },
+          {
+            sort: {
+              observedAt:
+                1,
+            },
+
+            limit:
+              500,
+          }
+        );
+
+    const merged =
+      new Map();
+
+    for (
+      const signal
+      of [
+        ...directList,
+        ...(
+          Array.isArray(
+            fallbackSignals
+          )
+            ? fallbackSignals
+            : []
+        ),
+      ]
+    ) {
+      const key =
+        String(
+          signal.signalId ||
+          signal._id
+        );
+
+      if (
+        !merged.has(
+          key
+        )
+      ) {
+        merged.set(
+          key,
+          signal
+        );
+      }
+    }
+
+    return Array
+      .from(
+        merged.values()
       )
-      .sort({
-        observedAt:
-          1,
-      })
-      .limit(
+      .sort(
+        (
+          first,
+          second
+        ) =>
+          new Date(
+            first
+              .observedAt ||
+            0
+          ) -
+          new Date(
+            second
+              .observedAt ||
+            0
+          )
+      )
+      .slice(
+        0,
         500
-      )
-      .lean();
+      );
   }
 
   // ==========================================================================
@@ -333,21 +425,25 @@ class IncidentDetailService {
       return null;
     }
 
-    return SignalCorrelation
-      .findOne({
-        organizationId:
-          incident
-            .organizationId,
+    return signalCorrelationRepository
+      .findGroup(
+        {
+          organizationId:
+            String(
+              incident
+                .organizationId
+            ),
 
-        environmentId:
-          incident
-            .environmentId,
+          environmentId:
+            String(
+              incident
+                .environmentId
+            ),
+        },
 
-        correlationGroupId:
-          incident
-            .correlationGroupId,
-      })
-      .lean();
+        incident
+          .correlationGroupId
+      );
   }
 
   // ==========================================================================

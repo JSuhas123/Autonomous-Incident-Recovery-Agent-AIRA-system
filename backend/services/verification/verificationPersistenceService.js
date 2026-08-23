@@ -4,42 +4,29 @@
  * AIRA Verification Persistence Service
  *
  * Phase 9.11
+ * Phase 13 — Provider-neutral persistence
  *
- * Persists:
+ * SAFETY:
  *
- * - immutable verification plan
- * - aggregated evidence snapshot
- * - verification decision
- * - verification critic result
- * - recovery routing result
- * - revision history
- *
- * Safety:
- *
- * - persistence never closes incidents
- * - persistence never starts retry / rollback
- * - only critic-confirmed RECOVERED results become closure-eligible
- * - execution authorization never originates here
+ * - validates the complete immutable verification identity BEFORE persistence
+ * - never closes incidents
+ * - never starts retry
+ * - never starts rollback
+ * - never authorizes infrastructure execution
+ * - only critic-confirmed RECOVERED results become closure eligible
  */
-
-const mongoose =
-  require(
-    "mongoose"
-  );
 
 const crypto =
   require(
     "node:crypto"
   );
 
-const RecoveryVerification =
+const {
+  recoveryVerificationRepository,
+  persistenceTransactionManager,
+} =
   require(
-    "../../models/RecoveryVerification"
-  );
-
-const RecoveryVerificationRun =
-  require(
-    "../../models/RecoveryVerificationRun"
+    "../../persistence/repositories/recoveryVerificationProvider"
   );
 
 const {
@@ -57,18 +44,20 @@ const {
     "./recoveryOutcomeRoutingService"
   );
 
+
 class VerificationPersistenceService {
   constructor(
     options = {}
   ) {
-    this.RecoveryVerification =
-      options.RecoveryVerification ||
-      RecoveryVerification;
+    this.repository =
+      options.repository ||
+      recoveryVerificationRepository;
 
-    this.RecoveryVerificationRun =
-      options.RecoveryVerificationRun ||
-      RecoveryVerificationRun;
+    this.transactionManager =
+      options.transactionManager ||
+      persistenceTransactionManager;
   }
+
 
   // ==========================================================================
   // MAIN
@@ -77,183 +66,161 @@ class VerificationPersistenceService {
   async persist(
     input = {}
   ) {
-    this.assertInput(
-      input
-    );
+    /*
+     * CRITICAL:
+     *
+     * Validation MUST happen before transaction/repository access.
+     *
+     * Unit tests deliberately supply invalid payloads without a live database.
+     * Invalid payloads must fail deterministically here instead of reaching
+     * Mongo/PostgreSQL.
+     */
+    const normalized =
+      this.assertInput(
+        input
+      );
 
-    const session =
-      await mongoose
-        .startSession();
+    return this
+      .transactionManager
+      .run(
+        async (
+          transaction
+        ) => {
+          let persistedRun =
+            await this.createRun(
+              normalized,
+              transaction
+            );
 
-    let persistedRun;
-    let persistedVerification;
-
-    try {
-      await session
-        .withTransaction(
-          async () => {
-            // =================================================================
-            // 1. CREATE VERIFICATION RUN
-            // =================================================================
-
-            persistedRun =
-              await this.createRun(
-                input,
-                session
-              );
-
-            // =================================================================
-            // 2. FIND CURRENT VERIFICATION
-            // =================================================================
-
-            const current =
-              await this.RecoveryVerification
-                .findOne({
+          const current =
+            await this.repository
+              .findCurrent(
+                {
                   organizationId:
-                    input.organizationId,
+                    normalized.organizationId,
 
                   environmentId:
-                    input.environmentId,
+                    normalized.environmentId,
 
                   incidentId:
-                    input.incidentId,
-
-                  isCurrent:
-                    true,
-                })
-                .session(
-                  session
-                );
-
-            // =================================================================
-            // 3. REVISION
-            // =================================================================
-
-            const revision =
-              current
-                ? Number(
-                    current.revision
-                  ) +
-                  1
-                : 1;
-
-            // =================================================================
-            // 4. SUPERSEDE CURRENT
-            // =================================================================
-
-            if (
-              current
-            ) {
-              current.isCurrent =
-                false;
-
-              current.status =
-                "superseded";
-
-              await current
-                .save({
-                  session,
-                });
-            }
-
-            // =================================================================
-            // 5. PERSIST NEW VERIFICATION
-            // =================================================================
-
-            persistedVerification =
-              await this.createVerification(
-                {
-                  ...input,
-
-                  revision,
-
-                  previousVerification:
-                    current,
+                    normalized.incidentId,
                 },
-                session
+                transaction
               );
 
-            // =================================================================
-            // 6. OLD -> NEW LINK
-            // =================================================================
+          const revision =
+            current
+              ? Number(
+                  current.revision
+                ) +
+                1
+              : 1;
 
-            if (
-              current
-            ) {
-              current
-                .supersededByVerificationId =
-                persistedVerification
-                  ._id;
+          if (
+            current
+          ) {
+            current.isCurrent =
+              false;
 
-              await current
-                .save({
-                  session,
-                });
-            }
+            current.status =
+              "superseded";
 
-            // =================================================================
-            // 7. RUN -> RESULT
-            // =================================================================
-
-            persistedRun.state =
-              VERIFICATION_RUN_STATE
-                .COMPLETED;
-
-            persistedRun.completedAt =
-              new Date();
-
-            persistedRun
-              .resultVerificationDocumentId =
-              persistedVerification
-                ._id;
-
-            await persistedRun
-              .save({
-                session,
-              });
+            await this.repository
+              .saveVerification(
+                current,
+                transaction
+              );
           }
-        );
 
-      return {
-        run:
-          persistedRun,
+          const persistedVerification =
+            await this.createVerification(
+              {
+                ...normalized,
 
-        verification:
-          persistedVerification,
+                revision,
 
-        revision:
-          persistedVerification
-            .revision,
+                previousVerification:
+                  current,
+              },
+              transaction
+            );
 
-        isCurrent:
-          persistedVerification
-            .isCurrent,
+          if (
+            current
+          ) {
+            current.supersededByVerificationId =
+              persistedVerification._id;
 
-        recoveryConfirmed:
-          persistedVerification
-            .recoveryConfirmed,
+            await this.repository
+              .saveVerification(
+                current,
+                transaction
+              );
+          }
 
-        incidentClosureEligible:
-          persistedVerification
-            .incidentClosureEligible,
+          persistedRun.state =
+            VERIFICATION_RUN_STATE
+              .COMPLETED;
 
-        incidentClosed:
-          false,
+          persistedRun.completedAt =
+            new Date();
 
-        retryStarted:
-          false,
+          persistedRun.resultVerificationDocumentId =
+            persistedVerification._id;
 
-        rollbackStarted:
-          false,
+          persistedRun =
+            (
+              await this.repository
+                .saveRun(
+                  persistedRun,
+                  transaction
+                )
+            ) ||
+            persistedRun;
 
-        executionAuthorized:
-          false,
-      };
-    } finally {
-      await session
-        .endSession();
-    }
+          return {
+            run:
+              persistedRun,
+
+            verification:
+              persistedVerification,
+
+            verificationId:
+              persistedVerification
+                .verificationId,
+
+            revision:
+              persistedVerification
+                .revision,
+
+            isCurrent:
+              persistedVerification
+                .isCurrent,
+
+            recoveryConfirmed:
+              persistedVerification
+                .recoveryConfirmed,
+
+            incidentClosureEligible:
+              persistedVerification
+                .incidentClosureEligible,
+
+            incidentClosed:
+              false,
+
+            retryStarted:
+              false,
+
+            rollbackStarted:
+              false,
+
+            executionAuthorized:
+              false,
+          };
+        }
+      );
   }
+
 
   // ==========================================================================
   // RUN
@@ -261,91 +228,88 @@ class VerificationPersistenceService {
 
   async createRun(
     input,
-    session
+    transaction
   ) {
-    const run =
-      new this.RecoveryVerificationRun({
-        verificationRunId:
-          input.verificationRunId ||
-          this.generateRunId(
+    return this.repository
+      .createRun(
+        {
+          verificationRunId:
+            input.verificationRunId ||
+            this.generateRunId(
+              input
+            ),
+
+          verificationId:
             input
-          ),
+              .decisionResult
+              .verificationId,
 
-        verificationId:
-          input
-            .decisionResult
-            .verificationId,
+          organizationId:
+            input.organizationId,
 
-        organizationId:
-          input.organizationId,
+          environmentId:
+            input.environmentId,
 
-        environmentId:
-          input.environmentId,
+          incidentId:
+            input.incidentId,
 
-        incidentId:
-          input.incidentId,
+          executionRequestId:
+            input.executionRequestId,
 
-        executionRequestId:
-          input.executionRequestId,
+          state:
+            VERIFICATION_RUN_STATE
+              .RUNNING,
 
-        state:
-          VERIFICATION_RUN_STATE
-            .RUNNING,
-
-        attempt:
-          Number(
-            input.attempt ||
-            1
-          ),
-
-        maxAttempts:
-          Math.max(
-            1,
+          attempt:
             Number(
-              input.maxAttempts ||
+              input.attempt ||
               1
-            )
-          ),
+            ),
 
-        verificationPlanId:
-          input
-            .verificationPlan
-            .verificationPlanId,
+          maxAttempts:
+            Math.max(
+              1,
+              Number(
+                input.maxAttempts ||
+                1
+              )
+            ),
 
-        verificationPlanHash:
-          input
-            .verificationPlan
-            .planHash,
+          verificationPlanId:
+            input
+              .verificationPlan
+              .verificationPlanId,
 
-        requestedAt:
-          input.requestedAt ||
-          new Date(),
+          verificationPlanHash:
+            input
+              .verificationPlan
+              .planHash,
 
-        startedAt:
-          input.startedAt ||
-          new Date(),
+          requestedAt:
+            input.requestedAt ||
+            new Date(),
 
-        metadata: {
-          persistenceVersion:
-            "phase9.11-v1",
+          startedAt:
+            input.startedAt ||
+            new Date(),
+
+          metadata: {
+            persistenceVersion:
+              "phase13-provider-neutral-v1",
+          },
         },
-      });
-
-    await run
-      .save({
-        session,
-      });
-
-    return run;
+        transaction
+      );
   }
 
+
   // ==========================================================================
-  // VERIFICATION
+  // CREATE VERIFICATION
   // ==========================================================================
 
   async createVerification(
     input,
-    session
+    transaction
   ) {
     const {
       decisionResult,
@@ -375,145 +339,142 @@ class VerificationPersistenceService {
       routingResult.ready ===
         true;
 
-    const document =
-      new this.RecoveryVerification({
-        verificationId:
-          decisionResult
-            .verificationId,
-
-        organizationId:
-          input.organizationId,
-
-        environmentId:
-          input.environmentId,
-
-        incidentId:
-          input.incidentId,
-
-        executionRequestId:
-          input.executionRequestId,
-
-        authorizationId:
-          input.authorizationId ||
-          decisionResult
-            .authorizationId ||
-          null,
-
-        recoveryDecisionId:
-          input.recoveryDecisionId ||
-          decisionResult
-            .recoveryDecisionId ||
-          null,
-
-        executionPlanId:
-          decisionResult
-            .planId ||
-          null,
-
-        executionPlanHash:
-          decisionResult
-            .planHash ||
-          null,
-
-        verificationPlanId:
-          verificationPlan
-            .verificationPlanId,
-
-        verificationPlanHash:
-          verificationPlan
-            .planHash,
-
-        revision:
-          input.revision,
-
-        isCurrent:
-          true,
-
-        status:
-          "current",
-
-        decision:
-          decisionResult
-            .decision,
-
-        confidence:
-          decisionResult
-            .confidence,
-
-        nextAction:
-          decisionResult
-            .nextAction,
-
-        recovered:
-          decisionResult
-            .recovered ===
-            true,
-
-        recoveryConfirmed,
-
-        incidentClosureEligible,
-
-        overallScore:
-          decisionResult
-            .overallScore,
-
-        verificationPlan:
-          clone(
-            verificationPlan
-          ),
-
-        evidencePackage:
-          clone(
-            evidencePackage
-          ),
-
-        decisionResult:
-          clone(
+    return this.repository
+      .createVerification(
+        {
+          verificationId:
             decisionResult
-          ),
+              .verificationId,
 
-        criticResult:
-          clone(
-            criticResult
-          ),
+          organizationId:
+            input.organizationId,
 
-        routingResult:
-          clone(
-            routingResult
-          ),
+          environmentId:
+            input.environmentId,
 
-        previousVerificationId:
-          previousVerification
-            ?._id ||
-          null,
+          incidentId:
+            input.incidentId,
 
-        verifiedAt:
-          decisionResult
-            .completedAt ||
-          new Date(),
+          executionRequestId:
+            input.executionRequestId,
 
-        metadata: {
-          persistenceVersion:
-            "phase9.11-v1",
+          authorizationId:
+            input.authorizationId ||
+            decisionResult
+              .authorizationId ||
+            null,
 
-          sourceVerificationPlanHash:
+          recoveryDecisionId:
+            input.recoveryDecisionId ||
+            decisionResult
+              .recoveryDecisionId ||
+            null,
+
+          executionPlanId:
+            decisionResult
+              .planId ||
+            null,
+
+          executionPlanHash:
+            decisionResult
+              .planHash ||
+            null,
+
+          verificationPlanId:
+            verificationPlan
+              .verificationPlanId,
+
+          verificationPlanHash:
             verificationPlan
               .planHash,
 
-          sourceEvidencePlanHash:
-            evidencePackage
-              .verificationPlanHash ||
+          revision:
+            input.revision,
+
+          isCurrent:
+            true,
+
+          status:
+            "current",
+
+          decision:
+            decisionResult
+              .decision,
+
+          confidence:
+            decisionResult
+              .confidence,
+
+          nextAction:
+            decisionResult
+              .nextAction,
+
+          recovered:
+            decisionResult
+              .recovered ===
+            true,
+
+          recoveryConfirmed,
+
+          incidentClosureEligible,
+
+          overallScore:
+            decisionResult
+              .overallScore,
+
+          verificationPlan:
+            clone(
+              verificationPlan
+            ),
+
+          evidencePackage:
+            clone(
+              evidencePackage
+            ),
+
+          decisionResult:
+            clone(
+              decisionResult
+            ),
+
+          criticResult:
+            clone(
+              criticResult
+            ),
+
+          routingResult:
+            clone(
+              routingResult
+            ),
+
+          previousVerificationId:
+            previousVerification
+              ?._id ||
             null,
+
+          verifiedAt:
+            decisionResult
+              .completedAt ||
+            new Date(),
+
+          metadata: {
+            persistenceVersion:
+              "phase13-provider-neutral-v1",
+
+            sourceVerificationPlanHash:
+              verificationPlan
+                .planHash,
+
+            sourceEvidencePlanHash:
+              evidencePackage
+                .verificationPlanHash ||
+              null,
+          },
         },
-      });
-
-    await document
-      .save({
-        session,
-      });
-
-    return document;
+        transaction
+      );
   }
+
 
   // ==========================================================================
   // RUN FAILURE
@@ -537,49 +498,322 @@ class VerificationPersistenceService {
       );
     }
 
-    return this
-      .RecoveryVerificationRun
-      .findOneAndUpdate(
-        {
-          verificationRunId,
-        },
-        {
-          $set: {
-            state:
-              VERIFICATION_RUN_STATE
-                .FAILED,
-
-            completedAt:
-              new Date(),
-
-            failure: {
-              code:
-                error
-                  ?.code ||
-                "VERIFICATION_RUN_FAILED",
-
-              message:
-                String(
-                  error
-                    ?.message ||
-                  "Verification run failed"
-                )
-                  .slice(
-                    0,
-                    2048
-                  ),
-            },
-          },
-        },
-        {
-          new:
-            true,
-        }
+    return this.repository
+      .markRunFailed(
+        verificationRunId,
+        error
       );
   }
 
+
   // ==========================================================================
-  // IDs
+  // INPUT VALIDATION
+  // ==========================================================================
+
+  assertInput(
+    input = {}
+  ) {
+    if (
+      !input ||
+      typeof input !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence input is required",
+        "VERIFICATION_PERSISTENCE_INPUT_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // SAFETY FIRST
+    // ------------------------------------------------------------------------
+
+    if (
+      input.executionAuthorized ===
+      true
+    ) {
+      throw this.error(
+        "Verification persistence cannot receive execution authorization",
+        "VERIFICATION_PERSISTENCE_UNSAFE_INPUT"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // OWNERSHIP
+    // ------------------------------------------------------------------------
+
+    for (
+      const field
+      of [
+        "organizationId",
+        "environmentId",
+        "incidentId",
+      ]
+    ) {
+      if (
+        !input[field]
+      ) {
+        throw Object.assign(
+          this.error(
+            `Verification persistence requires ${field}`,
+            "VERIFICATION_PERSISTENCE_INPUT_REQUIRED"
+          ),
+          {
+            field,
+          }
+        );
+      }
+    }
+
+    // ------------------------------------------------------------------------
+    // EXECUTION REQUEST
+    // ------------------------------------------------------------------------
+
+    if (
+      !input.executionRequestId
+    ) {
+      throw this.error(
+        "Verification persistence requires executionRequestId",
+        "VERIFICATION_PERSISTENCE_EXECUTION_REQUEST_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // VERIFICATION PLAN
+    // ------------------------------------------------------------------------
+
+    if (
+      !input.verificationPlan ||
+      typeof input.verificationPlan !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence requires verificationPlan",
+        "VERIFICATION_PERSISTENCE_PLAN_REQUIRED"
+      );
+    }
+
+    if (
+      !input
+        .verificationPlan
+        .verificationPlanId
+    ) {
+      throw this.error(
+        "Verification plan identifier is required",
+        "VERIFICATION_PLAN_ID_REQUIRED"
+      );
+    }
+
+    if (
+      !input
+        .verificationPlan
+        .planHash
+    ) {
+      throw this.error(
+        "Verification plan hash is required",
+        "VERIFICATION_PLAN_HASH_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // EVIDENCE
+    // ------------------------------------------------------------------------
+
+    if (
+      !input.evidencePackage ||
+      typeof input.evidencePackage !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence requires evidencePackage",
+        "VERIFICATION_PERSISTENCE_EVIDENCE_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // DECISION
+    //
+    // Phase-9 code uses decisionResult.
+    // Some worker paths historically used decision.
+    // Normalize both at the persistence boundary.
+    // ------------------------------------------------------------------------
+
+    const decisionResult =
+      input.decisionResult ||
+      input.decision ||
+      null;
+
+    if (
+      !decisionResult ||
+      typeof decisionResult !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence requires decision result",
+        "VERIFICATION_PERSISTENCE_DECISION_REQUIRED"
+      );
+    }
+
+    if (
+      !decisionResult
+        .verificationId
+    ) {
+      throw this.error(
+        "Verification decision identifier is required",
+        "VERIFICATION_DECISION_ID_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // CRITIC
+    // ------------------------------------------------------------------------
+
+    if (
+      !input.criticResult ||
+      typeof input.criticResult !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence requires criticResult",
+        "VERIFICATION_PERSISTENCE_CRITIC_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // ROUTING
+    // ------------------------------------------------------------------------
+
+    if (
+      !input.routingResult ||
+      typeof input.routingResult !==
+        "object"
+    ) {
+      throw this.error(
+        "Verification persistence requires routingResult",
+        "VERIFICATION_PERSISTENCE_ROUTING_REQUIRED"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // IMMUTABLE PLAN CONSISTENCY — EVIDENCE
+    // ------------------------------------------------------------------------
+
+    const planHash =
+      String(
+        input
+          .verificationPlan
+          .planHash
+      );
+
+    const evidencePlanHash =
+      input
+        .evidencePackage
+        .verificationPlanHash ||
+      input
+        .evidencePackage
+        .planHash ||
+      null;
+
+    if (
+      evidencePlanHash &&
+      String(
+        evidencePlanHash
+      ) !==
+        planHash
+    ) {
+      throw this.error(
+        "Evidence package verification plan hash does not match persisted verification plan",
+        "VERIFICATION_PERSISTENCE_PLAN_HASH_MISMATCH"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // IMMUTABLE PLAN CONSISTENCY — DECISION
+    // ------------------------------------------------------------------------
+
+   const decisionPlanHash =
+  decisionResult
+    .verificationPlanHash ||
+  decisionResult
+    .metadata
+    ?.verificationPlanHash ||
+  null;
+
+if (
+  decisionPlanHash &&
+  String(
+    decisionPlanHash
+  ) !==
+    planHash
+) {
+  throw this.error(
+    "Verification decision plan hash does not match persisted verification plan",
+    "VERIFICATION_PERSISTENCE_DECISION_PLAN_MISMATCH"
+  );
+}
+
+    // ------------------------------------------------------------------------
+    // OPTIONAL CRITIC PLAN CONSISTENCY
+    // ------------------------------------------------------------------------
+
+    const criticPlanHash =
+      input
+        .criticResult
+        .verificationPlanHash ||
+      null;
+
+    if (
+      criticPlanHash &&
+      String(
+        criticPlanHash
+      ) !==
+        planHash
+    ) {
+      throw this.error(
+        "Verification critic plan hash does not match persisted verification plan",
+        "VERIFICATION_PERSISTENCE_CRITIC_PLAN_MISMATCH"
+      );
+    }
+
+    // ------------------------------------------------------------------------
+    // OPTIONAL ROUTING PLAN CONSISTENCY
+    // ------------------------------------------------------------------------
+
+    const routingPlanHash =
+      input
+        .routingResult
+        .verificationPlanHash ||
+      null;
+
+    if (
+      routingPlanHash &&
+      String(
+        routingPlanHash
+      ) !==
+        planHash
+    ) {
+      throw this.error(
+        "Verification routing plan hash does not match persisted verification plan",
+        "VERIFICATION_PERSISTENCE_ROUTING_PLAN_MISMATCH"
+      );
+    }
+
+    return {
+      ...input,
+
+      decisionResult,
+
+      /*
+       * Hard safety invariant.
+       */
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  // ==========================================================================
+  // IDS
   // ==========================================================================
 
   generateRunId(
@@ -614,221 +848,22 @@ class VerificationPersistenceService {
     );
   }
 
-  // ==========================================================================
-  // INPUT
-  // ==========================================================================
 
-  assertInput(
-    input
+  error(
+    message,
+    code
   ) {
-     if (
-    !input ||
-    typeof input !==
-      "object" ||
-    Object.keys(
-      input
-    ).length ===
-      0
-  ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence input is required"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_INPUT_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.organizationId ||
-      !input.environmentId ||
-      !input.incidentId
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires organization, environment and incident scope"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_SCOPE_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.executionRequestId
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires executionRequestId"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_EXECUTION_REQUEST_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.verificationPlan
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires verification plan"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_PLAN_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.verificationPlan
-        .verificationPlanId ||
-      !input.verificationPlan
-        .planHash
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires verification plan identity"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_PLAN_IDENTITY_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.evidencePackage
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires evidence package"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_EVIDENCE_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.decisionResult
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires verification decision"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_DECISION_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.criticResult
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires critic result"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_CRITIC_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      !input.routingResult
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence requires routing result"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_ROUTING_REQUIRED",
-        }
-      );
-    }
-
-    if (
-      input.executionAuthorized ===
-      true
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification persistence cannot authorize execution"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_UNSAFE_INPUT",
-        }
-      );
-    }
-
-    /*
-     * Prevent mismatched verification-plan persistence.
-     */
-    if (
-      input.evidencePackage
-        .verificationPlanHash &&
-      String(
-        input.evidencePackage
-          .verificationPlanHash
-      ) !==
-      String(
-        input.verificationPlan
-          .planHash
-      )
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification evidence references a different verification plan hash"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_PLAN_HASH_MISMATCH",
-        }
-      );
-    }
-
-    if (
-      input.decisionResult
-        ?.metadata
-        ?.verificationPlanHash &&
-      String(
-        input.decisionResult
-          .metadata
-          .verificationPlanHash
-      ) !==
-      String(
-        input.verificationPlan
-          .planHash
-      )
-    ) {
-      throw Object.assign(
-        new Error(
-          "Verification decision references a different verification plan hash"
-        ),
-        {
-          code:
-            "VERIFICATION_PERSISTENCE_DECISION_PLAN_MISMATCH",
-        }
-      );
-    }
+    return Object.assign(
+      new Error(
+        message
+      ),
+      {
+        code,
+      }
+    );
   }
 }
 
-// ============================================================================
-// HELPERS
-// ============================================================================
 
 function clone(
   value
@@ -837,33 +872,16 @@ function clone(
     value ===
       undefined
   ) {
-    return null;
+    return undefined;
   }
 
-  try {
-    return JSON.parse(
-      JSON.stringify(
-        value
-      )
-    );
-  } catch (
-    error
-  ) {
-    throw Object.assign(
-      new Error(
-        "Verification persistence received non-serializable data"
-      ),
-      {
-        code:
-          "VERIFICATION_PERSISTENCE_SERIALIZATION_FAILED",
-      }
-    );
-  }
+  return JSON.parse(
+    JSON.stringify(
+      value
+    )
+  );
 }
 
-// ============================================================================
-// EXPORT
-// ============================================================================
 
 module.exports =
   new VerificationPersistenceService();

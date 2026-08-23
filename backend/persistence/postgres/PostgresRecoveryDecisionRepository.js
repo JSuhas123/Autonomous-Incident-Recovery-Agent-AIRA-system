@@ -239,9 +239,67 @@ class PostgresRecoveryDecisionRepository
             scope.incidentId
           );
 
-        if (!incident) {
-          return null;
-        }
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.recovery_decisions
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+                AND is_current = TRUE
+              ORDER BY revision DESC
+              LIMIT 1
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapDecision(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
+
+  async findByIdentifier(
+    scope,
+    identifier,
+    transaction = null
+  ) {
+    requireScope(
+      scope
+    );
+
+    const normalized =
+      normalizeId(
+        identifier
+      );
+
+    if (!normalized) {
+      return null;
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await this.resolveIncident(
+            client,
+            resolved,
+            scope.incidentId
+          );
 
         const result =
           await client.query(
@@ -249,18 +307,162 @@ class PostgresRecoveryDecisionRepository
               SELECT *
               FROM execution.recovery_decisions
               WHERE
-                incident_id = $1
-                AND is_current = TRUE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+                AND (
+                  public_id = $4
+                  OR database_id = $4
+                  OR legacy_mongo_id = $4
+                  OR id::text = $4
+                )
               ORDER BY revision DESC
               LIMIT 1
             `,
             [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
               incident.id,
+              normalized,
             ]
           );
 
         return result.rows[0]
           ? mapDecision(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
+
+  async findHistory(
+    scope,
+    options = {},
+    transaction = null
+  ) {
+    requireScope(
+      scope
+    );
+
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await this.resolveIncident(
+            client,
+            resolved,
+            scope.incidentId
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.recovery_decisions
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+              ORDER BY revision DESC
+              LIMIT $4
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+              limit,
+            ]
+          );
+
+        return result.rows.map(
+          (row) =>
+            mapDecision(
+              row,
+              scope
+            )
+        );
+      },
+      transaction
+    );
+  }
+
+  async findRunByIdentifier(
+    scope,
+    identifier,
+    transaction = null
+  ) {
+    requireScope(
+      scope
+    );
+
+    const normalized =
+      normalizeId(
+        identifier
+      );
+
+    if (!normalized) {
+      return null;
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await this.resolveIncident(
+            client,
+            resolved,
+            scope.incidentId
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM execution.recovery_decision_runs
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+                AND (
+                  public_id = $4
+                  OR database_id = $4
+                  OR legacy_mongo_id = $4
+                  OR id::text = $4
+                )
+              ORDER BY created_at DESC
+              LIMIT 1
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+              normalized,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapRun(
               result.rows[0],
               scope
             )
@@ -582,6 +784,7 @@ class PostgresRecoveryDecisionRepository
                 AND environment_id = $24
                 AND (
                   database_id = $25
+                  OR public_id = $25
                   OR legacy_mongo_id = $25
                   OR id::text = $25
                 )
@@ -754,6 +957,7 @@ class PostgresRecoveryDecisionRepository
                 AND environment_id = $17
                 AND (
                   database_id = $18
+                  OR public_id = $18
                   OR legacy_mongo_id = $18
                   OR id::text = $18
                 )

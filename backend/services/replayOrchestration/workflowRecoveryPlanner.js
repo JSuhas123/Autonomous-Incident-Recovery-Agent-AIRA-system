@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /*
  * ============================================================================
@@ -34,30 +34,20 @@
  *
  * ============================================================================
  */
-const RuntimeRecoveryCheckpoint =
-  require(
-    "../../models/RuntimeRecoveryCheckpoint"
-  );
+const {
+  RuntimeRecoveryCheckpoint,
+  ExecutionRequest,
+  RecoveryVerification,
+  IncidentLifecycle,
+} = require(
+  "../../persistence/operational/workflowRecoveryModels"
+);
 
-const ExecutionRequest =
-  require(
-    "../../models/ExecutionRequest"
-  );
-
-const RecoveryVerification =
-  require(
-    "../../models/RecoveryVerification"
-  );
-
-const IncidentLifecycle =
-  require(
-    "../../models/IncidentLifecycle"
-  );
-
-const WorkflowOutboxEvent =
-  require(
-    "../../models/WorkflowOutboxEvent"
-  );
+const {
+  WorkflowOutboxEvent,
+} = require(
+  "../../persistence/operational/workflowOutboxModels"
+);
 
 const {
   REPLAY_DECISION,
@@ -917,3 +907,4 @@ module.exports =
 module.exports
   .WorkflowRecoveryPlanner =
   WorkflowRecoveryPlanner;
+

@@ -1,490 +1,1566 @@
-/**
+﻿/**
  * INCIDENT DETECTION FLOW TESTS
- * Tests the complete incident detection pipeline:
+ *
+ * Tests:
  * - Signal ingestion and validation
+ * - Incident event persistence
  * - Baseline anomaly detection
  * - Pattern matching against known incidents
  * - Incident tiering and prioritization
  * - Real-time detection accuracy
+ * - Decision trace structure
  */
 
-const mongoose = require('mongoose');
-const { dbService: { connectDatabase, disconnectDatabase } } = require('../../services/infrastructure');
-const IncidentEvent = require('../../models/IncidentEvent');
-const IncidentMemory = require('../../models/IncidentMemory');
-const TenantConfig = require('../../models/TenantConfig');
-const DecisionTrace = require('../../models/DecisionTrace');
+"use strict";
 
-describe('Incident Detection Flow Tests', () => {
-  const TEST_TENANT = 'test-tenant-incident-detection';
+const mongoose =
+  require(
+    "mongoose"
+  );
 
-  beforeAll(async () => {
-    await connectDatabase();
-  });
+const {
+  dbService: {
+    connectDatabase,
+    disconnectDatabase,
+  },
+} =
+  require(
+    "../../services/infrastructure"
+  );
 
-  afterAll(async () => {
-    await disconnectDatabase();
-  });
+const {
+  incidentRepository,
+  incidentEventRepository,
+} = require(
+  "../../persistence/repositories"
+);
 
-  beforeEach(async () => {
-    // Setup test tenant
-    let tenant = await TenantConfig.findOne({ tenantId: TEST_TENANT });
-    if (!tenant) {
-      tenant = new TenantConfig({
-        tenantId: TEST_TENANT,
-        name: 'Incident Detection Test Tenant',
-        apiKeys: [{
-          keyId: 'test-key',
-          keyHash: 'test-hash',
-          secretHash: 'test-secret',
-        }],
-      });
-      await tenant.save();
-    }
-  });
+const {
+  getPostgresPool,
+} =
+  require(
+    "../../persistence/postgres/postgresPool"
+  );
+  
+const {
+  TenantConfig,
+} = require(
+  "../../persistence/operational/identityModels"
+);
 
-  describe('Signal Ingestion and Validation', () => {
-    test('should accept valid incident signals', async () => {
-      const signals = {
-        error_rate: 8.5,
-        response_time: 2400,
-        cpu_usage: 75,
-        memory_usage: 68,
-        disk_usage: 82,
-        active_connections: 450,
-      };
+describe(
+  "Incident Detection Flow Tests",
+  () => {
+    const TEST_TENANT =
+      "test-tenant-incident-detection";
 
-      // Validate signal types
-      expect(typeof signals.error_rate).toBe('number');
-      expect(signals.error_rate).toBeGreaterThan(0);
-      expect(signals.error_rate).toBeLessThan(100);
+    beforeAll(
+      async () => {
+        await connectDatabase();
+      }
+    );
 
-      expect(typeof signals.response_time).toBe('number');
-      expect(signals.response_time).toBeGreaterThan(0);
+    afterAll(
+      async () => {
+        await disconnectDatabase();
+      }
+    );
 
-      console.log('[test] ✓ Valid signals accepted');
-    });
+    beforeEach(
+      async () => {
+        let tenant =
+          await TenantConfig
+            .findOne({
+              tenantId:
+                TEST_TENANT,
+            });
 
-    test('should reject invalid incident signals', async () => {
-      const invalidSignals = [
-        { error_rate: -5 }, // Negative error rate
-        { response_time: 'slow' }, // Non-numeric
-        { cpu_usage: 150 }, // Out of bounds
-        { custom_metric: null }, // Missing required fields
-      ];
+        if (
+          !tenant
+        ) {
+          tenant =
+            new TenantConfig({
+              tenantId:
+                TEST_TENANT,
 
-      invalidSignals.forEach(signal => {
-        const isValid = (
-          typeof signal.error_rate !== 'number' || signal.error_rate < 0 ||
-          typeof signal.response_time !== 'number' ||
-          signal.cpu_usage !== undefined && (signal.cpu_usage < 0 || signal.cpu_usage > 100)
+              name:
+                "Incident Detection Test Tenant",
+
+              apiKeys: [
+                {
+                  keyId:
+                    "test-key",
+
+                  keyHash:
+                    "test-hash",
+
+                  secretHash:
+                    "test-secret",
+                },
+              ],
+            });
+
+          await tenant.save();
+        }
+      }
+    );
+
+    describe(
+      "Signal Ingestion and Validation",
+      () => {
+        test(
+          "should accept valid incident signals",
+          async () => {
+            const signals = {
+              error_rate:
+                8.5,
+
+              response_time:
+                2400,
+
+              cpu_usage:
+                75,
+
+              memory_usage:
+                68,
+
+              disk_usage:
+                82,
+
+              active_connections:
+                450,
+            };
+
+            expect(
+              typeof signals
+                .error_rate
+            ).toBe(
+              "number"
+            );
+
+            expect(
+              signals.error_rate
+            ).toBeGreaterThan(
+              0
+            );
+
+            expect(
+              signals.error_rate
+            ).toBeLessThan(
+              100
+            );
+
+            expect(
+              typeof signals
+                .response_time
+            ).toBe(
+              "number"
+            );
+
+            expect(
+              signals.response_time
+            ).toBeGreaterThan(
+              0
+            );
+          }
         );
 
-        if (Object.keys(signal).length === 0) {
-          expect(isValid).toBe(true); // Should be invalid
-        }
-      });
+        test(
+          "should reject invalid incident signals",
+          async () => {
+            const invalidSignals = [
+              {
+                error_rate:
+                  -5,
+              },
 
-      console.log('[test] ✓ Invalid signals rejected');
-    });
+              {
+                response_time:
+                  "slow",
+              },
 
-    test('should create incident events from signals', async () => {
-      const incidentData = {
-        eventId: `event-${Date.now()}`,
-        tenantId: TEST_TENANT,
-        correlationId: `corr-${Date.now()}`,
-        eventType: 'incident.detected',
-        serviceId: 'api-server',
-        severity: 'high',
-        issue: 'Error rate exceeds threshold',
-        confidenceScore: 0.87,
-        payload: {
-          error_rate: 12,
-          error_rate_baseline: 2,
-          trend: 'increasing',
-        },
-      };
+              {
+                cpu_usage:
+                  150,
+              },
 
-      const event = new IncidentEvent(incidentData);
-      await event.save();
+              {
+                custom_metric:
+                  null,
+              },
+            ];
 
-      const saved = await IncidentEvent.findById(event._id);
-      expect(saved).toBeDefined();
-      expect(saved.severity).toBe('high');
-      expect(saved.status).toBe('pending'); // Default status
-      console.log('[test] ✓ Incident event created from signals');
-    });
-  });
+            invalidSignals
+              .forEach(
+                (
+                  signal
+                ) => {
+                  const invalidErrorRate =
+                    signal.error_rate !==
+                      undefined &&
+                    (
+                      typeof signal
+                        .error_rate !==
+                        "number" ||
+                      signal
+                        .error_rate <
+                        0
+                    );
 
-  describe('Baseline Anomaly Detection', () => {
-    test('should detect signals exceeding baseline thresholds', async () => {
-      const baselines = {
-        error_rate: { normal: 1.5, threshold: 5 },
-        response_time: { normal: 800, threshold: 2000 },
-        cpu_usage: { normal: 45, threshold: 80 },
-      };
+                  const invalidResponseTime =
+                    signal.response_time !==
+                      undefined &&
+                    typeof signal
+                      .response_time !==
+                      "number";
 
-      const currentSignals = {
-        error_rate: 8.2, // 64% above threshold
-        response_time: 2500, // 25% above threshold
-        cpu_usage: 60, // Below threshold
-      };
+                  const invalidCpu =
+                    signal.cpu_usage !==
+                      undefined &&
+                    (
+                      signal.cpu_usage <
+                        0 ||
+                      signal.cpu_usage >
+                        100
+                    );
 
-      const anomalies = [];
-      Object.keys(baselines).forEach(metric => {
-        const current = currentSignals[metric];
-        const baseline = baselines[metric];
-        
-        if (current > baseline.threshold) {
-          anomalies.push({
-            metric,
-            current,
-            threshold: baseline.threshold,
-            deviation: ((current - baseline.normal) / baseline.normal * 100).toFixed(2),
-          });
-        }
-      });
+                  const unsupportedEmptyValue =
+                    Object.values(
+                      signal
+                    ).some(
+                      (
+                        value
+                      ) =>
+                        value ===
+                        null
+                    );
 
-      expect(anomalies.length).toBeGreaterThan(0);
-      expect(anomalies[0].metric).toBe('error_rate');
-      console.log(`[test] ✓ Detected ${anomalies.length} anomalies above baselines`);
-    });
+                  expect(
+                    invalidErrorRate ||
+                    invalidResponseTime ||
+                    invalidCpu ||
+                    unsupportedEmptyValue
+                  ).toBe(
+                    true
+                  );
+                }
+              );
+          }
+        );
 
-    test('should calculate anomaly severity', async () => {
-      const anomalies = [
-        { metric: 'error_rate', current: 25, threshold: 5, deviation: 1200 },
-        { metric: 'latency_p99', current: 6000, threshold: 2000, deviation: 200 },
-        { metric: 'cpu_usage', current: 92, threshold: 80, deviation: 15 },
-      ];
+       test(
+  "should create incident events from signals",
+  async () => {
+    const pool =
+      getPostgresPool();
 
-      anomalies.forEach(anomaly => {
-        let severity = 'LOW';
-        const deviationPercent = anomaly.deviation;
+    const scopeResult =
+      await pool.query(`
+        SELECT
+          o.public_id AS organization_id,
+          e.public_id AS environment_id
+        FROM tenancy.environments e
+        INNER JOIN tenancy.organizations o
+          ON o.id = e.organization_id
+        WHERE
+          o.public_id IS NOT NULL
+          AND e.public_id IS NOT NULL
+        ORDER BY
+          e.created_at ASC
+        LIMIT 1
+      `);
 
-        if (deviationPercent > 500) severity = 'CRITICAL';
-        else if (deviationPercent > 200) severity = 'HIGH';
-        else if (deviationPercent > 100) severity = 'MEDIUM';
+    expect(
+      scopeResult.rows.length
+    ).toBeGreaterThan(
+      0
+    );
 
-        expect(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).toContain(severity);
-      });
+    const organizationId =
+      String(
+        scopeResult
+          .rows[0]
+          .organization_id
+      );
 
-      console.log('[test] ✓ Anomaly severity levels calculated');
-    });
+    const environmentId =
+      String(
+        scopeResult
+          .rows[0]
+          .environment_id
+      );
 
-    test('should detect trend in metrics (increasing/decreasing)', async () => {
-      const timeSeries = [
-        { timestamp: Date.now() - 300000, error_rate: 2.1 }, // 5 min ago
-        { timestamp: Date.now() - 240000, error_rate: 3.5 }, // 4 min ago
-        { timestamp: Date.now() - 180000, error_rate: 5.2 }, // 3 min ago
-        { timestamp: Date.now() - 120000, error_rate: 7.8 }, // 2 min ago
-        { timestamp: Date.now() - 60000, error_rate: 10.2 }, // 1 min ago
-        { timestamp: Date.now(), error_rate: 12.5 }, // now
-      ];
+    const incident =
+      await incidentRepository
+        .create({
+          organizationId,
 
-      // Calculate trend
-      const trend = timeSeries[timeSeries.length - 1].error_rate > timeSeries[0].error_rate 
-        ? 'INCREASING' 
-        : 'DECREASING';
+          environmentId,
 
-      // Calculate velocity (rate of change)
-      const timeDiff = (timeSeries[timeSeries.length - 1].timestamp - timeSeries[0].timestamp) / 1000;
-      const valueDiff = timeSeries[timeSeries.length - 1].error_rate - timeSeries[0].error_rate;
-      const velocity = valueDiff / (timeDiff / 60); // Change per minute
+          tenantId:
+            TEST_TENANT,
 
-      expect(trend).toBe('INCREASING');
-      expect(velocity).toBeGreaterThan(0);
-      console.log(`[test] ✓ Trend detected: ${trend} at ${velocity.toFixed(2)} per minute`);
-    });
-  });
+          serviceId:
+            "api-server",
 
-  describe('Pattern Matching Against Known Incidents', () => {
-    test('should match current incident to historical patterns', async () => {
-      const historicalPatterns = [
-        {
-          patternId: 'transient-timeout',
-          signature: { error_rate: 'high', duration: 'short', affected_services: 'single' },
-          successRate: 0.92,
-          commonAction: 'RETRY',
-        },
-        {
-          patternId: 'cascading-failure',
-          signature: { error_rate: 'very_high', affected_services: 'multiple', propagation: 'rapid' },
-          successRate: 0.78,
-          commonAction: 'CIRCUIT_BREAK',
-        },
-        {
-          patternId: 'resource-exhaustion',
-          signature: { cpu_usage: 'high', memory_usage: 'high', disk_usage: 'high' },
-          successRate: 0.85,
-          commonAction: 'SCALE_UP',
-        },
-      ];
+          fingerprint:
+            `incident-event-test-${Date.now()}`,
 
-      const currentIncident = {
-        error_rate: 18, // high
-        duration: 45, // short
-        affected_services: ['api-1'], // single
-        cpu_usage: 72,
-        memory_usage: 60,
-      };
+          title:
+            "High CPU utilization",
 
-      // Find best matching pattern
-      let bestMatch = null;
-      let bestScore = 0;
+          description:
+            "CPU exceeded expected baseline",
 
-      historicalPatterns.forEach(pattern => {
-        let matchScore = 0;
-        const signature = pattern.signature;
+          severity:
+            "warning",
 
-        if (signature.error_rate === 'high' && currentIncident.error_rate > 10) matchScore += 0.33;
-        if (signature.duration === 'short' && currentIncident.duration < 60) matchScore += 0.33;
-        if (signature.affected_services === 'single' && currentIncident.affected_services.length === 1) matchScore += 0.34;
+          status:
+            "open",
 
-        if (matchScore > bestScore) {
-          bestScore = matchScore;
-          bestMatch = pattern;
-        }
-      });
+          startedAt:
+            new Date(),
 
-      expect(bestMatch).toBeDefined();
-      expect(bestMatch.patternId).toBe('transient-timeout');
-      expect(bestMatch.commonAction).toBe('RETRY');
-      console.log(`[test] ✓ Matched pattern: ${bestMatch.patternId} (${(bestScore * 100).toFixed(0)}% confidence)`);
-    });
+          detectedAt:
+            new Date(),
 
-    test('should handle novel incidents not matching known patterns', async () => {
-      const knownPatterns = ['error_spike', 'latency_degradation', 'resource_exhaustion'];
+          metadata: {
+            source:
+              "incident-detection-flow-test",
+          },
+        });
 
-      const novelIncident = {
-        metric_1: 5,
-        metric_2: 8,
-        custom_behavior: 'unexpected',
-      };
+    expect(
+      incident
+    ).toBeTruthy();
 
-      // Try to match
-      let matchedPattern = null;
-      knownPatterns.forEach(pattern => {
-        if (pattern === 'error_spike' && novelIncident.metric_1 && novelIncident.metric_1 > 10) {
-          matchedPattern = pattern;
-        }
-        // etc.
-      });
+    expect(
+      incident._id
+    ).toBeTruthy();
 
-      // Novel incident - no match
-      expect(matchedPattern).toBeNull();
+    const eventId =
+      `incident-event-${Date.now()}`;
 
-      // Should apply conservative default action
-      const defaultAction = 'ALERT'; // Safe default for unknown patterns
-      expect(defaultAction).toBe('ALERT');
-      console.log('[test] ✓ Novel incident handled with default safety action');
-    });
-  });
+    const event =
+      await incidentEventRepository
+        .create({
+          organizationId,
 
-  describe('Incident Tiering and Prioritization', () => {
-    test('should tier incidents by severity', async () => {
-      const incidents = [
-        {
-          id: 'inc-1',
-          error_rate: 35,
-          affected_services: 5,
-          duration: 180,
-          name: 'Severe cascading failure',
-        },
-        {
-          id: 'inc-2',
-          error_rate: 8,
-          affected_services: 1,
-          duration: 30,
-          name: 'Brief service timeout',
-        },
-        {
-          id: 'inc-3',
-          error_rate: 20,
-          affected_services: 3,
-          duration: 180,
-          name: 'Moderate partial outage',
-        },
-      ];
+          environmentId,
 
-      // Tier incidents
-      const tieredIncidents = incidents.map(incident => {
-        let tier = 'TIER_4'; // Low priority
-        let severityScore = 0;
+          incidentId:
+            incident._id,
 
-        if (incident.error_rate > 20) severityScore += 3;
-        else if (incident.error_rate > 10) severityScore += 2;
-        else severityScore += 1;
+          serviceId:
+            "api-server",
 
-        if (incident.affected_services > 3) severityScore += 3;
-        else if (incident.affected_services > 1) severityScore += 2;
-        else severityScore += 1;
+          eventId,
 
-        if (incident.duration > 120) severityScore += 2;
+          eventType:
+            "signal_received",
 
-        if (severityScore >= 7) tier = 'TIER_1'; // Critical
-        else if (severityScore >= 5) tier = 'TIER_2'; // High
-        else if (severityScore >= 3) tier = 'TIER_3'; // Medium
+          source:
+            "test",
 
-        return { ...incident, tier, severityScore };
-      });
+          severity:
+            "warning",
 
-      // Verify tiering
-      expect(tieredIncidents[0].tier).toBe('TIER_1'); // Severe
-      expect(tieredIncidents[1].tier).toBe('TIER_4'); // Low
-      expect(tieredIncidents[2].tier).toBe('TIER_2'); // Moderate→High
+          status:
+            "pending",
 
-      // Sort by priority
-      const prioritized = tieredIncidents.sort((a, b) => {
-        const tierValues = { TIER_1: 4, TIER_2: 3, TIER_3: 2, TIER_4: 1 };
-        return tierValues[b.tier] - tierValues[a.tier];
-      });
+          occurredAt:
+            new Date(),
 
-      expect(prioritized[0].id).toBe('inc-1'); // High-sev incident first
-      console.log('[test] ✓ Incidents tiered and prioritized correctly');
-    });
+          payload: {
+            signalType:
+              "cpu_threshold",
 
-    test('should assign action recommendations by tier', async () => {
-      const tiers = {
-        TIER_1: { autoExecute: true, requiresApproval: false, action: 'IMMEDIATE' },
-        TIER_2: { autoExecute: false, requiresApproval: true, action: 'MONITOR_AND_DECIDE' },
-        TIER_3: { autoExecute: false, requiresApproval: false, action: 'ALERT' },
-        TIER_4: { autoExecute: false, requiresApproval: false, action: 'LOG_ONLY' },
-      };
+            value:
+              95,
 
-      Object.entries(tiers).forEach(([tier, config]) => {
-        expect(config.action).toBeDefined();
-        expect(['IMMEDIATE', 'MONITOR_AND_DECIDE', 'ALERT', 'LOG_ONLY']).toContain(config.action);
-      });
+            threshold:
+              80,
+          },
 
-      console.log('[test] ✓ Action recommendations assigned by tier');
-    });
-  });
+          metadata: {
+            test:
+              true,
+          },
+        });
 
-  describe('Real-Time Detection Accuracy', () => {
-    test('should detect incidents within acceptable latency', async () => {
-      const detectionStartTime = Date.now();
+    expect(
+      event
+    ).toBeTruthy();
 
-      // Simulate detection pipeline
-      const signal = { error_rate: 15, timestamp: Date.now() };
-      
-      // 1. Validate (1ms)
-      const validation = Date.now() - detectionStartTime;
-      
-      // 2. Analyze anomaly (5ms)
-      const analysis = Date.now() - detectionStartTime;
-      
-      // 3. Pattern match (10ms)
-      const matching = Date.now() - detectionStartTime;
-      
-      // 4. Tier and recommend (5ms)
-      const tiering = Date.now() - detectionStartTime;
+    expect(
+      event.eventId
+    ).toBe(
+      eventId
+    );
 
-      const totalLatency = Date.now() - detectionStartTime;
+    expect(
+      String(
+        event.incidentId
+      )
+    ).toBe(
+      String(
+        incident._id
+      )
+    );
+const history =
+  await incidentEventRepository
+    .listForIncident(
+      {
+        organizationId,
+        environmentId,
+      },
+      incident._id,
+      20
+    );
+    expect(
+      Array.isArray(
+        history
+      )
+    ).toBe(
+      true
+    );
 
-      // Detection should complete in < 100ms
-      expect(totalLatency).toBeLessThan(100);
-      console.log(`[test] ✓ Detection completed in ${totalLatency}ms (target: <100ms)`);
-    });
-
-    test('should handle high volume of signals without degradation', async () => {
-      const signalVolume = 1000;
-      const startTime = Date.now();
-
-      // Simulate processing 1000 signals
-      for (let i = 0; i < signalVolume; i++) {
-        const signal = {
-          error_rate: Math.random() * 20,
-          latency: Math.random() * 3000,
-          timestamp: Date.now(),
-        };
-
-        // Simple threshold check
-        const isAnomaly = signal.error_rate > 5 || signal.latency > 2000;
+    expect(
+      history.some(
+        (
+          item
+        ) =>
+          item.eventId ===
+          eventId
+      )
+    ).toBe(
+      true
+    );
+  }
+);
       }
+    );
 
-      const processingTime = Date.now() - startTime;
-      const throughput = (signalVolume / processingTime) * 1000; // signals per second
+    describe(
+      "Baseline Anomaly Detection",
+      () => {
+        test(
+          "should detect signals exceeding baseline thresholds",
+          async () => {
+            const baselines = {
+              error_rate: {
+                normal:
+                  1.5,
 
-      expect(throughput).toBeGreaterThan(100); // At least 100 signals/sec
-      console.log(`[test] ✓ Processed ${signalVolume} signals in ${processingTime}ms (${throughput.toFixed(0)} sig/sec)`);
-    });
+                threshold:
+                  5,
+              },
 
-    test('should maintain detection accuracy with signal variance', async () => {
-      const baselineMetric = 50; // Baseline CPU usage
-      const threshold = 80; // Alert threshold
-      
-      const testCases = [
-        { value: 52, shouldAlert: false }, // Normal variation
-        { value: 78, shouldAlert: false }, // Close but under
-        { value: 81, shouldAlert: true }, // Just over
-        { value: 95, shouldAlert: true }, // Clearly over
-      ];
+              response_time: {
+                normal:
+                  800,
 
-      const accuracy = testCases.filter(test => {
-        const alertTriggered = test.value > threshold;
-        return alertTriggered === test.shouldAlert;
-      }).length / testCases.length;
+                threshold:
+                  2000,
+              },
 
-      expect(accuracy).toBe(1.0); // 100% accuracy
-      console.log(`[test] ✓ Detection accuracy: ${(accuracy * 100).toFixed(0)}%`);
-    });
-  });
+              cpu_usage: {
+                normal:
+                  45,
 
-  describe('Decision Trace Creation', () => {
-    test('should create detailed decision trace for each incident detection', async () => {
-      const detectionTrace = {
-        tenantId: TEST_TENANT,
-        correlationId: `trace-${Date.now()}`,
-        inputs: {
-          signals: {
-            errorRate: 12,
-            responseTime: 2500,
-            affectedServices: ['api-1', 'api-2'],
-          },
-          severity: 'HIGH',
-          confidence: 0.87,
-        },
-        reasoning: {
-          hypothesis: 'Cascading failure from load spike',
-          evidenceFor: [
-            'Error rate increased 5x in 2 minutes',
-            'Multiple services affected simultaneously',
-            'Latency correlates with error rate increase',
-          ],
-          evidenceAgainst: [
-            'CPU usage still moderate',
-            'Recent deployments were rolled back',
-          ],
-        },
-        alternatives: [
-          {
-            action: 'RESTART_SERVICE',
-            riskScore: 0.4,
-            expectedSuccess: 0.65,
-            status: 'REJECTED',
-          },
-          {
-            action: 'SCALE_UP',
-            riskScore: 0.2,
-            expectedSuccess: 0.85,
-            status: 'CHOSEN',
-          },
-        ],
-        decision: {
-          action: 'SCALE_UP',
-          confidence: 0.85,
-          reasoning: 'Based on pattern match with previous similar incidents',
-        },
-      };
+                threshold:
+                  80,
+              },
+            };
 
-      // Verify trace structure
-      expect(detectionTrace.inputs).toBeDefined();
-      expect(detectionTrace.reasoning).toBeDefined();
-      expect(detectionTrace.alternatives).toBeDefined();
-      expect(detectionTrace.decision).toBeDefined();
-      expect(detectionTrace.decision.action).toBe('SCALE_UP');
+            const currentSignals = {
+              error_rate:
+                8.2,
 
-      console.log('[test] ✓ Decision trace created with full reasoning');
-    });
-  });
-});
+              response_time:
+                2500,
+
+              cpu_usage:
+                60,
+            };
+
+            const anomalies =
+              [];
+
+            Object.keys(
+              baselines
+            ).forEach(
+              (
+                metric
+              ) => {
+                const current =
+                  currentSignals[
+                    metric
+                  ];
+
+                const baseline =
+                  baselines[
+                    metric
+                  ];
+
+                if (
+                  current >
+                  baseline.threshold
+                ) {
+                  anomalies.push({
+                    metric,
+
+                    current,
+
+                    threshold:
+                      baseline
+                        .threshold,
+
+                    deviation:
+                      (
+                        (
+                          current -
+                          baseline
+                            .normal
+                        ) /
+                        baseline
+                          .normal *
+                        100
+                      ).toFixed(
+                        2
+                      ),
+                  });
+                }
+              }
+            );
+
+            expect(
+              anomalies.length
+            ).toBeGreaterThan(
+              0
+            );
+
+            expect(
+              anomalies[0]
+                .metric
+            ).toBe(
+              "error_rate"
+            );
+          }
+        );
+
+        test(
+          "should calculate anomaly severity",
+          async () => {
+            const anomalies = [
+              {
+                metric:
+                  "error_rate",
+
+                current:
+                  25,
+
+                threshold:
+                  5,
+
+                deviation:
+                  1200,
+              },
+
+              {
+                metric:
+                  "latency_p99",
+
+                current:
+                  6000,
+
+                threshold:
+                  2000,
+
+                deviation:
+                  200,
+              },
+
+              {
+                metric:
+                  "cpu_usage",
+
+                current:
+                  92,
+
+                threshold:
+                  80,
+
+                deviation:
+                  15,
+              },
+            ];
+
+            anomalies.forEach(
+              (
+                anomaly
+              ) => {
+                let severity =
+                  "LOW";
+
+                const deviationPercent =
+                  anomaly
+                    .deviation;
+
+                if (
+                  deviationPercent >
+                  500
+                ) {
+                  severity =
+                    "CRITICAL";
+                } else if (
+                  deviationPercent >
+                  200
+                ) {
+                  severity =
+                    "HIGH";
+                } else if (
+                  deviationPercent >
+                  100
+                ) {
+                  severity =
+                    "MEDIUM";
+                }
+
+                expect(
+                  [
+                    "LOW",
+                    "MEDIUM",
+                    "HIGH",
+                    "CRITICAL",
+                  ]
+                ).toContain(
+                  severity
+                );
+              }
+            );
+          }
+        );
+
+        test(
+          "should detect trend in metrics",
+          async () => {
+            const timeSeries = [
+              {
+                timestamp:
+                  Date.now() -
+                  300000,
+
+                error_rate:
+                  2.1,
+              },
+
+              {
+                timestamp:
+                  Date.now() -
+                  240000,
+
+                error_rate:
+                  3.5,
+              },
+
+              {
+                timestamp:
+                  Date.now() -
+                  180000,
+
+                error_rate:
+                  5.2,
+              },
+
+              {
+                timestamp:
+                  Date.now() -
+                  120000,
+
+                error_rate:
+                  7.8,
+              },
+
+              {
+                timestamp:
+                  Date.now() -
+                  60000,
+
+                error_rate:
+                  10.2,
+              },
+
+              {
+                timestamp:
+                  Date.now(),
+
+                error_rate:
+                  12.5,
+              },
+            ];
+
+            const first =
+              timeSeries[0];
+
+            const last =
+              timeSeries[
+                timeSeries.length -
+                1
+              ];
+
+            const trend =
+              last.error_rate >
+              first.error_rate
+                ? "INCREASING"
+                : "DECREASING";
+
+            const timeDiff =
+              (
+                last.timestamp -
+                first.timestamp
+              ) /
+              1000;
+
+            const valueDiff =
+              last.error_rate -
+              first.error_rate;
+
+            const velocity =
+              valueDiff /
+              (
+                timeDiff /
+                60
+              );
+
+            expect(
+              trend
+            ).toBe(
+              "INCREASING"
+            );
+
+            expect(
+              velocity
+            ).toBeGreaterThan(
+              0
+            );
+          }
+        );
+      }
+    );
+
+    describe(
+      "Pattern Matching Against Known Incidents",
+      () => {
+        test(
+          "should match current incident to historical patterns",
+          async () => {
+            const historicalPatterns = [
+              {
+                patternId:
+                  "transient-timeout",
+
+                signature: {
+                  error_rate:
+                    "high",
+
+                  duration:
+                    "short",
+
+                  affected_services:
+                    "single",
+                },
+
+                successRate:
+                  0.92,
+
+                commonAction:
+                  "RETRY",
+              },
+
+              {
+                patternId:
+                  "cascading-failure",
+
+                signature: {
+                  error_rate:
+                    "very_high",
+
+                  affected_services:
+                    "multiple",
+
+                  propagation:
+                    "rapid",
+                },
+
+                successRate:
+                  0.78,
+
+                commonAction:
+                  "CIRCUIT_BREAK",
+              },
+
+              {
+                patternId:
+                  "resource-exhaustion",
+
+                signature: {
+                  cpu_usage:
+                    "high",
+
+                  memory_usage:
+                    "high",
+
+                  disk_usage:
+                    "high",
+                },
+
+                successRate:
+                  0.85,
+
+                commonAction:
+                  "SCALE_UP",
+              },
+            ];
+
+            const currentIncident = {
+              error_rate:
+                18,
+
+              duration:
+                45,
+
+              affected_services: [
+                "api-1",
+              ],
+
+              cpu_usage:
+                72,
+
+              memory_usage:
+                60,
+            };
+
+            let bestMatch =
+              null;
+
+            let bestScore =
+              0;
+
+            historicalPatterns
+              .forEach(
+                (
+                  pattern
+                ) => {
+                  let matchScore =
+                    0;
+
+                  const signature =
+                    pattern
+                      .signature;
+
+                  if (
+                    signature
+                      .error_rate ===
+                      "high" &&
+                    currentIncident
+                      .error_rate >
+                      10
+                  ) {
+                    matchScore +=
+                      0.33;
+                  }
+
+                  if (
+                    signature
+                      .duration ===
+                      "short" &&
+                    currentIncident
+                      .duration <
+                      60
+                  ) {
+                    matchScore +=
+                      0.33;
+                  }
+
+                  if (
+                    signature
+                      .affected_services ===
+                      "single" &&
+                    currentIncident
+                      .affected_services
+                      .length ===
+                      1
+                  ) {
+                    matchScore +=
+                      0.34;
+                  }
+
+                  if (
+                    matchScore >
+                    bestScore
+                  ) {
+                    bestScore =
+                      matchScore;
+
+                    bestMatch =
+                      pattern;
+                  }
+                }
+              );
+
+            expect(
+              bestMatch
+            ).toBeDefined();
+
+            expect(
+              bestMatch
+                .patternId
+            ).toBe(
+              "transient-timeout"
+            );
+
+            expect(
+              bestMatch
+                .commonAction
+            ).toBe(
+              "RETRY"
+            );
+          }
+        );
+
+        test(
+          "should handle novel incidents not matching known patterns",
+          async () => {
+            const knownPatterns = [
+              "error_spike",
+              "latency_degradation",
+              "resource_exhaustion",
+            ];
+
+            const novelIncident = {
+              metric_1:
+                5,
+
+              metric_2:
+                8,
+
+              custom_behavior:
+                "unexpected",
+            };
+
+            let matchedPattern =
+              null;
+
+            knownPatterns
+              .forEach(
+                (
+                  pattern
+                ) => {
+                  if (
+                    pattern ===
+                      "error_spike" &&
+                    novelIncident
+                      .metric_1 >
+                      10
+                  ) {
+                    matchedPattern =
+                      pattern;
+                  }
+                }
+              );
+
+            expect(
+              matchedPattern
+            ).toBeNull();
+
+            const defaultAction =
+              "ALERT";
+
+            expect(
+              defaultAction
+            ).toBe(
+              "ALERT"
+            );
+          }
+        );
+      }
+    );
+
+    describe(
+      "Incident Tiering and Prioritization",
+      () => {
+        test(
+          "should tier incidents by severity",
+          async () => {
+            const incidents = [
+              {
+                id:
+                  "inc-1",
+
+                error_rate:
+                  35,
+
+                affected_services:
+                  5,
+
+                duration:
+                  180,
+
+                name:
+                  "Severe cascading failure",
+              },
+
+              {
+                id:
+                  "inc-2",
+
+                error_rate:
+                  8,
+
+                affected_services:
+                  1,
+
+                duration:
+                  30,
+
+                name:
+                  "Brief service timeout",
+              },
+
+              {
+                id:
+                  "inc-3",
+
+                error_rate:
+                  20,
+
+                affected_services:
+                  3,
+
+                duration:
+                  180,
+
+                name:
+                  "Moderate partial outage",
+              },
+            ];
+
+            const tieredIncidents =
+              incidents.map(
+                (
+                  incident
+                ) => {
+                  let tier =
+                    "TIER_4";
+
+                  let severityScore =
+                    0;
+
+                  if (
+                    incident.error_rate >
+                    20
+                  ) {
+                    severityScore +=
+                      3;
+                  } else if (
+                    incident.error_rate >
+                    10
+                  ) {
+                    severityScore +=
+                      2;
+                  } else {
+                    severityScore +=
+                      1;
+                  }
+
+                  if (
+                    incident
+                      .affected_services >
+                    3
+                  ) {
+                    severityScore +=
+                      3;
+                  } else if (
+                    incident
+                      .affected_services >
+                    1
+                  ) {
+                    severityScore +=
+                      2;
+                  } else {
+                    severityScore +=
+                      1;
+                  }
+
+                  if (
+                    incident.duration >
+                    120
+                  ) {
+                    severityScore +=
+                      2;
+                  }
+
+                  if (
+                    severityScore >=
+                    7
+                  ) {
+                    tier =
+                      "TIER_1";
+                  } else if (
+                    severityScore >=
+                    5
+                  ) {
+                    tier =
+                      "TIER_2";
+                  } else if (
+                    severityScore >=
+                    3
+                  ) {
+                    tier =
+                      "TIER_3";
+                  }
+
+                  return {
+                    ...incident,
+
+                    tier,
+
+                    severityScore,
+                  };
+                }
+              );
+
+            expect(
+              tieredIncidents[0]
+                .tier
+            ).toBe(
+              "TIER_1"
+            );
+
+            expect(
+              tieredIncidents[1]
+                .tier
+            ).toBe(
+              "TIER_4"
+            );
+
+            expect(
+              tieredIncidents[2]
+                .tier
+            ).toBe(
+              "TIER_2"
+            );
+
+            const prioritized =
+              tieredIncidents
+                .sort(
+                  (
+                    left,
+                    right
+                  ) => {
+                    const tierValues = {
+                      TIER_1:
+                        4,
+
+                      TIER_2:
+                        3,
+
+                      TIER_3:
+                        2,
+
+                      TIER_4:
+                        1,
+                    };
+
+                    return (
+                      tierValues[
+                        right.tier
+                      ] -
+                      tierValues[
+                        left.tier
+                      ]
+                    );
+                  }
+                );
+
+            expect(
+              prioritized[0]
+                .id
+            ).toBe(
+              "inc-1"
+            );
+          }
+        );
+
+        test(
+          "should assign action recommendations by tier",
+          async () => {
+            const tiers = {
+              TIER_1: {
+                autoExecute:
+                  true,
+
+                requiresApproval:
+                  false,
+
+                action:
+                  "IMMEDIATE",
+              },
+
+              TIER_2: {
+                autoExecute:
+                  false,
+
+                requiresApproval:
+                  true,
+
+                action:
+                  "MONITOR_AND_DECIDE",
+              },
+
+              TIER_3: {
+                autoExecute:
+                  false,
+
+                requiresApproval:
+                  false,
+
+                action:
+                  "ALERT",
+              },
+
+              TIER_4: {
+                autoExecute:
+                  false,
+
+                requiresApproval:
+                  false,
+
+                action:
+                  "LOG_ONLY",
+              },
+            };
+
+            Object.values(
+              tiers
+            ).forEach(
+              (
+                config
+              ) => {
+                expect(
+                  [
+                    "IMMEDIATE",
+                    "MONITOR_AND_DECIDE",
+                    "ALERT",
+                    "LOG_ONLY",
+                  ]
+                ).toContain(
+                  config.action
+                );
+              }
+            );
+          }
+        );
+      }
+    );
+
+    describe(
+      "Real-Time Detection Accuracy",
+      () => {
+        test(
+          "should detect incidents within acceptable latency",
+          async () => {
+            const detectionStartTime =
+              Date.now();
+
+            const signal = {
+              error_rate:
+                15,
+
+              timestamp:
+                Date.now(),
+            };
+
+            expect(
+              signal.error_rate
+            ).toBeGreaterThan(
+              5
+            );
+
+            const totalLatency =
+              Date.now() -
+              detectionStartTime;
+
+            expect(
+              totalLatency
+            ).toBeLessThan(
+              100
+            );
+          }
+        );
+
+        test(
+          "should handle high volume of signals without degradation",
+          async () => {
+            const signalVolume =
+              1000;
+
+            const startTime =
+              Date.now();
+
+            let anomalyCount =
+              0;
+
+            for (
+              let index =
+                0;
+              index <
+                signalVolume;
+              index +=
+                1
+            ) {
+              const signal = {
+                error_rate:
+                  Math.random() *
+                  20,
+
+                latency:
+                  Math.random() *
+                  3000,
+
+                timestamp:
+                  Date.now(),
+              };
+
+              if (
+                signal.error_rate >
+                  5 ||
+                signal.latency >
+                  2000
+              ) {
+                anomalyCount +=
+                  1;
+              }
+            }
+
+            const processingTime =
+              Math.max(
+                Date.now() -
+                  startTime,
+                1
+              );
+
+            const throughput =
+              (
+                signalVolume /
+                processingTime
+              ) *
+              1000;
+
+            expect(
+              throughput
+            ).toBeGreaterThan(
+              100
+            );
+
+            expect(
+              anomalyCount
+            ).toBeGreaterThanOrEqual(
+              0
+            );
+          }
+        );
+
+        test(
+          "should maintain detection accuracy with signal variance",
+          async () => {
+            const threshold =
+              80;
+
+            const testCases = [
+              {
+                value:
+                  52,
+
+                shouldAlert:
+                  false,
+              },
+
+              {
+                value:
+                  78,
+
+                shouldAlert:
+                  false,
+              },
+
+              {
+                value:
+                  81,
+
+                shouldAlert:
+                  true,
+              },
+
+              {
+                value:
+                  95,
+
+                shouldAlert:
+                  true,
+              },
+            ];
+
+            const accuracy =
+              testCases.filter(
+                (
+                  test
+                ) => {
+                  const alertTriggered =
+                    test.value >
+                    threshold;
+
+                  return (
+                    alertTriggered ===
+                    test.shouldAlert
+                  );
+                }
+              ).length /
+              testCases.length;
+
+            expect(
+              accuracy
+            ).toBe(
+              1
+            );
+          }
+        );
+      }
+    );
+
+    describe(
+      "Decision Trace Creation",
+      () => {
+        test(
+          "should create detailed decision trace for each incident detection",
+          async () => {
+            const detectionTrace = {
+              tenantId:
+                TEST_TENANT,
+
+              correlationId:
+                `trace-${Date.now()}`,
+
+              inputs: {
+                signals: {
+                  errorRate:
+                    12,
+
+                  responseTime:
+                    2500,
+
+                  affectedServices: [
+                    "api-1",
+                    "api-2",
+                  ],
+                },
+
+                severity:
+                  "HIGH",
+
+                confidence:
+                  0.87,
+              },
+
+              reasoning: {
+                hypothesis:
+                  "Cascading failure from load spike",
+
+                evidenceFor: [
+                  "Error rate increased 5x in 2 minutes",
+                  "Multiple services affected simultaneously",
+                  "Latency correlates with error rate increase",
+                ],
+
+                evidenceAgainst: [
+                  "CPU usage still moderate",
+                  "Recent deployments were rolled back",
+                ],
+              },
+
+              alternatives: [
+                {
+                  action:
+                    "RESTART_SERVICE",
+
+                  riskScore:
+                    0.4,
+
+                  expectedSuccess:
+                    0.65,
+
+                  status:
+                    "REJECTED",
+                },
+
+                {
+                  action:
+                    "SCALE_UP",
+
+                  riskScore:
+                    0.2,
+
+                  expectedSuccess:
+                    0.85,
+
+                  status:
+                    "CHOSEN",
+                },
+              ],
+
+              decision: {
+                action:
+                  "SCALE_UP",
+
+                confidence:
+                  0.85,
+
+                reasoning:
+                  "Based on pattern match with previous similar incidents",
+              },
+            };
+
+            expect(
+              detectionTrace.inputs
+            ).toBeDefined();
+
+            expect(
+              detectionTrace.reasoning
+            ).toBeDefined();
+
+            expect(
+              detectionTrace.alternatives
+            ).toBeDefined();
+
+            expect(
+              detectionTrace.decision
+            ).toBeDefined();
+
+            expect(
+              detectionTrace
+                .decision
+                .action
+            ).toBe(
+              "SCALE_UP"
+            );
+          }
+        );
+      }
+    );
+  }
+);
+
+
+
+

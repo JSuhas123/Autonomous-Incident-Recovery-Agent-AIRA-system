@@ -1,3 +1,12 @@
+"use strict";
+
+const {
+  FailedMessage,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
+
 /**
  * Retry Handler Service
  * Implements exponential backoff strategy for failed messages
@@ -9,7 +18,6 @@
  * - Prevents retry storms and infinite loops
  */
 
-const FailedMessage = require('../../models/FailedMessage');
 const crypto = require('crypto');
 
 // Circuit breaker state tracking per tenant

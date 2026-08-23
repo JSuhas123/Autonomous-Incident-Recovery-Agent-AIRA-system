@@ -1,7 +1,12 @@
-'use strict';
+﻿"use strict";
 
+const {
+  RunbookExecution,
+} = require(
+  "../persistence/operational/legacyModels"
+);
 /**
- * Runbook Routes — Phase M
+ * Runbook Routes â€” Phase M
  *
  * All routes enforce:
  *   - Tenant isolation: every write scoped to tenantId from req.params
@@ -17,8 +22,6 @@ const { getRunbookRegistry, RegistryError } = require('../runbooks/registry/runb
 const { getRunbookExecutionEngine }          = require('../runbooks/execution/runbookExecutionEngine');
 const { getActionHandlerRegistry }           = require('../runbooks/actions/actionHandlerRegistry');
 const { VALIDATION_PURPOSE }                 = require('../runbooks/validators/runbookValidator');
-const RunbookExecution                       = require('../models/RunbookExecution');
-
 function registry() { return getRunbookRegistry(); }
 function engine()   { return getRunbookExecutionEngine(); }
 
@@ -51,13 +54,13 @@ function handleRegistryError(err, res) {
  * List all runbooks for a tenant
  * Query params: incidentType, enabled
  */
-// ── Capabilities ───────────────────────────────────────────────────────────
+// â”€â”€ Capabilities â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/capabilities', (req, res) => {
   const report = getActionHandlerRegistry().report();
   res.json({ capabilities: report, count: report.length });
 });
 
-// ── List ───────────────────────────────────────────────────────────────────
+// â”€â”€ List â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/', async (req, res, next) => {
   try {
     const { tenantId } = req.params;
@@ -67,7 +70,7 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Get by ID ──────────────────────────────────────────────────────────────
+// â”€â”€ Get by ID â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.get('/executions/:executionId', async (req, res, next) => {
   try {
     const { tenantId, executionId } = req.params;
@@ -108,7 +111,7 @@ router.get('/:runbookId', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Import / Register ──────────────────────────────────────────────────────
+// â”€â”€ Import / Register â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post('/import', async (req, res, next) => {
   try {
     const { tenantId }   = req.params;
@@ -135,7 +138,7 @@ router.post('/register', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Lifecycle transitions ──────────────────────────────────────────────────
+// â”€â”€ Lifecycle transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post('/:runbookId/:semver/validate', async (req, res, next) => {
   try {
     const { tenantId, runbookId, semver } = req.params;
@@ -202,7 +205,7 @@ router.post('/:runbookId/:semver/version', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// ── Execution ──────────────────────────────────────────────────────────────
+// â”€â”€ Execution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 router.post('/:runbookId/:semver/execute', async (req, res, next) => {
   try {
     const { tenantId, runbookId, semver } = req.params;
@@ -225,3 +228,4 @@ router.post('/:runbookId/:semver/execute', async (req, res, next) => {
 });
 
 module.exports = router;
+

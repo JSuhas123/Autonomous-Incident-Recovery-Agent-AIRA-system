@@ -1,8 +1,13 @@
 "use strict";
 
-const crypto = require("crypto");
+const {
+  Monitor,
+} =
+  require(
+    "../../persistence/operational/legacyModels"
+  );
 
-const Monitor = require("../../models/Monitor");
+const crypto = require("crypto");
 
 const {
   executeCheck,

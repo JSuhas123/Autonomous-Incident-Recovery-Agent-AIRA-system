@@ -1,17 +1,11 @@
 "use strict";
 
 const {
-  Incident,
+  incidentRepository,
+  signalRepository,
 } =
   require(
-    "../../models/Incident"
-  );
-
-const {
-  Signal,
-} =
-  require(
-    "../../models/Signal"
+    "../../persistence/repositories"
   );
 
 const incidentImpactService =
@@ -62,121 +56,129 @@ class IncidentEnrichmentService {
           signals
         );
 
-    const update = {
-      impactAnalysis,
+    const now =
+      new Date();
 
-      /*
-       * Human-readable incident impact.
-       */
-      impact:
-        this
-          .buildImpactDescription(
-            impactAnalysis
-          ),
+    const impactDescription =
+      this
+        .buildImpactDescription(
+          impactAnalysis
+        );
 
-      lastObservedAt:
-        incident
-          .lastObservedAt ||
-        new Date(),
-    };
+    incident.impactAnalysis =
+      impactAnalysis;
 
-    await Incident
-      .updateOne(
-        {
-          _id:
-            incident._id,
+    incident.impact =
+      impactDescription;
 
-          organizationId:
-            incident
-              .organizationId,
+    incident.lastObservedAt =
+      incident
+        .lastObservedAt ||
+      now;
 
-          environmentId:
-            incident
-              .environmentId,
-        },
-        {
-          $set:
-            update,
+    if (
+      !Array.isArray(
+        incident.timeline
+      )
+    ) {
+      incident.timeline =
+        [];
+    }
 
-          $push: {
-            timeline: {
-              occurredAt:
-                new Date(),
+    incident.timeline.push({
+      occurredAt:
+        now,
 
-              eventType:
-                "impact_analyzed",
+      eventType:
+        "impact_analyzed",
 
-              actor:
-                "system",
+      actor:
+        "system",
 
-              description:
-                this
-                  .buildImpactDescription(
-                    impactAnalysis
-                  ),
+      description:
+        impactDescription,
 
-              metadata: {
-                affectedServiceCount:
-                  impactAnalysis
-                    .summary
-                    .affectedServiceCount,
+      metadata: {
+        affectedServiceCount:
+          impactAnalysis
+            .summary
+            .affectedServiceCount,
 
-                affectedResourceCount:
-                  impactAnalysis
-                    .summary
-                    .affectedResourceCount,
+        affectedResourceCount:
+          impactAnalysis
+            .summary
+            .affectedResourceCount,
 
-                userFacingImpact:
-                  impactAnalysis
-                    .summary
-                    .userFacingImpact,
+        userFacingImpact:
+          impactAnalysis
+            .summary
+            .userFacingImpact,
 
-                maxCriticality:
-                  impactAnalysis
-                    .summary
-                    .maxCriticality,
+        maxCriticality:
+          impactAnalysis
+            .summary
+            .maxCriticality,
 
-                evidenceSummary,
-              },
-            },
-          },
-        }
-      );
+        evidenceSummary,
+      },
+    });
 
-    return Incident
-      .findById(
-        incident._id
-      );
+    /*
+     * Provider-neutral persistence boundary.
+     *
+     * Mongo repository persists the Mongoose document.
+     * PostgreSQL repository persists the canonical aggregate.
+     */
+    const saved =
+      await incidentRepository
+        .save(
+          incident
+        );
+
+    return (
+      saved ||
+      incident
+    );
   }
 
   async loadSignals(
     incident
   ) {
-    const filter = {
-      organizationId:
-        incident
-          .organizationId,
+    const signals =
+      await signalRepository
+        .list(
+          {
+            organizationId:
+              String(
+                incident
+                  .organizationId
+              ),
 
-      environmentId:
-        incident
-          .environmentId,
+            environmentId:
+              String(
+                incident
+                  .environmentId
+              ),
 
-      incidentId:
-        incident._id,
-    };
+            incidentId:
+              incident._id,
+          },
+          {
+            sort: {
+              observedAt:
+                1,
+            },
 
-    return Signal
-      .find(
-        filter
-      )
-      .sort({
-        observedAt:
-          1,
-      })
-      .limit(
-        500
-      )
-      .lean();
+            limit:
+              500,
+          }
+        );
+
+    return Array.isArray(
+      signals
+    )
+      ? signals
+      : [];
   }
 
   summarizeSignals(

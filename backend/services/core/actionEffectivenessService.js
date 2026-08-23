@@ -4,7 +4,7 @@
  * Compares incident state before and after AIRA action
  */
 
-const mongoose = require('mongoose');
+const mongoose = require("../../persistence/operational/mongooseCompat");
 
 // Effectiveness metrics schema
 const effectivenessMetricsSchema = new mongoose.Schema(

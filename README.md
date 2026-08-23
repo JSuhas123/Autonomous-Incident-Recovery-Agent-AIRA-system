@@ -10,9 +10,9 @@ AIRA observes operational signals, investigates incidents, reasons about likely 
 >
 > AI reasons.  
 > Policies constrain.  
-> Playbooks define strategy.  
-> Runbooks define deterministic actions.  
-> Authorization grants permission.  
+> Playbooks define strategy.
+> Runbooks define deterministic actions.
+> Authorization grants permission.
 > The execution boundary performs approved mutations.  
 > Verification proves whether recovery worked.
 

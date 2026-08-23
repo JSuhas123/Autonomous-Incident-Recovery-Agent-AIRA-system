@@ -1,24 +1,18 @@
 "use strict";
 
 const {
-  Signal,
+  signalRepository,
+  signalCorrelationRepository,
 } =
   require(
-    "../../models/Signal"
-  );
-
-const {
-  SignalCorrelation,
-} =
-  require(
-    "../../models/SignalCorrelation"
+    "../../persistence/repositories"
   );
 
 const diagnosisQueueService =
   require(
     "../diagnosis/diagnosisQueueService"
   );
-  
+
 const incidentEnrichmentService =
   require(
     "./incidentEnrichmentService"
@@ -153,15 +147,6 @@ class IncidentOrchestrationService {
       // RECURRENCE CHECK
       // ----------------------------------------------------------------------
 
-      /*
-       * Before creating a new incident, check whether the same failure
-       * recently resolved.
-       *
-       * If found, the recurrence service reopens the historical incident.
-       *
-       * openOrUpdateFromSignal() will then discover that reopened incident
-       * and attach the new signal evidence to it.
-       */
       let recurrenceResult = {
         recurrence:
           false,
@@ -181,10 +166,6 @@ class IncidentOrchestrationService {
       } catch (
         error
       ) {
-        /*
-         * Recurrence evaluation failure should not prevent incident
-         * detection from continuing.
-         */
         console.error(
           "[incident-orchestration] Incident recurrence evaluation failed:",
           error.message
@@ -225,21 +206,6 @@ class IncidentOrchestrationService {
       // INCIDENT MERGE HARDENING
       // ----------------------------------------------------------------------
 
-      /*
-       * Two incidents may initially be created independently and later
-       * become connected by stronger correlation evidence.
-       *
-       * The merge service:
-       *
-       * - chooses one canonical incident
-       * - combines signal IDs
-       * - combines providers
-       * - combines occurrence/evidence counts
-       * - repoints signals
-       * - repoints correlation groups
-       * - resolves/closes duplicate incidents
-       * - preserves merge lineage
-       */
       let canonicalIncident =
         result.incident;
 
@@ -268,11 +234,6 @@ class IncidentOrchestrationService {
       } catch (
         error
       ) {
-        /*
-         * Merge evaluation is hardening logic.
-         *
-         * A failure here should not discard an otherwise valid incident.
-         */
         console.error(
           "[incident-orchestration] Incident merge evaluation failed:",
           error.message
@@ -283,11 +244,6 @@ class IncidentOrchestrationService {
       // RE-LINK AFTER MERGE
       // ----------------------------------------------------------------------
 
-      /*
-       * If the incident was merged into an older canonical incident,
-       * make sure this signal and correlation group now reference
-       * the surviving incident.
-       */
       if (
         canonicalIncident?._id &&
         String(
@@ -322,34 +278,16 @@ class IncidentOrchestrationService {
       } catch (
         error
       ) {
-        /*
-         * Impact enrichment must not invalidate a correctly-created
-         * incident.
-         */
         console.error(
           "[incident-orchestration] Incident enrichment failed:",
           error.message
         );
       }
 
-            // ----------------------------------------------------------------------
-      // PHASE 6 ASYNC DIAGNOSIS
+      // ----------------------------------------------------------------------
+      // ASYNC DIAGNOSIS
       // ----------------------------------------------------------------------
 
-      /*
-       * Diagnosis no longer executes inside the signal ingestion path.
-       *
-       * We publish a small immutable job and return immediately.
-       *
-       * A dedicated diagnosis worker performs:
-       *
-       * queue
-       *   -> lifecycle service
-       *   -> coordinator
-       *   -> persistence
-       *
-       * Queue failure must never invalidate the canonical incident.
-       */
       try {
         const diagnosisIncident =
           enrichedIncident ||
@@ -448,17 +386,12 @@ class IncidentOrchestrationService {
       } catch (
         error
       ) {
-        /*
-         * Diagnosis queueing is downstream intelligence.
-         *
-         * Signal ingestion and canonical incident creation remain
-         * authoritative even if the queue is unavailable.
-         */
         console.error(
           "[incident-orchestration] Could not queue diagnosis:",
           error.message
         );
       }
+
       // ----------------------------------------------------------------------
       // RESULT
       // ----------------------------------------------------------------------
@@ -550,7 +483,7 @@ class IncidentOrchestrationService {
     }
 
     const signal =
-      await Signal
+      await signalRepository
         .findOne({
           organizationId:
             context
@@ -603,11 +536,7 @@ class IncidentOrchestrationService {
     const now =
       new Date();
 
-    // ------------------------------------------------------------------------
-    // PRIMARY SIGNAL
-    // ------------------------------------------------------------------------
-
-    await Signal
+    await signalRepository
       .updateOne(
         {
           _id:
@@ -631,15 +560,11 @@ class IncidentOrchestrationService {
         }
       );
 
-    // ------------------------------------------------------------------------
-    // CORRELATION GROUP
-    // ------------------------------------------------------------------------
-
     if (
       correlationGroup
         ?._id
     ) {
-      await SignalCorrelation
+      await signalCorrelationRepository
         .updateOne(
           {
             _id:
@@ -668,10 +593,6 @@ class IncidentOrchestrationService {
         );
     }
 
-    // ------------------------------------------------------------------------
-    // EVERY SIGNAL IN CORRELATION GROUP
-    // ------------------------------------------------------------------------
-
     const correlationGroupId =
       correlationGroup
         ?.correlationGroupId ||
@@ -682,7 +603,7 @@ class IncidentOrchestrationService {
     if (
       correlationGroupId
     ) {
-      await Signal
+      await signalRepository
         .updateMany(
           {
             organizationId:
@@ -722,16 +643,10 @@ class IncidentOrchestrationService {
       return;
     }
 
-    /*
-     * A recovery signal may resolve multiple legacy incidents.
-     *
-     * The current signal stores the first matched incident as its
-     * canonical incident reference.
-     */
     const incident =
       incidents[0];
 
-    await Signal
+    await signalRepository
       .updateOne(
         {
           _id:
@@ -784,18 +699,19 @@ class IncidentOrchestrationService {
     }
 
     const group =
-      await SignalCorrelation
-        .findOne({
-          organizationId:
-            context
-              .organizationId,
+      await signalCorrelationRepository
+        .findGroup(
+          {
+            organizationId:
+              context
+                .organizationId,
 
-          environmentId:
-            context
-              .environmentId,
-
-          correlationGroupId,
-        });
+            environmentId:
+              context
+                .environmentId,
+          },
+          correlationGroupId
+        );
 
     if (!group) {
       throw Object.assign(
@@ -813,22 +729,31 @@ class IncidentOrchestrationService {
     }
 
     const signals =
-      await Signal
-        .find({
-          organizationId:
-            context
-              .organizationId,
+      await signalRepository
+        .list(
+          {
+            organizationId:
+              context
+                .organizationId,
 
-          environmentId:
-            context
-              .environmentId,
+            environmentId:
+              context
+                .environmentId,
 
-          correlationGroupId,
-        });
+            correlationGroupId,
+          },
+          {
+            limit:
+              500,
+          }
+        );
 
     if (
+      !Array.isArray(
+        signals
+      ) ||
       signals.length ===
-      0
+        0
     ) {
       return {
         processed:
@@ -839,13 +764,6 @@ class IncidentOrchestrationService {
       };
     }
 
-    /*
-     * Do NOT sort severity strings lexicographically.
-     *
-     * Explicit ranking ensures:
-     *
-     * critical > warning > info > unknown
-     */
     const severityRank = {
       unknown:
         0,
@@ -877,9 +795,6 @@ class IncidentOrchestrationService {
             ? 1
             : 0;
 
-        /*
-         * Incident candidates first.
-         */
         if (
           firstCandidate !==
           secondCandidate
@@ -890,9 +805,6 @@ class IncidentOrchestrationService {
           );
         }
 
-        /*
-         * Then highest severity.
-         */
         const severityDifference =
           (
             severityRank[
@@ -914,9 +826,6 @@ class IncidentOrchestrationService {
           return severityDifference;
         }
 
-        /*
-         * Finally earliest observation.
-         */
         return (
           new Date(
             first.observedAt ||

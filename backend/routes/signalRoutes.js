@@ -5,16 +5,18 @@ const express =
     "express"
   );
 
-const mongoose =
+const {
+  signalCorrelationRepository,
+} =
   require(
-    "mongoose"
+    "../persistence/repositories"
   );
 
 const {
-  SignalCorrelation,
+  isDatabaseIdentifier,
 } =
   require(
-    "../models/SignalCorrelation"
+    "../utils/identifier"
   );
 
 const {
@@ -57,7 +59,9 @@ router.get(
 
         signals,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       return next(
         error
       );
@@ -90,7 +94,9 @@ router.get(
               .signalId
           );
 
-      if (!signal) {
+      if (
+        !signal
+      ) {
         return res
           .status(
             404
@@ -107,7 +113,9 @@ router.get(
       return res.json({
         signal,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       return next(
         error
       );
@@ -116,7 +124,7 @@ router.get(
 );
 
 // ============================================================================
-// INGEST INTERNAL/MANUAL SIGNAL
+// INGEST INTERNAL / MANUAL SIGNAL
 // ============================================================================
 
 router.post(
@@ -136,7 +144,7 @@ router.post(
         ...req.body,
 
         /*
-         * Client must never override ownership.
+         * Client must never override canonical ownership.
          */
         organizationId:
           undefined,
@@ -169,7 +177,9 @@ router.post(
         .json(
           result
         );
-    } catch (error) {
+    } catch (
+      error
+    ) {
       return next(
         error
       );
@@ -195,23 +205,25 @@ router.get(
         );
 
       const group =
-        await SignalCorrelation
-          .findOne({
-            organizationId:
-              context
-                .organizationId,
+        await signalCorrelationRepository
+          .findGroup(
+            {
+              organizationId:
+                context
+                  .organizationId,
 
-            environmentId:
-              context
-                .environmentId,
+              environmentId:
+                context
+                  .environmentId,
+            },
 
-            correlationGroupId:
-              req.params
-                .correlationGroupId,
-          })
-          .lean();
+            req.params
+              .correlationGroupId
+          );
 
-      if (!group) {
+      if (
+        !group
+      ) {
         return res
           .status(
             404
@@ -229,7 +241,9 @@ router.get(
         correlation:
           group,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       return next(
         error
       );
@@ -275,15 +289,27 @@ function requireContext(
     );
   }
 
+  const normalizedOrganizationId =
+    String(
+      organizationId
+    ).trim();
+
+  const normalizedEnvironmentId =
+    String(
+      environmentId
+    ).trim();
+
+  /*
+   * PostgreSQL UUIDs/public IDs and Mongo ObjectIds are all valid
+   * persistence identifiers. Never perform ObjectId-only validation.
+   */
   if (
-    !mongoose.Types.ObjectId
-      .isValid(
-        organizationId
-      ) ||
-    !mongoose.Types.ObjectId
-      .isValid(
-        environmentId
-      )
+    !isDatabaseIdentifier(
+      normalizedOrganizationId
+    ) ||
+    !isDatabaseIdentifier(
+      normalizedEnvironmentId
+    )
   ) {
     throw Object.assign(
       new Error(
@@ -300,16 +326,25 @@ function requireContext(
   }
 
   return {
-    organizationId,
+    organizationId:
+      normalizedOrganizationId,
 
-    environmentId,
+    environmentId:
+      normalizedEnvironmentId,
 
-    tenantId,
+    tenantId:
+      String(
+        tenantId
+      ),
 
     userId:
       req.context
-        ?.userId ||
-      null,
+        ?.userId
+        ? String(
+            req.context
+              .userId
+          )
+        : null,
   };
 }
 

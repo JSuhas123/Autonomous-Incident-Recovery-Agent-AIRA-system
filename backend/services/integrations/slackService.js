@@ -1,5 +1,5 @@
 const axios = require('axios');
-const mongoose = require('mongoose');
+const mongoose = require("../../persistence/operational/mongooseCompat");
 
 /**
  * Slack Notification Service

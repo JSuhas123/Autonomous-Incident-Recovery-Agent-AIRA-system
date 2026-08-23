@@ -1,310 +1,649 @@
+﻿"use strict";
+
 /**
- * DATABASE OPTIMIZATION SERVICE
- * 
- * Ensures production-grade database performance by:
- * 1. Creating optimal indexes for query patterns
- * 2. Implementing query analysis (slow query detection)
- * 3. Archiving old data to prevent unbounded growth
- * 4. Compacting collections periodically
- * 5. Monitoring database metrics
- * 
- * CRITICAL: Must run at startup and periodically during operation
+ * AIRA PostgreSQL Optimization Service
+ *
+ * Phase 13 â€” Mongo Retirement
+ *
+ * Replaces the historical Mongo collection/index maintenance service.
+ *
+ * Responsibilities:
+ *
+ * - install safe PostgreSQL indexes
+ * - refresh PostgreSQL planner statistics
+ * - expose lightweight database metrics
+ * - schedule periodic ANALYZE operations
+ *
+ * PostgreSQL VACUUM itself remains primarily managed by autovacuum.
  */
 
-const mongoose = require('mongoose');
-// Ensure Log model is registered before index creation
-require('../../models/Log');
+const {
+  getPostgresPool,
+} =
+  require(
+    "../../persistence/postgres/postgresPool"
+  );
+
 
 class DatabaseOptimizationService {
-  constructor() {
-    this.indexes = {
-      // Core queries: most frequent patterns
-      DecisionTrace: [
-        // Pattern 1: Get decision by ID (primary)
-        { fields: { decisionId: 1 }, name: 'idx_decision_id', unique: true },
-        
-        // Pattern 2: List decisions for tenant (most frequent query)
-        { fields: { tenantId: 1, timestamp: -1 }, name: 'idx_tenant_timestamp' },
-        
-        // Pattern 3: List decisions for tenant by action
-        { fields: { tenantId: 1, 'decision.recommendedAction': 1, timestamp: -1 }, name: 'idx_tenant_action_time' },
-        
-        // Pattern 4: Find by correlation ID (incident tracing)
-        { fields: { tenantId: 1, correlationId: 1 }, name: 'idx_tenant_correlation' },
-        
-        // Pattern 5: TTL index for automatic cleanup of old traces
-        { fields: { timestamp: 1 }, expireAfterSeconds: 7776000, name: 'idx_ttl_traces' }, // 90 days
-      ],
-      
-      AuditEvent: [
-        // Pattern 1: Get audit trail for correlation ID
-        { fields: { tenantId: 1, correlationId: 1 }, name: 'idx_audit_correlation' },
-        
-        // Pattern 2: List audit events for tenant
-        { fields: { tenantId: 1, timestamp: -1 }, name: 'idx_audit_tenant_time' },
-        
-        // Pattern 3: List by event type for forensics
-        { fields: { tenantId: 1, eventType: 1, timestamp: -1 }, name: 'idx_audit_type_time' },
-        
-        // Pattern 4: TTL for audit log retention (longer than traces)
-        { fields: { timestamp: 1 }, expireAfterSeconds: 31536000, name: 'idx_ttl_audit' }, // 1 year
-      ],
-      
-      IncidentMemory: [
-        // Pattern 1: Find pattern by type for tenant
-        { fields: { tenantId: 1, patternType: 1 }, name: 'idx_pattern_type' },
-        
-        // Pattern 2: Find by pattern ID
-        { fields: { patternId: 1 }, name: 'idx_pattern_id' },
-        
-        // Pattern 3: List all patterns for tenant
-        { fields: { tenantId: 1, 'stats.lastOccurrence': -1 }, name: 'idx_tenant_patterns' },
-      ],
+  constructor(
+    options = {}
+  ) {
+    this.pool =
+      options.pool ||
+      null;
 
-      ActionLog: [
-        // Pattern 1: List actions for tenant
-        { fields: { tenantId: 1, timestamp: -1 }, name: 'idx_action_tenant_time' },
-        
-        // Pattern 2: Find action by ID
-        { fields: { actionId: 1 }, name: 'idx_action_id' },
-        
-        // Pattern 3: Find actions by type
-        { fields: { tenantId: 1, actionType: 1 }, name: 'idx_action_type' },
-      ],
+    this.intervalMs =
+      Math.max(
+        60000,
+        Number(
+          options.intervalMs ||
+          process.env
+            .POSTGRES_OPTIMIZATION_INTERVAL_MS ||
+          30 * 60 * 1000
+        )
+      );
 
-      Log: [
-        // Pattern 1: List logs for tenant (infrequent but needed)
-        { fields: { tenantId: 1, timestamp: -1 }, name: 'idx_log_tenant_time' },
-        
-        // Pattern 2: TTL for log rotation (short retention)
-        { fields: { timestamp: 1 }, expireAfterSeconds: 259200, name: 'idx_ttl_logs' }, // 3 days
-      ],
-    };
+    this.periodicTimer =
+      null;
 
-    this.config = {
-      archiveOlderThanDays: 90,
-      compactThresholdSizeMB: 1024,
-      slowQueryThresholdMs: 100,
-      runOptimizationEveryHours: 24,
-    };
+    this.lastOptimizationAt =
+      null;
+
+    this.lastOptimizationResult =
+      null;
   }
 
-  /**
-   * Create all indexes on startup
-   */
-  async createIndexes(db) {
-    console.log('[db-optimization] Creating indexes...\n');
 
-    for (const [modelName, indexConfigs] of Object.entries(this.indexes)) {
+  getPool() {
+    return (
+      this.pool ||
+      getPostgresPool()
+    );
+  }
+
+
+  /**
+   * Historical signature was:
+   *
+   *   createIndexes(legacyDatabaseHandle)
+   *
+   * The argument is deliberately ignored so existing callers remain safe
+   * while server.js is migrated.
+   */
+  async createIndexes(
+    _legacyDatabaseHandle = null
+  ) {
+    const pool =
+      this.getPool();
+
+    const statements = [
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_tenant
+        ON operational.documents (
+          domain,
+          (document ->> 'tenantId')
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_correlation
+        ON operational.documents (
+          domain,
+          (document ->> 'correlationId')
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_decision
+        ON operational.documents (
+          domain,
+          (document ->> 'decisionId')
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_action
+        ON operational.documents (
+          domain,
+          (document ->> 'actionId')
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_created
+        ON operational.documents (
+          domain,
+          created_at DESC
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_domain_updated
+        ON operational.documents (
+          domain,
+          updated_at DESC
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_org_domain_updated
+        ON operational.documents (
+          organization_id,
+          domain,
+          updated_at DESC
+        )
+      `,
+
+      `
+        CREATE INDEX IF NOT EXISTS
+          idx_operational_documents_env_domain_updated
+        ON operational.documents (
+          environment_id,
+          domain,
+          updated_at DESC
+        )
+      `,
+    ];
+
+    const created = [];
+
+    for (
+      let index = 0;
+      index <
+        statements.length;
+      index += 1
+    ) {
       try {
-        const Model = mongoose.model(modelName);
-        
-        for (const indexConfig of indexConfigs) {
-          try {
-            const indexOptions = {
-              name: indexConfig.name,
-              ...indexConfig.options,
-            };
-            if (indexConfig.expireAfterSeconds !== undefined) {
-              indexOptions.expireAfterSeconds = indexConfig.expireAfterSeconds;
-            }
-            await Model.collection.createIndex(
-              indexConfig.fields,
-              indexOptions
-            );
-            console.log(`✓ ${modelName}.${indexConfig.name}`);
-          } catch (error) {
-            // IndexKeySpecConflict: same key spec, different name → already satisfied
-            // IndexOptionsConflict: equivalent index exists under auto-generated name
-            if (
-              error.codeName === 'IndexKeySpecConflict' ||
-              error.codeName === 'IndexOptionsConflict' ||
-              (error.code === 85) ||  // IndexOptionsConflict numeric code
-              (error.code === 86)     // IndexKeySpecConflict numeric code
-            ) {
-              console.log(`  ↩ ${modelName}.${indexConfig.name} - index already satisfied`);
-            } else {
-              throw error;
-            }
-          }
-        }
-      } catch (error) {
-        console.warn(`⚠️  Failed to create indexes for ${modelName}: ${error.message}`);
-      }
-    }
-
-    console.log('[db-optimization] ✓ Index creation complete\n');
-  }
-
-  /**
-   * Analyze slow queries and provide optimization recommendations
-   */
-  async analyzeSlowQueries() {
-    try {
-      const db = mongoose.connection.db;
-      
-      // Get profile data (must be enabled)
-      const profiling = await db.admin().profilingLevel();
-      
-      if (profiling === 0) {
-        console.log('[db-optimization] Query profiling disabled (not collecting slow queries)');
-        return [];
-      }
-
-      const system_profile = db.collection('system.profile');
-      const slowQueries = await system_profile
-        .find({ millis: { $gt: this.config.slowQueryThresholdMs } })
-        .sort({ millis: -1 })
-        .limit(10)
-        .toArray();
-
-      return slowQueries.map(q => ({
-        operation: q.op,
-        namespace: q.ns,
-        duration_ms: q.millis,
-        query: q.command,
-        timestamp: q.ts,
-      }));
-    } catch (error) {
-      console.warn('[db-optimization] Could not analyze slow queries:', error.message);
-      return [];
-    }
-  }
-
-  /**
-   * Archive old decision traces to cold storage
-   * Keep hot data in MongoDB, move old data to compressed archive
-   */
-  async archiveOldTraces() {
-    try {
-      const DecisionTrace = mongoose.model('DecisionTrace');
-      const archiveDate = new Date();
-      archiveDate.setDate(archiveDate.getDate() - this.config.archiveOlderThanDays);
-
-      const oldTraces = await DecisionTrace.countDocuments({
-        timestamp: { $lt: archiveDate },
-      });
-
-      if (oldTraces > 0) {
-        console.log(
-          `[db-optimization] Found ${oldTraces} traces older than ${this.config.archiveOlderThanDays} days`
+        await pool.query(
+          statements[
+            index
+          ]
         );
-        console.log('[db-optimization]   To implement: Export to S3, then delete from MongoDB');
-        // In production: use AWS S3 + lifecycle policies
-        // For now: just log recommendation
-      }
-    } catch (error) {
-      console.warn('[db-optimization] Archive check failed:', error.message);
-    }
-  }
 
-  /**
-   * Compact collections to reclaim space
-   * MongoDB uses disk space even when documents are deleted
-   */
-  async compactCollections() {
-    try {
-      const db = mongoose.connection.db;
-      const collections = ['decisiontraces', 'auditevents', 'incidentmemories', 'actionlogs'];
+        created.push(
+          index +
+          1
+        );
+      } catch (
+        error
+      ) {
+        /*
+         * operational.documents may not exist in very early bootstrap
+         * environments. Fail the startup optimization operation rather
+         * than silently claiming the database was optimized.
+         */
+        throw Object.assign(
+          new Error(
+            `PostgreSQL index creation failed: ${error.message}`
+          ),
+          {
+            code:
+              error.code ||
+              "POSTGRES_INDEX_CREATION_FAILED",
 
-      for (const collName of collections) {
-        try {
-          // Get collection stats
-          const stats = await db.collection(collName).stats();
-          const sizeGB = stats.size / (1024 * 1024 * 1024);
+            statementNumber:
+              index +
+              1,
 
-          if (sizeGB > this.config.compactThresholdSizeMB / 1024) {
-            console.log(`[db-optimization] Collection ${collName} is ${sizeGB.toFixed(2)}GB`);
-            console.log(
-              `[db-optimization]   To compact: db.${collName}.compact() in MongoDB shell`
-            );
+            cause:
+              error,
           }
-        } catch (error) {
-          // Collection may not exist
-        }
+        );
       }
-    } catch (error) {
-      console.warn('[db-optimization] Collection compaction check failed:', error.message);
-    }
-  }
-
-  /**
-   * Get database health metrics
-   */
-  async getHealthMetrics() {
-    try {
-      const db = mongoose.connection.db;
-      const admin = db.admin();
-
-      const status = await admin.serverStatus();
-
-      return {
-        connections: {
-          current: status.connections.current,
-          available: status.connections.available,
-        },
-        memory: {
-          resident_mb: status.mem.resident,
-          virtual_mb: status.mem.virtual,
-        },
-        replication: status.repl ? status.repl.hosts.length : 0,
-        uptime_seconds: status.uptime,
-      };
-    } catch (error) {
-      console.warn('[db-optimization] Could not get health metrics:', error.message);
-      return null;
-    }
-  }
-
-  /**
-   * Run full optimization cycle
-   */
-  async runFullOptimization() {
-    console.log('[db-optimization] Running full optimization cycle...\n');
-
-    // 1. Analyze slow queries
-    const slowQueries = await this.analyzeSlowQueries();
-    if (slowQueries.length > 0) {
-      console.log('[db-optimization] ⚠️  Slow queries detected:');
-      slowQueries.forEach(q => {
-        console.log(`   ${q.namespace}: ${q.duration_ms}ms`);
-      });
     }
 
-    // 2. Check for archival candidates
-    await this.archiveOldTraces();
-
-    // 3. Check for compaction candidates
-    await this.compactCollections();
-
-    // 4. Get health metrics
-    const health = await this.getHealthMetrics();
-    if (health) {
-      console.log('[db-optimization] Database health:');
-      console.log(`   Connections: ${health.connections.current}/${health.connections.available}`);
-      console.log(`   Memory: ${health.memory.resident_mb}MB resident`);
-      console.log(`   Uptime: ${Math.round(health.uptime_seconds / 3600)}h`);
-    }
-
-    console.log('[db-optimization] ✓ Optimization cycle complete\n');
-  }
-
-  /**
-   * Start periodic optimization
-   */
-  startPeriodicOptimization() {
-    const interval = this.config.runOptimizationEveryHours * 60 * 60 * 1000;
-    
-    setInterval(() => {
-      this.runFullOptimization().catch(err => {
-        console.error('[db-optimization] Periodic optimization failed:', err.message);
-      });
-    }, interval);
+    await this.analyze();
 
     console.log(
-      `[db-optimization] Periodic optimization scheduled every ${this.config.runOptimizationEveryHours}h`
+      `[database-optimization] PostgreSQL indexes verified (${created.length})`
     );
+
+    return {
+      provider:
+        "postgres",
+
+      indexesVerified:
+        created.length,
+
+      analyzed:
+        true,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  /**
+   * Refresh planner statistics.
+   *
+   * ANALYZE is intentionally used rather than aggressive manual VACUUM.
+   * PostgreSQL autovacuum remains responsible for normal tuple cleanup.
+   */
+  async analyze() {
+    const pool =
+      this.getPool();
+
+    const tables = [
+      "operational.documents",
+
+      "incidents.incidents",
+
+      "incidents.incident_events",
+
+      "agents.intelligence_runs",
+    ];
+
+    const analyzed = [];
+
+    for (
+      const table
+      of tables
+    ) {
+      try {
+        await pool.query(
+          `ANALYZE ${table}`
+        );
+
+        analyzed.push(
+          table
+        );
+      } catch (
+        error
+      ) {
+        /*
+         * Some installations may not yet contain every optional domain.
+         *
+         * Undefined-table is safe to ignore during rolling migrations.
+         */
+        if (
+          error.code ===
+          "42P01"
+        ) {
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    return {
+      analyzed,
+    };
+  }
+
+
+  /**
+   * One complete optimization cycle.
+   */
+  async optimizeNow() {
+    const startedAt =
+      Date.now();
+
+    try {
+      const analysis =
+        await this.analyze();
+
+      const metrics =
+        await this.getDatabaseMetrics();
+
+      const result = {
+        success:
+          true,
+
+        provider:
+          "postgres",
+
+        durationMs:
+          Date.now() -
+          startedAt,
+
+        analyzed:
+          analysis.analyzed,
+
+        metrics,
+
+        completedAt:
+          new Date(),
+
+        executionAuthorized:
+          false,
+      };
+
+      this.lastOptimizationAt =
+        result.completedAt;
+
+      this.lastOptimizationResult =
+        result;
+
+      return result;
+    } catch (
+      error
+    ) {
+      const result = {
+        success:
+          false,
+
+        provider:
+          "postgres",
+
+        durationMs:
+          Date.now() -
+          startedAt,
+
+        completedAt:
+          new Date(),
+
+        error: {
+          code:
+            error.code ||
+            "POSTGRES_OPTIMIZATION_FAILED",
+
+          message:
+            String(
+              error.message ||
+              "PostgreSQL optimization failed"
+            ),
+        },
+
+        executionAuthorized:
+          false,
+      };
+
+      this.lastOptimizationAt =
+        result.completedAt;
+
+      this.lastOptimizationResult =
+        result;
+
+      throw Object.assign(
+        new Error(
+          result.error.message
+        ),
+        {
+          code:
+            result.error.code,
+
+          optimizationResult:
+            result,
+        }
+      );
+    }
+  }
+
+
+  /**
+   * PostgreSQL database metrics.
+   */
+  async getDatabaseMetrics() {
+    const pool =
+      this.getPool();
+
+    const [
+      databaseResult,
+      activityResult,
+      tableResult,
+    ] =
+      await Promise.all([
+        pool.query(
+          `
+            SELECT
+              current_database() AS database_name,
+              pg_database_size(
+                current_database()
+              ) AS database_size_bytes
+          `
+        ),
+
+        pool.query(
+          `
+            SELECT
+              COUNT(*)::int AS total_connections,
+              COUNT(*) FILTER (
+                WHERE state = 'active'
+              )::int AS active_connections,
+              COUNT(*) FILTER (
+                WHERE state = 'idle'
+              )::int AS idle_connections
+            FROM pg_stat_activity
+            WHERE datname =
+              current_database()
+          `
+        ),
+
+        pool.query(
+          `
+            SELECT
+              schemaname,
+              relname AS table_name,
+              n_live_tup::bigint AS estimated_live_rows,
+              n_dead_tup::bigint AS estimated_dead_rows,
+              last_analyze,
+              last_autoanalyze,
+              last_vacuum,
+              last_autovacuum
+            FROM pg_stat_user_tables
+            ORDER BY n_live_tup DESC
+            LIMIT 100
+          `
+        ),
+      ]);
+
+    return {
+      provider:
+        "postgres",
+
+      database:
+        databaseResult.rows[0]
+          ?.database_name ||
+        null,
+
+      databaseSizeBytes:
+        Number(
+          databaseResult.rows[0]
+            ?.database_size_bytes ||
+          0
+        ),
+
+      connections: {
+        total:
+          activityResult.rows[0]
+            ?.total_connections ||
+          0,
+
+        active:
+          activityResult.rows[0]
+            ?.active_connections ||
+          0,
+
+        idle:
+          activityResult.rows[0]
+            ?.idle_connections ||
+          0,
+      },
+
+      tables:
+        tableResult.rows,
+
+      collectedAt:
+        new Date(),
+    };
+  }
+
+
+  /**
+   * Compatibility alias for older monitoring consumers.
+   */
+  async getMetrics() {
+    return this.getDatabaseMetrics();
+  }
+
+
+  /**
+   * Mongo compact() no longer has a PostgreSQL equivalent that should be
+   * routinely invoked by the application.
+   *
+   * Run ANALYZE and let autovacuum own storage maintenance.
+   */
+  async compactCollections() {
+    const result =
+      await this.analyze();
+
+    return {
+      provider:
+        "postgres",
+
+      compacted:
+        false,
+
+      maintenance:
+        "postgres-autovacuum",
+
+      analyzed:
+        result.analyzed,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  /**
+   * Compatibility alias.
+   */
+  async compactDatabase() {
+    return this.compactCollections();
+  }
+
+
+  /**
+   * Data expiry now belongs to retention services / PostgreSQL retention
+   * policies rather than Mongo TTL index behavior.
+   */
+  async archiveOldData() {
+    return {
+      provider:
+        "postgres",
+
+      archived:
+        0,
+
+      delegated:
+        true,
+
+      owner:
+        "retentionService",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  startPeriodicOptimization() {
+    if (
+      this.periodicTimer
+    ) {
+      return this.periodicTimer;
+    }
+
+    this.periodicTimer =
+      setInterval(
+        async () => {
+          try {
+            await this.optimizeNow();
+
+            console.log(
+              "[database-optimization] PostgreSQL optimization cycle completed"
+            );
+          } catch (
+            error
+          ) {
+            console.error(
+              "[database-optimization] PostgreSQL optimization cycle failed:",
+              error.message
+            );
+          }
+        },
+        this.intervalMs
+      );
+
+    /*
+     * Never keep Node alive solely because of this maintenance timer.
+     */
+    if (
+      typeof this.periodicTimer
+        .unref ===
+      "function"
+    ) {
+      this.periodicTimer
+        .unref();
+    }
+
+    console.log(
+      `[database-optimization] PostgreSQL optimization scheduled every ${this.intervalMs}ms`
+    );
+
+    return this.periodicTimer;
+  }
+
+
+  stopPeriodicOptimization() {
+    if (
+      !this.periodicTimer
+    ) {
+      return false;
+    }
+
+    clearInterval(
+      this.periodicTimer
+    );
+
+    this.periodicTimer =
+      null;
+
+    return true;
+  }
+
+
+  getStatus() {
+    return {
+      provider:
+        "postgres",
+
+      periodicOptimization:
+        Boolean(
+          this.periodicTimer
+        ),
+
+      intervalMs:
+        this.intervalMs,
+
+      lastOptimizationAt:
+        this.lastOptimizationAt,
+
+      lastOptimizationResult:
+        this.lastOptimizationResult,
+
+      executionAuthorized:
+        false,
+    };
   }
 }
 
-module.exports = new DatabaseOptimizationService();
+
+module.exports =
+  new DatabaseOptimizationService();
+
+module.exports
+  .DatabaseOptimizationService =
+  DatabaseOptimizationService;
+

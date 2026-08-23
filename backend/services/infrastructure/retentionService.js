@@ -1,39 +1,37 @@
 "use strict";
 
+const {
+  DecisionTrace,
+  FailedMessage,
+  RetentionArchive,
+} =
+  require(
+    "../../persistence/operational/extendedModels"
+  );
+
+const {
+  IncidentMemory,
+  RunbookExecution,
+} =
+  require(
+    "../../persistence/operational/legacyModels"
+  );
+
 const crypto =
   require(
     "node:crypto"
   );
 
-const IncidentMemory =
-  require(
-    "../../models/IncidentMemory"
-  );
 
-const DecisionTrace =
-  require(
-    "../../models/DecisionTrace"
-  );
 
-const RunbookExecution =
-  require(
-    "../../models/RunbookExecution"
-  );
 
-const FailedMessage =
-  require(
-    "../../models/FailedMessage"
-  );
 
-const TenantConfig =
-  require(
-    "../../models/TenantConfig"
-  );
+const {
+  TenantConfig,
+} = require(
+  "../../persistence/operational/identityModels"
+);
 
-const RetentionArchive =
-  require(
-    "../../models/RetentionArchive"
-  );
 
 const distributedLockService =
   require(

@@ -16,20 +16,23 @@
  * It MUST NOT directly delete audit/security chains.
  */
 
-const IncidentMemory =
-  require(
-    "../../models/IncidentMemory"
-  );
+const {
+  IncidentMemory,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 
-const DecisionTrace =
-  require(
-    "../../models/DecisionTrace"
-  );
+const {
+  DecisionTrace,
+} = require(
+  "../../persistence/operational/extendedModels"
+);
 
-const TenantConfig =
-  require(
-    "../../models/TenantConfig"
-  );
+const {
+  TenantConfig,
+} = require(
+  "../../persistence/operational/identityModels"
+);
 
 const retentionService =
   require(

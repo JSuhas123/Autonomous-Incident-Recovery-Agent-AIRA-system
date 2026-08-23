@@ -1,28 +1,29 @@
-"use strict";
+﻿"use strict";
 
-const mongoose =
-  require(
-    "mongoose"
-  );
+const {
+  isLegacyObjectId,
+} = require(
+  "../../persistence/operational/identifierCompat"
+);
 
-const Service =
-  require(
-    "../../models/Service"
-  );
+const {
+  Service,
+} = require(
+  "../../persistence/operational/operationalModels"
+);
 
 const {
   Incident,
 } =
   require(
-    "../../models/Incident"
+    "../../persistence/operational/canonicalModels"
   );
 
 const {
-  Signal,
-} =
-  require(
-    "../../models/Signal"
-  );
+  signalRepository,
+} = require(
+  "../../persistence/repositories"
+);
 
 const incidentDetailService =
   require(
@@ -79,8 +80,7 @@ class InvestigationContextService {
     );
 
     if (
-      !mongoose.Types.ObjectId
-        .isValid(
+      !isLegacyObjectId(
           incidentId
         )
     ) {
@@ -560,8 +560,8 @@ class InvestigationContextService {
       });
     }
 
-    return Signal
-      .find({
+    return signalRepository.list(
+      {
         organizationId:
           incident
             .organizationId,
@@ -572,15 +572,14 @@ class InvestigationContextService {
 
         $or:
           clauses,
-      })
-      .sort({
-        observedAt:
-          1,
-      })
-      .limit(
-        this.maxSignals
-      )
-      .lean();
+      },
+      {
+        sort: {
+          observedAt: 1,
+        },
+        limit: this.maxSignals,
+      }
+    );
   }
 
   // ==========================================================================
@@ -1783,7 +1782,7 @@ class InvestigationContextService {
   }
 
   // ==========================================================================
-  // SERIALIZATION — INCIDENT
+  // SERIALIZATION â€” INCIDENT
   // ==========================================================================
 
   serializeIncident(
@@ -1895,7 +1894,7 @@ class InvestigationContextService {
   }
 
   // ==========================================================================
-  // SERIALIZATION — SERVICE
+  // SERIALIZATION â€” SERVICE
   // ==========================================================================
 
   serializeService(
@@ -1936,7 +1935,7 @@ class InvestigationContextService {
   }
 
   // ==========================================================================
-  // SERIALIZATION — SIGNAL
+  // SERIALIZATION â€” SIGNAL
   // ==========================================================================
 
   serializeSignal(
@@ -2067,7 +2066,7 @@ class InvestigationContextService {
   }
 
   // ==========================================================================
-  // SERIALIZATION — HISTORICAL INCIDENT
+  // SERIALIZATION â€” HISTORICAL INCIDENT
   // ==========================================================================
 
   serializeHistoricalIncident(
@@ -2396,3 +2395,4 @@ module.exports =
 module.exports
   .InvestigationContextService =
   InvestigationContextService;
+

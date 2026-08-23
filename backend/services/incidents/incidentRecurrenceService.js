@@ -1,10 +1,10 @@
 "use strict";
 
 const {
-  Incident,
+  incidentRepository,
 } =
   require(
-    "../../models/Incident"
+    "../../persistence/repositories"
   );
 
 const incidentService =
@@ -62,28 +62,33 @@ class IncidentRecurrenceService {
         windowMs
       );
 
-    const filter = {
-      organizationId:
-        signal.organizationId,
+    /*
+     * Keep the repository query within the provider-neutral
+     * incident filter contract.
+     *
+     * resolvedAt range and correlation OR logic are applied below
+     * because those operators are not yet part of the generic
+     * PostgreSQL IncidentRepository filter contract.
+     */
+    const candidates =
+      await incidentRepository
+        .findMany({
+          organizationId:
+            signal.organizationId,
 
-      environmentId:
-        signal.environmentId,
+          environmentId:
+            signal.environmentId,
 
-      serviceId:
-        signal.serviceId,
+          serviceId:
+            signal.serviceId,
 
-      status: {
-        $in: [
-          "resolved",
-          "closed",
-        ],
-      },
-
-      resolvedAt: {
-        $gte:
-          threshold,
-      },
-    };
+          status: {
+            $in: [
+              "resolved",
+              "closed",
+            ],
+          },
+        });
 
     const correlationGroupId =
       correlationGroup
@@ -92,41 +97,102 @@ class IncidentRecurrenceService {
         .correlationGroupId ||
       null;
 
-    if (
-      correlationGroupId
-    ) {
-      filter.$or = [
-        {
-          correlationGroupId,
-        },
-
-        {
-          signalFingerprint:
-            signal.fingerprint,
-        },
-      ];
-    } else if (
-      signal.fingerprint
-    ) {
-      filter.signalFingerprint =
-        signal.fingerprint;
-    } else if (
-      signal.monitorId
-    ) {
-      filter.monitorId =
-        signal.monitorId;
-    } else {
-      return null;
-    }
-
-    return Incident
-      .findOne(
-        filter
+    const matching =
+      (
+        Array.isArray(
+          candidates
+        )
+          ? candidates
+          : []
       )
-      .sort({
-        resolvedAt:
-          -1,
-      });
+        .filter(
+          (
+            incident
+          ) => {
+            const resolvedAt =
+              incident
+                .resolvedAt;
+
+            if (
+              !resolvedAt
+            ) {
+              return false;
+            }
+
+            const resolvedTime =
+              new Date(
+                resolvedAt
+              ).getTime();
+
+            if (
+              Number.isNaN(
+                resolvedTime
+              ) ||
+              resolvedTime <
+                threshold.getTime()
+            ) {
+              return false;
+            }
+
+            if (
+              correlationGroupId
+            ) {
+              return (
+                incident
+                  .correlationGroupId ===
+                  correlationGroupId ||
+                (
+                  signal.fingerprint &&
+                  incident
+                    .signalFingerprint ===
+                    signal.fingerprint
+                )
+              );
+            }
+
+            if (
+              signal.fingerprint
+            ) {
+              return (
+                incident
+                  .signalFingerprint ===
+                signal.fingerprint
+              );
+            }
+
+            if (
+              signal.monitorId
+            ) {
+              return (
+                this.sameIdentifier(
+                  incident.monitorId,
+                  signal.monitorId
+                )
+              );
+            }
+
+            return false;
+          }
+        )
+        .sort(
+          (
+            left,
+            right
+          ) =>
+            new Date(
+              right.resolvedAt ||
+              0
+            ) -
+            new Date(
+              left.resolvedAt ||
+              0
+            )
+        );
+
+    return (
+      matching[0] ||
+      null
+    );
   }
 
   // ==========================================================================
@@ -149,7 +215,7 @@ class IncidentRecurrenceService {
       new Date();
 
     /*
-     * Reopen through canonical state machine path.
+     * Reopen through canonical state-machine path.
      */
     const reopened =
       await incidentService
@@ -214,6 +280,19 @@ class IncidentRecurrenceService {
     reopened.resolutionType =
       null;
 
+    /*
+     * Mongo schema defaults used to guarantee timeline existed.
+     * PostgreSQL domain objects must not depend on that behavior.
+     */
+    if (
+      !Array.isArray(
+        reopened.timeline
+      )
+    ) {
+      reopened.timeline =
+        [];
+    }
+
     reopened.timeline.push({
       occurredAt:
         now,
@@ -243,10 +322,23 @@ class IncidentRecurrenceService {
       },
     });
 
-    await reopened
-      .save();
+    /*
+     * Phase 13 provider-neutral persistence boundary.
+     *
+     * Never call reopened.save():
+     * - Mongo repository owns Mongoose persistence.
+     * - PostgreSQL repository owns SQL persistence.
+     */
+    const saved =
+      await incidentRepository
+        .save(
+          reopened
+        );
 
-    return reopened;
+    return (
+      saved ||
+      reopened
+    );
   }
 
   // ==========================================================================
@@ -295,6 +387,37 @@ class IncidentRecurrenceService {
       incident:
         reopened,
     };
+  }
+
+  // ==========================================================================
+  // IDENTIFIER COMPARISON
+  // ==========================================================================
+
+  sameIdentifier(
+    left,
+    right
+  ) {
+    if (
+      left ===
+        null ||
+      left ===
+        undefined ||
+      right ===
+        null ||
+      right ===
+        undefined
+    ) {
+      return false;
+    }
+
+    return (
+      String(
+        left
+      ) ===
+      String(
+        right
+      )
+    );
   }
 }
 

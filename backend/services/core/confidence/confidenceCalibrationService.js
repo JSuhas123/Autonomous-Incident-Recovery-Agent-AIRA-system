@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("../../../persistence/operational/mongooseCompat");
 
 /**
  * Confidence Calibration Service

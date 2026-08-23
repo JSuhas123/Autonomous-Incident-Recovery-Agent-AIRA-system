@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const WorkflowOutboxRepository =
   require(
@@ -515,6 +515,32 @@ class MongoWorkflowOutboxRepository
     );
   }
 
+
+  async findForIncident(
+    scope,
+    incidentId,
+    transaction = null
+  ) {
+    let query =
+      WorkflowOutboxEvent
+        .find({
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          incidentId,
+        })
+        .sort({
+          createdAt: 1,
+        });
+
+    return attachSession(
+      query,
+      transaction
+    );
+  }
   async findDeliverable(
     {
       limit = 50,

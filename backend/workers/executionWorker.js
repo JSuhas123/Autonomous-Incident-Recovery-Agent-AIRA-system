@@ -1,11 +1,11 @@
-"use strict";
+﻿"use strict";
 
 /**
  * AIRA Execution Worker
  *
  * Phase 8.12
- * Phase 11.1.9 — Idempotent Execution
- * Phase 11.2.9 — Durable Runtime Checkpoint Integration
+ * Phase 11.1.9 â€” Idempotent Execution
+ * Phase 11.2.9 â€” Durable Runtime Checkpoint Integration
  *
  * Responsibilities:
  *
@@ -27,11 +27,11 @@
  * A PROCESSING execution checkpoint that loses its owner eventually becomes:
  *
  * PROCESSING
- *      ↓
+ *      â†“
  * ABANDONED
- *      ↓
+ *      â†“
  * REQUIRES_RECONCILIATION
- *      ↓
+ *      â†“
  * MANUAL_INTERVENTION
  *
  * SAFETY:
@@ -74,15 +74,12 @@ const {
     "../services/idempotency/idempotencyContracts"
   );
 
-const ExecutionRequest =
-  require(
-    "../models/ExecutionRequest"
-  );
-
-const ExecutionAuthorization =
-  require(
-    "../models/ExecutionAuthorization"
-  );
+const {
+  ExecutionRequest,
+  ExecutionAuthorization,
+} = require(
+  "../persistence/operational/executionModels"
+);
 
 const executionQueueService =
   require(
@@ -1000,7 +997,7 @@ async processAuthorizedExecutionWithDurableHandoff(
     }
 
     // =========================================================================
-    // 4. IMMUTABLE REQUEST ↔ JOB PLAN VALIDATION
+    // 4. IMMUTABLE REQUEST â†” JOB PLAN VALIDATION
     //
     // The job may not substitute a different plan after authorization.
     // =========================================================================

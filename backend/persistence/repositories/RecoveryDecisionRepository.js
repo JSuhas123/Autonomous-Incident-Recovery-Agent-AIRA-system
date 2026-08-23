@@ -9,6 +9,8 @@
  * - RecoveryDecisionRun
  * - current RecoveryDecision
  * - revision/superseding persistence
+ * - provider-neutral decision lookup/history
+ * - provider-neutral run lookup
  *
  * All revision operations may participate in one transaction.
  */
@@ -28,6 +30,36 @@ class RecoveryDecisionRepository {
   ) {
     throw new Error(
       "RecoveryDecisionRepository.findCurrent() is not implemented"
+    );
+  }
+
+  async findByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryDecisionRepository.findByIdentifier() is not implemented"
+    );
+  }
+
+  async findHistory(
+    _scope,
+    _options = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryDecisionRepository.findHistory() is not implemented"
+    );
+  }
+
+  async findRunByIdentifier(
+    _scope,
+    _identifier,
+    _transaction = null
+  ) {
+    throw new Error(
+      "RecoveryDecisionRepository.findRunByIdentifier() is not implemented"
     );
   }
 

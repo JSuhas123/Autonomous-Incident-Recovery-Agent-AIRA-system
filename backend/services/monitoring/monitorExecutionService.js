@@ -1,5 +1,13 @@
 "use strict";
 
+const {
+  Monitor,
+  MonitorCheck,
+} =
+  require(
+    "../../persistence/operational/legacyModels"
+  );
+
 /**
  * Monitor execution service.
  *
@@ -23,8 +31,6 @@ const dns     = require("dns").promises;
 const { URL } = require("url");
 
 const { assertSafeHost } = require("../../utils/ssrfGuard");
-const Monitor    = require("../../models/Monitor");
-const MonitorCheck = require("../../models/MonitorCheck");
 const { record: auditRecord } = require("../identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
 const signalIngestionService = require("../signals/signalIngestionService");

@@ -1,11 +1,21 @@
+﻿"use strict";
+
+const {
+  RunbookExecution,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 /**
  * Runbook Execution Service (Phase 2 Sprint 3)
  * Executes automated playbooks with step-by-step orchestration
  * Supports rollback, retry, and success criteria validation
  */
 
-const Runbook = require("../../models/Runbook");
-const RunbookExecution = require("../../models/RunbookExecution");
+const {
+  Runbook,
+} = require(
+  "../../persistence/operational/runtimeModels"
+);
 const AuditService = require("../observability/auditService");
 
 class RunbookExecutionService {
@@ -119,7 +129,7 @@ class RunbookExecutionService {
       // Only save to DB if we have a valid MongoDB connection
       let execution = null;
       try {
-        execution = new RunbookExecution(executionData);
+        execution = await RunbookExecution.create(executionData);
         await execution.save();
       } catch (dbError) {
         // If DB save fails (e.g., in tests), just use the object
@@ -170,7 +180,7 @@ class RunbookExecutionService {
           lastSuccessfulStep = step.stepNumber;
 
           console.log(
-            `[runbook-execution] ✓ Step ${step.stepNumber} completed successfully`
+            `[runbook-execution] âœ“ Step ${step.stepNumber} completed successfully`
           );
 
           if (execution.save && typeof execution.save === 'function') {
@@ -178,7 +188,7 @@ class RunbookExecutionService {
           }
         } catch (stepError) {
           console.error(
-            `[runbook-execution] ✗ Step ${step.stepNumber} failed:`,
+            `[runbook-execution] âœ— Step ${step.stepNumber} failed:`,
             stepError.message
           );
 
@@ -226,7 +236,7 @@ class RunbookExecutionService {
       }
 
       console.log(
-        `[runbook-execution] ✓ Runbook execution returned: ${execution.status}`
+        `[runbook-execution] âœ“ Runbook execution returned: ${execution.status}`
       );
 
       return execution;
@@ -279,7 +289,7 @@ class RunbookExecutionService {
             const handler = this.executionHandlers[rollbackStep.type];
             if (handler) {
               await handler(rollbackStep, {});
-              console.log(`[runbook-execution] ✓ Rollback step completed`);
+              console.log(`[runbook-execution] âœ“ Rollback step completed`);
             }
           } catch (rbError) {
             console.warn(`[runbook-execution] Rollback step failed:`, rbError.message);
@@ -575,3 +585,5 @@ class RunbookExecutionService {
 }
 
 module.exports = new RunbookExecutionService();
+
+

@@ -1,72 +1,135 @@
 "use strict";
 
-const RetentionArchive =
-  require(
-    "../../../models/RetentionArchive"
-  );
+/**
+ * Phase 11.11 Retention Tests
+ *
+ * Phase 13 persistence note:
+ *
+ * RetentionService no longer imports the legacy Mongo models directly.
+ * These tests therefore mock the provider-neutral operational model
+ * boundaries used by RetentionService.
+ */
 
-const IncidentMemory =
-  require(
-    "../../../models/IncidentMemory"
-  );
 
-const DecisionTrace =
-  require(
-    "../../../models/DecisionTrace"
-  );
+// ============================================================================
+// MOCK OPERATIONAL MODEL BOUNDARIES
+// ============================================================================
 
-const RunbookExecution =
-  require(
-    "../../../models/RunbookExecution"
-  );
+jest.mock(
+  "../../../persistence/operational/extendedModels",
+  () => ({
+    RetentionArchive: {
+      bulkWrite:
+        jest.fn(),
 
-const FailedMessage =
-  require(
-    "../../../models/FailedMessage"
-  );
+      find:
+        jest.fn(),
 
-const TenantConfig =
-  require(
-    "../../../models/TenantConfig"
-  );
+      findOne:
+        jest.fn(),
 
-const distributedLockService =
-  require(
-    "../distributedLockService"
-  );
+      deleteMany:
+        jest.fn(),
 
-const {
-  RetentionService,
-  DEFAULT_POLICY,
-} =
-  require(
-    "../retentionService"
-  );
+      countDocuments:
+        jest.fn(),
+    },
+
+
+    DecisionTrace: {
+      find:
+        jest.fn(),
+
+      findOne:
+        jest.fn(),
+
+      deleteMany:
+        jest.fn(),
+
+      countDocuments:
+        jest.fn(),
+
+      updateMany:
+        jest.fn(),
+    },
+
+
+    FailedMessage: {
+      find:
+        jest.fn(),
+
+      findOne:
+        jest.fn(),
+
+      deleteMany:
+        jest.fn(),
+
+      countDocuments:
+        jest.fn(),
+
+      updateMany:
+        jest.fn(),
+    },
+  })
+);
 
 
 jest.mock(
-  "../../../models/RetentionArchive"
+  "../../../persistence/operational/legacyModels",
+  () => ({
+    IncidentMemory: {
+      find:
+        jest.fn(),
+
+      findOne:
+        jest.fn(),
+
+      deleteMany:
+        jest.fn(),
+
+      countDocuments:
+        jest.fn(),
+
+      updateMany:
+        jest.fn(),
+    },
+
+
+    RunbookExecution: {
+      find:
+        jest.fn(),
+
+      findOne:
+        jest.fn(),
+
+      deleteMany:
+        jest.fn(),
+
+      countDocuments:
+        jest.fn(),
+
+      updateMany:
+        jest.fn(),
+    },
+  })
 );
 
 jest.mock(
-  "../../../models/IncidentMemory"
+  "../../../persistence/operational/identityModels",
+  () => ({
+    TenantConfig: {
+      find:
+        jest.fn(),
+
+      findOne:
+        jest.fn(),
+
+      countDocuments:
+        jest.fn(),
+    },
+  })
 );
 
-jest.mock(
-  "../../../models/DecisionTrace"
-);
-
-jest.mock(
-  "../../../models/RunbookExecution"
-);
-
-jest.mock(
-  "../../../models/FailedMessage"
-);
-
-jest.mock(
-  "../../../models/TenantConfig"
-);
 
 jest.mock(
   "../distributedLockService",
@@ -76,6 +139,51 @@ jest.mock(
   })
 );
 
+
+// ============================================================================
+// IMPORT THE SAME OBJECTS RETENTION SERVICE USES
+// ============================================================================
+
+const {
+  RetentionArchive,
+  DecisionTrace,
+  FailedMessage,
+} =
+  require(
+    "../../../persistence/operational/extendedModels"
+  );
+
+
+const {
+  IncidentMemory,
+  RunbookExecution,
+} =
+  require(
+    "../../../persistence/operational/legacyModels"
+  );
+
+
+const {
+  TenantConfig,
+} =
+  require(
+    "../../../persistence/operational/identityModels"
+  );
+
+
+const distributedLockService =
+  require(
+    "../distributedLockService"
+  );
+
+
+const {
+  RetentionService,
+  DEFAULT_POLICY,
+} =
+  require(
+    "../retentionService"
+  );
 
 describe(
   "Phase 11.11 Retention / Cleanup / Archival",

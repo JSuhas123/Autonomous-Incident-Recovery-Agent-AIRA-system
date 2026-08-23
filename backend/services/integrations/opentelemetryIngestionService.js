@@ -4,7 +4,7 @@ const crypto =
   require("node:crypto");
 
 const mongoose =
-  require("mongoose");
+  require("../../persistence/operational/mongooseCompat");
 
 const SIGNAL_TYPES = [
   "log",

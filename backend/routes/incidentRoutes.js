@@ -1,13 +1,17 @@
 "use strict";
 
+const {
+  isDatabaseIdentifier,
+} =
+  require(
+    "../utils/identifier"
+  );
+
 const express =
   require("express");
 
 const Joi =
   require("joi");
-
-const mongoose =
-  require("mongoose");
 
 const {
   Incident,
@@ -15,7 +19,7 @@ const {
   INCIDENT_SEVERITIES,
 } =
   require(
-    "../models/Incident"
+    "../persistence/operational/canonicalModels"
   );
 
 const incidentService =
@@ -402,8 +406,7 @@ async function loadIncident(
   }
 
   if (
-    !mongoose.Types.ObjectId
-      .isValid(
+    !isDatabaseIdentifier(
         incidentId
       )
   ) {
@@ -651,8 +654,7 @@ router.get(
 
       if (
         q.serviceId &&
-        mongoose.Types.ObjectId
-          .isValid(
+        isDatabaseIdentifier(
             q.serviceId
           )
       ) {
@@ -662,8 +664,7 @@ router.get(
 
       if (
         q.monitorId &&
-        mongoose.Types.ObjectId
-          .isValid(
+        isDatabaseIdentifier(
             q.monitorId
           )
       ) {
@@ -891,8 +892,7 @@ router.get(
       }
 
       if (
-        !mongoose.Types.ObjectId
-          .isValid(
+        !isDatabaseIdentifier(
             req.params
               .incidentId
           )
@@ -1963,8 +1963,7 @@ router.patch(
           null &&
         assigneeId !==
           undefined &&
-        !mongoose.Types.ObjectId
-          .isValid(
+        !isDatabaseIdentifier(
             assigneeId
           )
       ) {

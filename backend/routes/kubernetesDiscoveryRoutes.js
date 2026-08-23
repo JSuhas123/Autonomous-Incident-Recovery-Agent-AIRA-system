@@ -1,21 +1,27 @@
 "use strict";
 
+const {
+  isDatabaseIdentifier,
+} =
+  require(
+    "../utils/identifier"
+  );
+
+const {
+  IntegrationConnection,
+} =
+  require(
+    "../persistence/operational/operationalModels"
+  );
+
 const express =
   require("express");
-
-const mongoose =
-  require("mongoose");
 
 const router =
   express.Router({
     mergeParams:
       true,
   });
-
-const IntegrationConnection =
-  require(
-    "../models/IntegrationConnection"
-  );
 
 const {
   getSecretStorage,
@@ -94,8 +100,7 @@ async function getKubernetesConnection(
   connectionId
 ) {
   if (
-    !mongoose.Types.ObjectId
-      .isValid(
+    !isDatabaseIdentifier(
         connectionId
       )
   ) {

@@ -1,13 +1,12 @@
 "use strict";
 
-const mongoose =
-  require("mongoose");
+const { isDatabaseIdentifier } =
+  require("../../utils/identifier");
 
-const KubernetesResource =
-  require("../../models/KubernetesResource");
-
-const KubernetesResourceRelation =
-  require("../../models/KubernetesResourceRelation");
+const {
+  KubernetesResource,
+  KubernetesResourceRelation,
+} = require("../../persistence/operational/operationalModels");
 
 class KubernetesTopologyService {
   _buildScope({
@@ -39,10 +38,9 @@ class KubernetesTopologyService {
   }
 
   _validObjectId(value) {
-    return (
+    return Boolean(
       value &&
-      mongoose.Types.ObjectId
-        .isValid(value)
+      isDatabaseIdentifier(value)
     );
   }
 

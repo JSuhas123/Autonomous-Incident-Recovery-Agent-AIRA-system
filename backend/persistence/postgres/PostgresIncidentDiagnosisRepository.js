@@ -68,12 +68,16 @@ class PostgresIncidentDiagnosisRepository
               SELECT *
               FROM incidents.diagnoses
               WHERE
-                incident_id = $1
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
                 AND is_current = TRUE
               ORDER BY revision DESC
               LIMIT 1
             `,
             [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
               incident.id,
             ]
           );
@@ -84,6 +88,152 @@ class PostgresIncidentDiagnosisRepository
               scope
             )
           : null;
+      },
+      transaction
+    );
+  }
+
+  async findByIdentifier(
+    scope,
+    identifier,
+    transaction = null
+  ) {
+    const normalizedIdentifier =
+      normalizeId(
+        identifier
+      );
+
+    if (
+      !normalizedIdentifier
+    ) {
+      return null;
+    }
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await this.scope
+            .identityResolver
+            .resolveIncident(
+              client,
+              resolved,
+              scope.incidentId
+            );
+
+        if (
+          !incident
+        ) {
+          return null;
+        }
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM incidents.diagnoses
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+                AND (
+                  database_id = $4
+                  OR public_id = $4
+                  OR legacy_mongo_id = $4
+                  OR id::text = $4
+                )
+              ORDER BY revision DESC
+              LIMIT 1
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+              normalizedIdentifier,
+            ]
+          );
+
+        return result.rows[0]
+          ? mapDiagnosis(
+              result.rows[0],
+              scope
+            )
+          : null;
+      },
+      transaction
+    );
+  }
+
+  async findHistory(
+    scope,
+    options = {},
+    transaction = null
+  ) {
+    const limit =
+      Math.min(
+        100,
+        Math.max(
+          1,
+          Number(
+            options.limit ||
+            20
+          )
+        )
+      );
+
+    return this.scope.run(
+      scope,
+      async (
+        client,
+        resolved
+      ) => {
+        const incident =
+          await this.scope
+            .identityResolver
+            .resolveIncident(
+              client,
+              resolved,
+              scope.incidentId
+            );
+
+        if (
+          !incident
+        ) {
+          return [];
+        }
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM incidents.diagnoses
+              WHERE
+                organization_id = $1
+                AND environment_id = $2
+                AND incident_id = $3
+              ORDER BY revision DESC
+              LIMIT $4
+            `,
+            [
+              resolved.organizationUuid,
+              resolved.environmentUuid,
+              incident.id,
+              limit,
+            ]
+          );
+
+        return result.rows.map(
+          (
+            row
+          ) =>
+            mapDiagnosis(
+              row,
+              scope
+            )
+        );
       },
       transaction
     );
@@ -568,10 +718,10 @@ class PostgresIncidentDiagnosisRepository
 
               diagnosis.recommendedNextStep ===
                 undefined
-                ? null
-                : JSON.stringify(
-                    diagnosis.recommendedNextStep
-                  ),
+                  ? null
+                  : JSON.stringify(
+                      diagnosis.recommendedNextStep
+                    ),
 
               previousUuid,
 

@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const crypto =
   require(
@@ -10,10 +10,11 @@ const os =
     "node:os"
   );
 
-const WorkflowReplayRecord =
-  require(
-    "../../models/WorkflowReplayRecord"
-  );
+const {
+  WorkflowReplayRecord,
+} = require(
+  "../../persistence/operational/legacyModels"
+);
 
 const workflowRecoveryOrchestrator =
   require(
@@ -125,8 +126,8 @@ class DurableReplayService {
  * A resumed durable replay may change operational context
  * such as source/mode:
  *
- * PROCESS_RESTART → MANUAL
- * RESUME          → MANUAL_REPLAY
+ * PROCESS_RESTART â†’ MANUAL
+ * RESUME          â†’ MANUAL_REPLAY
  *
  * Those changes must NOT manufacture another logical replay.
  *

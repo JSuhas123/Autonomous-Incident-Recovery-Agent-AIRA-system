@@ -1,38 +1,85 @@
-'use strict';
+"use strict";
 
 /**
  * Agent Intelligence API Routes
  *
- * Endpoints for the Phase 12 canonical incident-intelligence workflow. *
+ * Phase 12 canonical incident-intelligence workflow.
+ *
  * SECURITY:
- * - All routes respect existing auth / tenant / RBAC middleware.
- * - No caller can directly invoke arbitrary agent tools.
- * - No arbitrary playbook execution is exposed through this API.
- * - Tenant isolation is enforced on every incident query.
- * - Production diagnosis always uses DiagnosisLifecycleService /
- *   DiagnosisCoordinator.
- * - Post-diagnosis recovery planning uses the authoritative runtime
- *   orchestrator through continueFromDiagnosis(). */
+ *
+ * - caller cannot invoke arbitrary agent tools
+ * - tenant + environment isolation required
+ * - incident reads use IncidentRepository
+ * - intelligence persistence uses AgentIntelligenceRunRepository
+ * - canonical diagnosis remains authoritative
+ */
 
-const express = require('express');
-const { v4: uuidv4 } = require('uuid');
+const express =
+  require(
+    "express"
+  );
 
-const router = express.Router();
+const {
+  v4: uuidv4,
+} =
+  require(
+    "uuid"
+  );
 
-const AgentIntelligenceRun = require('../models/AgentIntelligenceRun');
-const { Incident } = require('../models/Incident');
+const {
+  incidentRepository,
+  agentIntelligenceRunRepository,
+} =
+  require(
+    "../persistence/repositories"
+  );
+
+const {
+  requestContextMiddleware,
+} =
+  require(
+    "../middleware/requestContextMiddleware"
+  );
+
+const {
+  environmentContextMiddleware,
+} =
+  require(
+    "../middleware/environmentContextMiddleware"
+  );
 
 const {
   getAgentOrchestratorInstance,
-} = require('../agents/v2');
+} =
+  require(
+    "../agents/v2"
+  );
 
 const diagnosisLifecycleService =
   require(
-    '../services/diagnosis/diagnosisLifecycleService'
+    "../services/diagnosis/diagnosisLifecycleService"
   );
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /incidents/:incidentId/analyze
-// ─────────────────────────────────────────────────────────────────────────────
+
+const router =
+  express.Router();
+
+/*
+ * server.js already runs sessionAuthMiddleware before this router.
+ *
+ * Finish canonical context resolution here so every route receives:
+ *
+ * req.context.organizationId
+ * req.context.environmentId
+ */
+router.use(
+  requestContextMiddleware,
+  environmentContextMiddleware
+);
+
+
+// ============================================================================
+// ANALYZE
+// ============================================================================
 
 async function analyzeIncident(
   req,
@@ -41,41 +88,50 @@ async function analyzeIncident(
   try {
     const tenantId =
       req.auth
-        ?.tenantId;
+        ?.tenantId ||
+      req.context
+        ?.tenantId ||
+      null;
+
+    const organizationId =
+      req.context
+        ?.organizationId;
+
+    const environmentId =
+      req.context
+        ?.environmentId;
 
     const incidentId =
       req.params
         .incidentId;
 
     if (
-      !tenantId
+      !organizationId ||
+      !environmentId
     ) {
       return res
         .status(
-          401
+          400
         )
         .json({
           error:
-            "Unauthorized",
+            "Canonical organization and environment context are required",
+
+          code:
+            "AGENT_INTELLIGENCE_SCOPE_REQUIRED",
         });
     }
 
-    /*
-     * Always resolve the canonical persisted incident.
-     *
-     * Caller-provided signals must never replace server-side canonical
-     * investigation evidence.
-     */
     const incident =
-      await Incident
+      await incidentRepository
         .findOne({
           _id:
             incidentId,
 
-          organizationId:
-            tenantId,
-        })
-        .lean();
+          organizationId,
+
+          environmentId,
+        });
 
     if (
       !incident
@@ -90,37 +146,11 @@ async function analyzeIncident(
         });
     }
 
-    if (
-      !incident
-        .environmentId
-    ) {
-      return res
-        .status(
-          409
-        )
-        .json({
-          error:
-            "Incident is missing canonical environment scope",
-
-          code:
-            "INCIDENT_ENVIRONMENT_SCOPE_MISSING",
-
-          manualRequired:
-            true,
-        });
-    }
-
-    const organizationId =
+    const effectiveTenantId =
+      tenantId ||
       String(
-        incident
-          .organizationId ||
-        tenantId
-      );
-
-    const environmentId =
-      String(
-        incident
-          .environmentId
+        incident.organizationId ||
+        organizationId
       );
 
     const correlationId =
@@ -133,16 +163,9 @@ async function analyzeIncident(
       uuidv4();
 
     // ========================================================================
-    // 1. CANONICAL DIAGNOSIS
+    // CANONICAL DIAGNOSIS
     // ========================================================================
 
-    /*
-     * Explicit user-requested analysis intentionally calls runDiagnosis()
-     * directly instead of debounce-aware lifecycle callbacks.
-     *
-     * POST /analyze and /retry-analysis mean the authorized caller explicitly
-     * requested a new diagnosis revision.
-     */
     const diagnosisResult =
       await diagnosisLifecycleService
         .runDiagnosis({
@@ -151,9 +174,9 @@ async function analyzeIncident(
           environmentId,
 
           incidentId:
-            incident
-              ._id
-              .toString(),
+            String(
+              incident._id
+            ),
 
           reason:
             req.path
@@ -174,7 +197,7 @@ async function analyzeIncident(
     }
 
     // ========================================================================
-    // 2. RECOVERY PLANNING / ASSURANCE CONTINUATION
+    // RECOVERY PLANNING CONTINUATION
     // ========================================================================
 
     const orchestrator =
@@ -189,7 +212,8 @@ async function analyzeIncident(
             diagnosisResult
               .canonicalResult,
 
-          tenantId,
+          tenantId:
+            effectiveTenantId,
 
           organizationId,
 
@@ -250,10 +274,10 @@ async function analyzeIncident(
     }
 
     // ========================================================================
-    // 3. PERSIST RECOVERY/POST-DIAGNOSIS INTELLIGENCE TRACE
+    // PERSIST TRACE
     // ========================================================================
 
-    await AgentIntelligenceRun
+    await agentIntelligenceRunRepository
       .create({
         runId:
           runRecord
@@ -261,19 +285,31 @@ async function analyzeIncident(
 
         incidentId:
           runRecord
-            .incidentId,
+            .incidentId ||
+          incidentId,
 
         correlationId:
           runRecord
-            .correlationId,
+            .correlationId ||
+          correlationId,
 
-        tenantId,
+        correlationGroupId:
+          incident
+            .correlationGroupId ||
+          null,
+
+        tenantId:
+          effectiveTenantId,
 
         organizationId,
 
         environmentId,
 
         state:
+          runRecord
+            .state,
+
+        status:
           runRecord
             .state,
 
@@ -317,10 +353,6 @@ async function analyzeIncident(
               .agentTrace
           ),
 
-        // ====================================================================
-        // PHASE 12.12 - 12.14
-        // ====================================================================
-
         decisionTraceSchemaVersion:
           "12.14-v1",
 
@@ -338,10 +370,6 @@ async function analyzeIncident(
           runRecord
             .securityFindings ||
           [],
-
-        // ====================================================================
-        // EXISTING EXECUTION / EXPLANATION SUMMARY
-        // ====================================================================
 
         playbookExecutionId:
           runRecord
@@ -381,11 +409,24 @@ async function analyzeIncident(
                 .recommendations
                 .length
             : 0,
-      });
 
-    // ========================================================================
-    // 4. RESPONSE
-    // ========================================================================
+        metadata: {
+          diagnosisRunId:
+            diagnosisResult
+              .runId ||
+            null,
+
+          diagnosisId:
+            diagnosisResult
+              .diagnosisId ||
+            null,
+
+          diagnosisRevision:
+            diagnosisResult
+              .revision ||
+            null,
+        },
+      });
 
     return res
       .status(
@@ -454,15 +495,15 @@ async function analyzeIncident(
           null,
       });
   } catch (
-    err
+    error
   ) {
     console.error(
       "[agent-intelligence-routes] analyze error:",
-      err
+      error
     );
 
     if (
-      err.message
+      error.message
         ?.includes(
           "AgentOrchestrator has not been initialized"
         )
@@ -476,12 +517,12 @@ async function analyzeIncident(
             "Agent intelligence runtime unavailable",
 
           details:
-            err.message,
+            error.message,
         });
     }
 
     if (
-      err.code ===
+      error.code ===
       "TENANT_BOUNDARY_VIOLATION"
     ) {
       return res
@@ -493,12 +534,13 @@ async function analyzeIncident(
             "Tenant boundary violation",
 
           code:
-            err.code,
+            error.code,
         });
     }
 
     return res
       .status(
+        error.status ||
         500
       )
       .json({
@@ -506,226 +548,298 @@ async function analyzeIncident(
           "Agent analysis failed",
 
         details:
-          err.message,
+          error.message,
       });
   }
 }
 
+
 router.post(
-  '/:incidentId/analyze',
+  "/:incidentId/analyze",
   analyzeIncident
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /incidents/:incidentId/intelligence
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ============================================================================
+// INTELLIGENCE
+// ============================================================================
 
 router.get(
-  '/:incidentId/intelligence',
-  async (req, res) => {
+  "/:incidentId/intelligence",
+  async (
+    req,
+    res
+  ) => {
     try {
-      const tenantId = req.auth?.tenantId;
-      const incidentId = req.params.incidentId;
-
-      if (!tenantId) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-        });
-      }
+      const incidentId =
+        req.params
+          .incidentId;
 
       const run =
-        await AgentIntelligenceRun.findOne({
-          tenantId,
-          incidentId,
-        })
-          .sort({ createdAt: -1 })
-          .lean();
+        await agentIntelligenceRunRepository
+          .findLatestForIncident(
+            _resolveScope(
+              req,
+              incidentId
+            )
+          );
 
-      if (!run) {
-        return res.status(404).json({
-          error:
-            'No intelligence run found for this incident',
-        });
+      if (
+        !run
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "No intelligence run found for this incident",
+          });
       }
 
       return res.json(
-        _serialiseRun(run)
+        _serialiseRun(
+          run
+        )
       );
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        '[agent-intelligence-routes] intelligence retrieval error:',
-        err
+        "[agent-intelligence-routes] intelligence retrieval error:",
+        error
       );
 
-      return res.status(500).json({
-        error:
-          'Failed to retrieve intelligence',
-        details: err.message,
-      });
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          error:
+            "Failed to retrieve intelligence",
+
+          details:
+            error.message,
+        });
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /incidents/:incidentId/evidence
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ============================================================================
+// EVIDENCE
+// ============================================================================
 
 router.get(
-  '/:incidentId/evidence',
-  async (req, res) => {
+  "/:incidentId/evidence",
+  async (
+    req,
+    res
+  ) => {
     try {
-      const tenantId = req.auth?.tenantId;
-      const incidentId = req.params.incidentId;
-
-      if (!tenantId) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-        });
-      }
+      const incidentId =
+        req.params
+          .incidentId;
 
       const run =
-        await AgentIntelligenceRun.findOne({
-          tenantId,
-          incidentId,
-        })
-          .sort({ createdAt: -1 })
-          .lean();
+        await agentIntelligenceRunRepository
+          .findLatestForIncident(
+            _resolveScope(
+              req,
+              incidentId
+            )
+          );
 
-      if (!run) {
-        return res.status(404).json({
-          error:
-            'No intelligence run found',
-        });
+      if (
+        !run
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "No intelligence run found",
+          });
       }
 
       const investigationRecord =
-        (run.agentTrace || []).find(
-          (record) =>
-            record.agent ===
-            'InvestigationAgent'
-        );
+        (
+          run.agentTrace ||
+          []
+        )
+          .find(
+            (
+              record
+            ) =>
+              record.agent ===
+              "InvestigationAgent"
+          );
 
       const evidence =
-        investigationRecord?.result
+        investigationRecord
+          ?.result
           ?.evidencePackage ||
-        investigationRecord?.result
+        investigationRecord
+          ?.result
           ?.evidence ||
         null;
 
       return res.json({
         incidentId,
+
         evidence,
       });
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        '[agent-intelligence-routes] evidence retrieval error:',
-        err
+        "[agent-intelligence-routes] evidence retrieval error:",
+        error
       );
 
-      return res.status(500).json({
-        error:
-          'Failed to retrieve evidence',
-        details: err.message,
-      });
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          error:
+            "Failed to retrieve evidence",
+
+          details:
+            error.message,
+        });
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /incidents/:incidentId/diagnosis
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ============================================================================
+// DIAGNOSIS
+// ============================================================================
 
 router.get(
-  '/:incidentId/diagnosis',
-  async (req, res) => {
+  "/:incidentId/diagnosis",
+  async (
+    req,
+    res
+  ) => {
     try {
-      const tenantId = req.auth?.tenantId;
-      const incidentId = req.params.incidentId;
-
-      if (!tenantId) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-        });
-      }
+      const incidentId =
+        req.params
+          .incidentId;
 
       const run =
-        await AgentIntelligenceRun.findOne({
-          tenantId,
-          incidentId,
-        })
-          .sort({ createdAt: -1 })
-          .lean();
+        await agentIntelligenceRunRepository
+          .findLatestForIncident(
+            _resolveScope(
+              req,
+              incidentId
+            )
+          );
 
-      if (!run) {
-        return res.status(404).json({
-          error:
-            'No intelligence run found',
-        });
+      if (
+        !run
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "No intelligence run found",
+          });
       }
 
       const diagnosisRecord =
-        (run.agentTrace || []).find(
-          (record) =>
-            record.agent ===
-            'DiagnosisAgent'
-        );
+        (
+          run.agentTrace ||
+          []
+        )
+          .find(
+            (
+              record
+            ) =>
+              record.agent ===
+              "DiagnosisAgent"
+          );
 
       const diagnosis =
-        diagnosisRecord?.result
+        diagnosisRecord
+          ?.result
           ?.diagnosisResult ||
-        diagnosisRecord?.result
+        diagnosisRecord
+          ?.result
           ?.diagnosis ||
         null;
 
       return res.json({
         incidentId,
+
         diagnosis,
       });
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        '[agent-intelligence-routes] diagnosis retrieval error:',
-        err
+        "[agent-intelligence-routes] diagnosis retrieval error:",
+        error
       );
 
-      return res.status(500).json({
-        error:
-          'Failed to retrieve diagnosis',
-        details: err.message,
-      });
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          error:
+            "Failed to retrieve diagnosis",
+
+          details:
+            error.message,
+        });
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /incidents/:incidentId/agent-trace
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ============================================================================
+// AGENT TRACE
+// ============================================================================
 
 router.get(
-  '/:incidentId/agent-trace',
-  async (req, res) => {
+  "/:incidentId/agent-trace",
+  async (
+    req,
+    res
+  ) => {
     try {
-      const tenantId = req.auth?.tenantId;
-      const incidentId = req.params.incidentId;
-
-      if (!tenantId) {
-        return res.status(401).json({
-          error: 'Unauthorized',
-        });
-      }
+      const incidentId =
+        req.params
+          .incidentId;
 
       const run =
-        await AgentIntelligenceRun.findOne({
-          tenantId,
-          incidentId,
-        })
-          .sort({ createdAt: -1 })
-          .lean();
+        await agentIntelligenceRunRepository
+          .findLatestForIncident(
+            _resolveScope(
+              req,
+              incidentId
+            )
+          );
 
-      if (!run) {
-        return res.status(404).json({
-          error:
-            'No intelligence run found',
-        });
+      if (
+        !run
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "No intelligence run found",
+          });
       }
 
       return res.json({
@@ -741,59 +855,126 @@ router.get(
           run.state,
 
         manualRequired:
-          run.manualRequired,
+          Boolean(
+            run.manualRequired
+          ),
 
         manualReason:
-          run.manualReason,
+          run.manualReason ||
+          null,
 
         agentTrace:
           _safeTrace(
-            run.agentTrace || []
+            run.agentTrace ||
+            []
           ),
       });
-    } catch (err) {
+    } catch (
+      error
+    ) {
       console.error(
-        '[agent-intelligence-routes] agent trace retrieval error:',
-        err
+        "[agent-intelligence-routes] agent trace retrieval error:",
+        error
       );
 
-      return res.status(500).json({
-        error:
-          'Failed to retrieve agent trace',
-        details: err.message,
-      });
+      return res
+        .status(
+          error.status ||
+          500
+        )
+        .json({
+          error:
+            "Failed to retrieve agent trace",
+
+          details:
+            error.message,
+        });
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /incidents/:incidentId/retry-analysis
-// ─────────────────────────────────────────────────────────────────────────────
+
+// ============================================================================
+// RETRY
+// ============================================================================
 
 router.post(
-  '/:incidentId/retry-analysis',
+  "/:incidentId/retry-analysis",
   analyzeIncident
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
-function _safeIncidentInput(doc) {
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function _resolveScope(
+  req,
+  incidentId
+) {
+  const organizationId =
+    req.context
+      ?.organizationId;
+
+  const environmentId =
+    req.context
+      ?.environmentId;
+
+  if (
+    !organizationId ||
+    !environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Canonical organization and environment context are required"
+      ),
+      {
+        code:
+          "AGENT_INTELLIGENCE_SCOPE_REQUIRED",
+
+        status:
+          400,
+      }
+    );
+  }
+
+  return {
+    organizationId:
+      String(
+        organizationId
+      ),
+
+    environmentId:
+      String(
+        environmentId
+      ),
+
+    incidentId:
+      String(
+        incidentId
+      ),
+  };
+}
+
+
+function _safeIncidentInput(
+  doc
+) {
   return {
     id:
-      doc._id?.toString() ||
+      doc._id
+        ?.toString() ||
       doc.id ||
       null,
 
     type:
       doc.incidentType ||
       doc.type ||
-      'unknown',
+      "unknown",
 
     severity:
       doc.severity ||
-      'unknown',
+      "unknown",
 
     title:
       doc.title ||
@@ -813,82 +994,106 @@ function _safeIncidentInput(doc) {
 
     evidence:
       _stripSensitive(
-        doc.evidence || {}
+        doc.evidence ||
+        {}
       ),
 
     signal:
       _stripSensitive(
-        doc.signal || {}
+        doc.signal ||
+        {}
       ),
 
     tags:
-      Array.isArray(doc.tags)
+      Array.isArray(
+        doc.tags
+      )
         ? doc.tags
         : [],
   };
 }
 
-function _safeTrace(trace) {
-  if (!Array.isArray(trace)) {
+
+function _safeTrace(
+  trace
+) {
+  if (
+    !Array.isArray(
+      trace
+    )
+  ) {
     return [];
   }
 
-  return trace.map((record) => ({
-    agent:
-      record.agent ||
-      null,
+  return trace.map(
+    (
+      record
+    ) => ({
+      agent:
+        record.agent ||
+        null,
 
-    version:
-      record.version ||
-      null,
+      version:
+        record.version ||
+        null,
 
-    status:
-      record.status ||
-      null,
+      status:
+        record.status ||
+        null,
 
-    startedAt:
-      record.startedAt ||
-      null,
+      startedAt:
+        record.startedAt ||
+        null,
 
-    completedAt:
-      record.completedAt ||
-      null,
+      completedAt:
+        record.completedAt ||
+        null,
 
-    durationMs:
-      typeof record.durationMs === 'number'
-        ? record.durationMs
-        : null,
+      durationMs:
+        typeof record.durationMs ===
+          "number"
+          ? record.durationMs
+          : null,
 
-    confidence:
-      typeof record.confidence === 'number'
-        ? record.confidence
-        : null,
+      confidence:
+        typeof record.confidence ===
+          "number"
+          ? record.confidence
+          : null,
 
-    warnings:
-      Array.isArray(record.warnings)
-        ? record.warnings
-        : [],
+      warnings:
+        Array.isArray(
+          record.warnings
+        )
+          ? record.warnings
+          : [],
 
-    result:
-      record.result
-        ? _stripSensitive(
-            record.result
-          )
-        : null,
+      result:
+        record.result
+          ? _stripSensitive(
+              record.result
+            )
+          : null,
 
-    fallbackUsed:
-      Boolean(record.fallbackUsed),
+      fallbackUsed:
+        Boolean(
+          record.fallbackUsed
+        ),
 
-    error:
-      record.error
-        ? _stripSensitiveError(
-            record.error
-          )
-        : null,
-  }));
+      error:
+        record.error
+          ? _stripSensitiveError(
+              record.error
+            )
+          : null,
+    })
+  );
 }
 
-function _serialiseRun(run) {
+
+function _serialiseRun(
+  run
+) {
   return {
     runId:
       run.runId,
@@ -926,51 +1131,73 @@ function _serialiseRun(run) {
       null,
 
     learningCount:
-      run.learningCount || 0,
+      run.learningCount ||
+      0,
 
     agentCount:
       Array.isArray(
         run.agentTrace
       )
-        ? run.agentTrace.length
+        ? run.agentTrace
+            .length
         : 0,
   };
 }
 
+
 const SECRET_KEYS =
   /password|secret|token|api[_-]?key|private[_-]?key|credential|authorization|auth[_-]?header|certificate|cert/i;
 
-function _stripSensitive(value) {
+
+function _stripSensitive(
+  value
+) {
   if (
-    value === null ||
-    value === undefined
+    value ===
+      null ||
+    value ===
+      undefined
   ) {
     return value;
   }
 
-  if (Array.isArray(value)) {
+  if (
+    Array.isArray(
+      value
+    )
+  ) {
     return value.map(
       _stripSensitive
     );
   }
 
   if (
-    typeof value !== 'object'
+    typeof value !==
+    "object"
   ) {
     return value;
   }
 
-  const out = {};
+  const out =
+    {};
 
   for (
-    const [key, nestedValue]
-    of Object.entries(value)
+    const [
+      key,
+      nestedValue,
+    ]
+    of Object.entries(
+      value
+    )
   ) {
     if (
-      SECRET_KEYS.test(key)
+      SECRET_KEYS.test(
+        key
+      )
     ) {
       out[key] =
-        '[REDACTED]';
+        "[REDACTED]";
+
       continue;
     }
 
@@ -983,15 +1210,20 @@ function _stripSensitive(value) {
   return out;
 }
 
-function _stripSensitiveError(error) {
+
+function _stripSensitiveError(
+  error
+) {
   if (
-    typeof error === 'string'
+    typeof error ===
+    "string"
   ) {
     return error;
   }
 
   if (
-    error instanceof Error
+    error instanceof
+      Error
   ) {
     return {
       name:
@@ -1007,4 +1239,6 @@ function _stripSensitiveError(error) {
   );
 }
 
-module.exports = router;
+
+module.exports =
+  router;
