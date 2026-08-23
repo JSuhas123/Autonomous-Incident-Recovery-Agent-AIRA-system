@@ -1,191 +1,565 @@
 "use strict";
 
-const MongoIncidentRepository =
-  require(
-    "../mongo/MongoIncidentRepository"
+// ============================================================================
+// AIRA PERSISTENCE REPOSITORY FACTORY
+// ============================================================================
+//
+// Phase 13 — Enterprise Data Architecture
+//
+// Responsibilities:
+//
+// - expose database-neutral repository instances
+// - keep MongoDB authoritative before PostgreSQL cutover
+// - allow explicit PostgreSQL provider selection
+// - enable controlled Mongo-primary/PostgreSQL-shadow reads
+// - preserve provider-specific transaction semantics
+// - preserve provider-specific identifier policies
+//
+// IMPORTANT:
+//
+// MIGRATION_MODE=shadow does NOT make PostgreSQL authoritative.
+//
+// In shadow mode:
+//
+// MongoDB = client-visible primary
+// PostgreSQL = comparison-only secondary
+//
+// ============================================================================
+
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const provider =
+  String(
+    process.env
+      .PERSISTENCE_PROVIDER ||
+    "mongo"
+  )
+    .trim()
+    .toLowerCase();
+
+const migrationMode =
+  String(
+    process.env
+      .MIGRATION_MODE ||
+    "disabled"
+  )
+    .trim()
+    .toLowerCase();
+
+const supportedProviders =
+  new Set([
+    "mongo",
+    "postgres",
+  ]);
+
+if (
+  !supportedProviders
+    .has(
+      provider
+    )
+) {
+  throw Object.assign(
+    new Error(
+      `Unsupported persistence provider: ${provider}`
+    ),
+    {
+      code:
+        "PERSISTENCE_PROVIDER_INVALID",
+    }
   );
+}
 
-const MongoIncidentEventRepository =
-  require(
-    "../mongo/MongoIncidentEventRepository"
-  );
 
-  const MongoSignalRepository =
-  require(
-    "../mongo/MongoSignalRepository"
-  );
+// ============================================================================
+// BUILD ACTIVE REPOSITORY SET
+// ============================================================================
 
-const MongoIncidentLifecycleRepository =
-  require(
-    "../mongo/MongoIncidentLifecycleRepository"
-  );
+let repositories;
 
-  const MongoSignalCorrelationRepository =
-  require(
-    "../mongo/MongoSignalCorrelationRepository"
-  );
+if (
+  provider ===
+  "postgres"
+) {
+  repositories =
+    buildPostgresRepositories();
+} else {
+  repositories =
+    buildMongoRepositories();
 
-const MongoCorrelationTopologyRepository =
-  require(
-    "../mongo/MongoCorrelationTopologyRepository"
-  );
+  /*
+   * --------------------------------------------------------------------------
+   * PHASE 13.5C — SHADOW READS
+   * --------------------------------------------------------------------------
+   *
+   * Mongo remains authoritative.
+   *
+   * We wrap only repositories that have explicitly completed shadow-read
+   * implementation and verification.
+   *
+   * PostgreSQL repository construction itself does not establish a database
+   * connection because AIRA's PostgreSQL pool is lazy.
+   * --------------------------------------------------------------------------
+   */
+  if (
+    migrationMode ===
+    "shadow"
+  ) {
+    repositories =
+      applyShadowRepositories(
+        repositories
+      );
+  }
+}
 
-const MongoAgentIntelligenceRunRepository =
-  require(
-    "../mongo/MongoAgentIntelligenceRunRepository"
-  );
 
-const MongoIncidentDiagnosisRepository =
-  require(
-    "../mongo/MongoIncidentDiagnosisRepository"
-  );
-
-const MongoDecisionTraceRepository =
-  require(
-    "../mongo/MongoDecisionTraceRepository"
-  );
-
-const MongoPersistenceTransactionManager =
-  require(
-    "../transactions/MongoPersistenceTransactionManager"
-  );
-
-const MongoIdentifierPolicy =
-  require(
-    "../identifiers/MongoIdentifierPolicy"
-  );
-
-const MongoRecoveryDecisionRepository =
-  require(
-    "../mongo/MongoRecoveryDecisionRepository"
-  );
-
-const MongoExecutionAuthorizationRepository =
-  require(
-    "../mongo/MongoExecutionAuthorizationRepository"
-  );
-
-const MongoRuntimeRecoveryCheckpointRepository =
-  require(
-    "../mongo/MongoRuntimeRecoveryCheckpointRepository"
-  );
-
-const MongoApprovalRepository =
-  require(
-    "../mongo/MongoApprovalRepository"
-  );
-
-const MongoAuditRepository =
-  require(
-    "../mongo/MongoAuditRepository"
-  );
-
-const MongoPolicyRepository =
-  require(
-    "../mongo/MongoPolicyRepository"
-  );
-/**
- * Phase 13 — Persistence Provider
- *
- * MongoDB remains the active persistence implementation while AIRA is
- * establishing stable domain repository boundaries.
- *
- * Business services must import repository instances from this module.
- *
- * PostgreSQL adapters will later replace individual implementations
- * behind this boundary only after:
- *
- * - PostgreSQL schema exists;
- * - backfill is complete;
- * - parity tests pass;
- * - tenant isolation passes;
- * - concurrency semantics are reproduced;
- * - rollback is available.
- */
-
-const incidentRepository =
-  new MongoIncidentRepository();
-
-const incidentEventRepository =
-  new MongoIncidentEventRepository();
-
-const incidentLifecycleRepository =
-  new MongoIncidentLifecycleRepository();
-
-const signalRepository =
-  new MongoSignalRepository();  
-
-const signalCorrelationRepository =
-  new MongoSignalCorrelationRepository();
-
-const correlationTopologyRepository =
-  new MongoCorrelationTopologyRepository();
-
-const agentIntelligenceRunRepository =
-  new MongoAgentIntelligenceRunRepository();
-
-const incidentDiagnosisRepository =
-  new MongoIncidentDiagnosisRepository();
-
-const decisionTraceRepository =
-  new MongoDecisionTraceRepository();
-
-const persistenceTransactionManager =
-  new MongoPersistenceTransactionManager();
-
-const persistenceIdentifierPolicy =
-  new MongoIdentifierPolicy();
-
-const recoveryDecisionRepository =
-  new MongoRecoveryDecisionRepository();
-
-const executionAuthorizationRepository =
-  new MongoExecutionAuthorizationRepository();
-
-const runtimeRecoveryCheckpointRepository =
-  new MongoRuntimeRecoveryCheckpointRepository();
-
-const approvalRepository =
-  new MongoApprovalRepository();
-
-const auditRepository =
-  new MongoAuditRepository();
-
-const policyRepository =
-  new MongoPolicyRepository();
+// ============================================================================
+// PUBLIC EXPORTS
+// ============================================================================
 
 module.exports = {
-  incidentRepository,
+  ...repositories,
 
-  incidentEventRepository,
+  persistenceProvider:
+    provider,
 
-  incidentLifecycleRepository,
-
-  signalRepository,
-
-  signalCorrelationRepository,
-
-  correlationTopologyRepository,
-
-  agentIntelligenceRunRepository,
-
-  incidentDiagnosisRepository,
-
-  decisionTraceRepository,
-
-  persistenceTransactionManager,
-
-  persistenceIdentifierPolicy,
-
-  recoveryDecisionRepository,
-
-executionAuthorizationRepository,
-
-runtimeRecoveryCheckpointRepository,
-
-approvalRepository,
-
-auditRepository,
-
-policyRepository,
+  migrationMode,
 };
+
+
+// ============================================================================
+// MONGO REPOSITORIES
+// ============================================================================
+
+function buildMongoRepositories() {
+  const MongoIncidentRepository =
+    require(
+      "../mongo/MongoIncidentRepository"
+    );
+
+  const MongoIncidentEventRepository =
+    require(
+      "../mongo/MongoIncidentEventRepository"
+    );
+
+  const MongoIncidentLifecycleRepository =
+    require(
+      "../mongo/MongoIncidentLifecycleRepository"
+    );
+
+  const MongoSignalRepository =
+    require(
+      "../mongo/MongoSignalRepository"
+    );
+
+  const MongoSignalCorrelationRepository =
+    require(
+      "../mongo/MongoSignalCorrelationRepository"
+    );
+
+  const MongoCorrelationTopologyRepository =
+    require(
+      "../mongo/MongoCorrelationTopologyRepository"
+    );
+
+  const MongoAgentIntelligenceRunRepository =
+    require(
+      "../mongo/MongoAgentIntelligenceRunRepository"
+    );
+
+  const MongoIncidentDiagnosisRepository =
+    require(
+      "../mongo/MongoIncidentDiagnosisRepository"
+    );
+
+  const MongoDecisionTraceRepository =
+    require(
+      "../mongo/MongoDecisionTraceRepository"
+    );
+
+  const MongoRecoveryDecisionRepository =
+    require(
+      "../mongo/MongoRecoveryDecisionRepository"
+    );
+
+  const MongoExecutionAuthorizationRepository =
+    require(
+      "../mongo/MongoExecutionAuthorizationRepository"
+    );
+
+  const MongoRuntimeRecoveryCheckpointRepository =
+    require(
+      "../mongo/MongoRuntimeRecoveryCheckpointRepository"
+    );
+
+  const MongoApprovalRepository =
+    require(
+      "../mongo/MongoApprovalRepository"
+    );
+
+  const MongoAuditRepository =
+    require(
+      "../mongo/MongoAuditRepository"
+    );
+
+  const MongoPolicyRepository =
+    require(
+      "../mongo/MongoPolicyRepository"
+    );
+
+  const MongoWorkflowOutboxRepository =
+    require(
+      "../mongo/MongoWorkflowOutboxRepository"
+    );
+
+  const MongoPersistenceTransactionManager =
+    require(
+      "../transactions/MongoPersistenceTransactionManager"
+    );
+
+  const MongoIdentifierPolicy =
+    require(
+      "../identifiers/MongoIdentifierPolicy"
+    );
+
+  return {
+    incidentRepository:
+      new MongoIncidentRepository(),
+
+    incidentEventRepository:
+      new MongoIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new MongoIncidentLifecycleRepository(),
+
+    signalRepository:
+      new MongoSignalRepository(),
+
+    signalCorrelationRepository:
+      new MongoSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new MongoCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new MongoAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new MongoIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new MongoDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new MongoRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new MongoExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new MongoRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new MongoApprovalRepository(),
+
+    auditRepository:
+      new MongoAuditRepository(),
+
+    policyRepository:
+      new MongoPolicyRepository(),
+
+    workflowOutboxRepository:
+      new MongoWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new MongoPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new MongoIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// POSTGRESQL REPOSITORIES
+// ============================================================================
+
+function buildPostgresRepositories() {
+  const PostgresIncidentRepository =
+    require(
+      "../postgres/PostgresIncidentRepository"
+    );
+
+  const PostgresIncidentEventRepository =
+    require(
+      "../postgres/PostgresIncidentEventRepository"
+    );
+
+  const PostgresIncidentLifecycleRepository =
+    require(
+      "../postgres/PostgresIncidentLifecycleRepository"
+    );
+
+  const PostgresSignalRepository =
+    require(
+      "../postgres/PostgresSignalRepository"
+    );
+
+  const PostgresSignalCorrelationRepository =
+    require(
+      "../postgres/PostgresSignalCorrelationRepository"
+    );
+
+  const PostgresCorrelationTopologyRepository =
+    require(
+      "../postgres/PostgresCorrelationTopologyRepository"
+    );
+
+  const PostgresAgentIntelligenceRunRepository =
+    require(
+      "../postgres/PostgresAgentIntelligenceRunRepository"
+    );
+
+  const PostgresIncidentDiagnosisRepository =
+    require(
+      "../postgres/PostgresIncidentDiagnosisRepository"
+    );
+
+  const PostgresDecisionTraceRepository =
+    require(
+      "../postgres/PostgresDecisionTraceRepository"
+    );
+
+  const PostgresRecoveryDecisionRepository =
+    require(
+      "../postgres/PostgresRecoveryDecisionRepository"
+    );
+
+  const PostgresExecutionAuthorizationRepository =
+    require(
+      "../postgres/PostgresExecutionAuthorizationRepository"
+    );
+
+  const PostgresRuntimeRecoveryCheckpointRepository =
+    require(
+      "../postgres/PostgresRuntimeRecoveryCheckpointRepository"
+    );
+
+  const PostgresApprovalRepository =
+    require(
+      "../postgres/PostgresApprovalRepository"
+    );
+
+  const PostgresAuditRepository =
+    require(
+      "../postgres/PostgresAuditRepository"
+    );
+
+  const PostgresPolicyRepository =
+    require(
+      "../postgres/PostgresPolicyRepository"
+    );
+
+  const PostgresWorkflowOutboxRepository =
+    require(
+      "../postgres/PostgresWorkflowOutboxRepository"
+    );
+
+  const PostgresPersistenceTransactionManager =
+    require(
+      "../transactions/PostgresPersistenceTransactionManager"
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * This concrete implementation actually exists at:
+   *
+   * persistence/postgres/PostgresIdentifierPolicy.js
+   *
+   * Do NOT instantiate PersistenceIdentifierPolicy here.
+   * PersistenceIdentifierPolicy is the database-neutral contract.
+   */
+  const PostgresIdentifierPolicy =
+    require(
+      "../postgres/PostgresIdentifierPolicy"
+    );
+
+  return {
+    incidentRepository:
+      new PostgresIncidentRepository(),
+
+    incidentEventRepository:
+      new PostgresIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new PostgresIncidentLifecycleRepository(),
+
+    signalRepository:
+      new PostgresSignalRepository(),
+
+    signalCorrelationRepository:
+      new PostgresSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new PostgresCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new PostgresAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new PostgresIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new PostgresDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new PostgresRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new PostgresExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new PostgresRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new PostgresApprovalRepository(),
+
+    auditRepository:
+      new PostgresAuditRepository(),
+
+    policyRepository:
+      new PostgresPolicyRepository(),
+
+    workflowOutboxRepository:
+      new PostgresWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new PostgresPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new PostgresIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// PHASE 13.5C SHADOW REPOSITORIES
+// ============================================================================
+
+function applyShadowRepositories(
+  primaryRepositories
+) {
+  if (
+    !primaryRepositories
+  ) {
+    throw Object.assign(
+      new Error(
+        "Primary repositories are required for shadow mode"
+      ),
+      {
+        code:
+          "SHADOW_PRIMARY_REPOSITORIES_REQUIRED",
+      }
+    );
+  }
+
+  const postgresRepositories =
+    buildPostgresRepositories();
+
+  const ShadowIncidentRepository =
+    require(
+      "../migration/ShadowIncidentRepository"
+    );
+
+  const ShadowIncidentEventRepository =
+    require(
+      "../migration/ShadowIncidentEventRepository"
+    );
+
+  const ShadowIncidentLifecycleRepository =
+    require(
+      "../migration/ShadowIncidentLifecycleRepository"
+    );
+
+  const ShadowSignalRepository =
+    require(
+      "../migration/ShadowSignalRepository"
+    );
+
+  return {
+    ...primaryRepositories,
+
+    incidentRepository:
+      new ShadowIncidentRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentRepository,
+      }),
+
+    incidentEventRepository:
+      new ShadowIncidentEventRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentEventRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentEventRepository,
+      }),
+
+    incidentLifecycleRepository:
+      new ShadowIncidentLifecycleRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentLifecycleRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentLifecycleRepository,
+      }),
+
+    signalRepository:
+      new ShadowSignalRepository({
+        primaryRepository:
+          primaryRepositories
+            .signalRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .signalRepository,
+      }),
+  };
+}
+
+
+// ============================================================================
+// FACTORY EXPORTS
+// ============================================================================
+//
+// These are useful for:
+//
+// - migration tests
+// - provider-specific tests
+// - shadow tests
+// - cutover validation
+//
+// ============================================================================
+
+module.exports
+  .buildMongoRepositories =
+  buildMongoRepositories;
+
+module.exports
+  .buildPostgresRepositories =
+  buildPostgresRepositories;
+
+module.exports
+  .applyShadowRepositories =
+  applyShadowRepositories;

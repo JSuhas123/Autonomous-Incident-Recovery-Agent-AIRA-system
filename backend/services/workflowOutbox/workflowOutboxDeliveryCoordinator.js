@@ -213,6 +213,12 @@ class WorkflowOutboxDeliveryCoordinator {
             claimToken:
               context.claimToken,
 
+            organizationId:
+  event.organizationId,
+
+environmentId:
+  event.environmentId,
+
             error,
 
             retryable:
@@ -295,6 +301,11 @@ class WorkflowOutboxDeliveryCoordinator {
 
             claimToken:
               context.claimToken,
+            organizationId:
+  event.organizationId,
+
+environmentId:
+  event.environmentId,
 
             reason,
 

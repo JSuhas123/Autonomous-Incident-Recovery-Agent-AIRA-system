@@ -1,17 +1,11 @@
 "use strict";
 
-/**
- * Phase 13 — read-only persistence boundary used by signal correlation.
- *
- * The correlation engine should know that topology relationships exist,
- * but must not know whether those relationships live in MongoDB,
- * PostgreSQL, a graph store, or another future implementation.
- */
 class CorrelationTopologyRepository {
   async hasServiceDependency(
     _scope,
     _firstServiceId,
-    _secondServiceId
+    _secondServiceId,
+    _transaction = null
   ) {
     throw new Error(
       "CorrelationTopologyRepository.hasServiceDependency() is not implemented"
@@ -21,7 +15,8 @@ class CorrelationTopologyRepository {
   async hasResourceRelationship(
     _scope,
     _firstNode,
-    _secondNode
+    _secondNode,
+    _transaction = null
   ) {
     throw new Error(
       "CorrelationTopologyRepository.hasResourceRelationship() is not implemented"

@@ -20,7 +20,8 @@ class AgentIntelligenceRunRepository {
   }
 
   async findLatestForIncident(
-    _scope
+    _scope,
+    _transaction = null
   ) {
     throw new Error(
       "AgentIntelligenceRunRepository.findLatestForIncident() is not implemented"

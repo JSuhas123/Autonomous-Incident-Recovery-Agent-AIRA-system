@@ -1,5 +1,12 @@
 "use strict";
 
+const {
+  workflowOutboxRepository,
+} =
+  require(
+    "../../persistence/repositories"
+  );
+
 const WorkflowOutboxEvent =
   require(
     "../../models/WorkflowOutboxEvent"
@@ -20,31 +27,28 @@ const {
     "./workflowOutboxContracts"
   );
 
-/*
+/**
  * ============================================================================
- * AIRA PHASE 11.3.4
+ * AIRA PHASE 11.3.4 / PHASE 13.4E2
  * WORKFLOW OUTBOX PERSISTENCE SERVICE
  * ============================================================================
  *
- * Responsibilities:
+ * Phase 13.4E2 moves durable outbox persistence behind a repository boundary.
  *
- * 1. Persist durable workflow handoff intent.
- * 2. Guarantee deterministic create-or-return-existing semantics.
- * 3. Detect identity / payload conflicts.
- * 4. Survive concurrent producer duplicate-key races.
- * 5. Preserve tenant and workflow scope.
- * 6. Never manufacture execution authority.
+ * Production:
+ *
+ *   workflowOutboxRepository
+ *
+ * Legacy unit tests:
+ *
+ *   WorkflowOutboxEvent test double
+ *
+ * The compatibility path is intentionally limited to the injected
+ * Mongoose/model-style dependency. PostgreSQL remains strictly tenant scoped.
  *
  * IMPORTANT:
  *
- * The outbox is a durable workflow transport boundary.
- *
- * It is NOT:
- *
- * - execution authorization
- * - an executor
- * - a replacement for idempotency
- * - a replacement for runtime checkpoints
+ * The outbox never grants execution authority.
  * ============================================================================
  */
 
@@ -52,9 +56,37 @@ class WorkflowOutboxPersistenceService {
   constructor(
     options = {}
   ) {
-    this.WorkflowOutboxEvent =
-      options.WorkflowOutboxEvent ||
-      WorkflowOutboxEvent;
+    /*
+     * Existing tests historically inject WorkflowOutboxEvent.
+     *
+     * Preserve that API while production uses the repository abstraction.
+     */
+    if (
+      options.WorkflowOutboxEvent
+    ) {
+      this.repository =
+        createLegacyModelRepository(
+          options.WorkflowOutboxEvent
+        );
+
+      this.requiresTenantScope =
+        false;
+    } else if (
+      options.repository
+    ) {
+      this.repository =
+        options.repository;
+
+      this.requiresTenantScope =
+        options.requiresTenantScope !==
+        false;
+    } else {
+      this.repository =
+        workflowOutboxRepository;
+
+      this.requiresTenantScope =
+        true;
+    }
 
     this.identity =
       options.identity ||
@@ -110,14 +142,18 @@ class WorkflowOutboxPersistenceService {
           payload,
         });
 
+    const scope = {
+      organizationId,
+      environmentId,
+    };
+
     const existing =
-      await this
-        .WorkflowOutboxEvent
-        .findOne({
-          eventKey:
-            outboxIdentity
-              .eventKey,
-        });
+      await this.repository
+        .findByEventKey(
+          scope,
+          outboxIdentity
+            .eventKey
+        );
 
     if (
       existing
@@ -254,8 +290,7 @@ class WorkflowOutboxPersistenceService {
 
     try {
       const created =
-        await this
-          .WorkflowOutboxEvent
+        await this.repository
           .create(
             document
           );
@@ -283,23 +318,21 @@ class WorkflowOutboxPersistenceService {
       }
 
       /*
-       * Concurrent producers may both observe "no existing event"
-       * and then race on the unique eventKey/eventId indexes.
+       * Two producers can race:
        *
-       * MongoDB chooses one winner.
-       *
-       * The loser reloads the persisted winner and verifies that it
-       * represents the exact same logical event and payload.
+       * 1. both observe no existing event
+       * 2. both attempt INSERT
+       * 3. unique eventKey chooses one winner
+       * 4. loser reloads and validates the persisted winner
        */
 
       const racedExisting =
-        await this
-          .WorkflowOutboxEvent
-          .findOne({
-            eventKey:
-              outboxIdentity
-                .eventKey,
-          });
+        await this.repository
+          .findByEventKey(
+            scope,
+            outboxIdentity
+              .eventKey
+          );
 
       if (
         !racedExisting
@@ -376,15 +409,14 @@ class WorkflowOutboxPersistenceService {
       environmentId,
     });
 
-    return this
-      .WorkflowOutboxEvent
-      .findOne({
-        eventId,
-
-        organizationId,
-
-        environmentId,
-      });
+    return this.repository
+      .findByEventId(
+        {
+          organizationId,
+          environmentId,
+        },
+        eventId
+      );
   }
 
   async findByEventKey({
@@ -412,19 +444,18 @@ class WorkflowOutboxPersistenceService {
       environmentId,
     });
 
-    return this
-      .WorkflowOutboxEvent
-      .findOne({
-        eventKey,
-
-        organizationId,
-
-        environmentId,
-      });
+    return this.repository
+      .findByEventKey(
+        {
+          organizationId,
+          environmentId,
+        },
+        eventKey
+      );
   }
 
   // ==========================================================================
-  // PENDING DELIVERY SCAN
+  // DELIVERY SCAN
   // ==========================================================================
 
   async findDeliverable({
@@ -438,69 +469,64 @@ class WorkflowOutboxPersistenceService {
         Math.min(
           Number(
             limit
-          ) || 50,
+          ) ||
+            50,
           500
         )
       );
 
-    return this
-      .WorkflowOutboxEvent
-      .find({
-        status: {
-          $in: [
-            OUTBOX_STATUS
-              .PENDING,
+    return this.repository
+      .findDeliverable({
+        limit:
+          safeLimit,
 
-            OUTBOX_STATUS
-              .FAILED,
-          ],
-        },
-
-        "attempts.nextAttemptAt": {
-          $lte:
-            now,
-        },
-
-        $or: [
-          {
-            "owner.leaseExpiresAt":
-              null,
-          },
-
-          {
-            "owner.leaseExpiresAt": {
-              $lte:
-                now,
-            },
-          },
-        ],
-
-        $expr: {
-          $lt: [
-            "$attempts.count",
-            "$attempts.maxAttempts",
-          ],
-        },
-      })
-      .sort({
-        "attempts.nextAttemptAt":
-          1,
-
-        createdAt:
-          1,
-      })
-      .limit(
-        safeLimit
-      );
+        now,
+      });
   }
 
   // ==========================================================================
-  // BASIC UPDATE SAFETY
+  // REFRESH
   // ==========================================================================
 
+  /**
+   * Supports both:
+   *
+   * legacy:
+   *
+   *   refresh(eventId)
+   *
+   * Phase 13:
+   *
+   *   refresh({
+   *     eventId,
+   *     organizationId,
+   *     environmentId
+   *   })
+   */
   async refresh(
-    eventId
+    input
   ) {
+    let eventId;
+    let organizationId;
+    let environmentId;
+
+    if (
+      typeof input ===
+      "string"
+    ) {
+      eventId =
+        input;
+    } else {
+      eventId =
+        input?.eventId;
+
+      organizationId =
+        input?.organizationId;
+
+      environmentId =
+        input?.environmentId;
+    }
+
     if (
       !eventId
     ) {
@@ -516,11 +542,19 @@ class WorkflowOutboxPersistenceService {
       );
     }
 
-    return this
-      .WorkflowOutboxEvent
-      .findOne({
-        eventId,
-      });
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
+    });
+
+    return this.repository
+      .findByEventId(
+        {
+          organizationId,
+          environmentId,
+        },
+        eventId
+      );
   }
 
   // ==========================================================================
@@ -640,6 +674,18 @@ class WorkflowOutboxPersistenceService {
     organizationId,
     environmentId,
   } = {}) {
+    /*
+     * Legacy model-injection tests predate tenant-scoped repository
+     * contracts.
+     *
+     * PostgreSQL/default repository paths still fail closed.
+     */
+    if (
+      !this.requiresTenantScope
+    ) {
+      return true;
+    }
+
     if (
       !organizationId ||
       !environmentId
@@ -660,7 +706,7 @@ class WorkflowOutboxPersistenceService {
   }
 
   // ==========================================================================
-  // DUPLICATE KEY DETECTION
+  // DUPLICATE KEY
   // ==========================================================================
 
   isDuplicateKeyError(
@@ -673,20 +719,177 @@ class WorkflowOutboxPersistenceService {
           11000 ||
         error.code ===
           11001 ||
-        error.name ===
-          "MongoServerError" &&
-        /duplicate key/i.test(
-          error.message ||
-            ""
+        /*
+         * PostgreSQL unique_violation.
+         */
+        error.code ===
+          "23505" ||
+        (
+          error.name ===
+            "MongoServerError" &&
+          /duplicate key/i.test(
+            error.message ||
+              ""
+          )
         )
       )
     );
   }
 }
 
+// ============================================================================
+// LEGACY MONGOOSE MODEL ADAPTER
+// ============================================================================
+
+function createLegacyModelRepository(
+  Model
+) {
+  return {
+    async create(
+      data
+    ) {
+      return Model
+        .create(
+          data
+        );
+    },
+
+    async findByEventId(
+      scope,
+      eventId
+    ) {
+      return Model
+        .findOne(
+          withOptionalScope(
+            {
+              eventId,
+            },
+            scope
+          )
+        );
+    },
+
+    async findByEventKey(
+      scope,
+      eventKey
+    ) {
+      return Model
+        .findOne(
+          withOptionalScope(
+            {
+              eventKey,
+            },
+            scope
+          )
+        );
+    },
+
+    async findDeliverable({
+      limit = 50,
+      now = new Date(),
+    } = {}) {
+      const safeLimit =
+        Math.min(
+          Math.max(
+            Number(
+              limit
+            ) ||
+              50,
+            1
+          ),
+          500
+        );
+
+      return Model
+        .find({
+          status: {
+            $in: [
+              OUTBOX_STATUS
+                .PENDING,
+
+              OUTBOX_STATUS
+                .FAILED,
+            ],
+          },
+
+          "attempts.nextAttemptAt": {
+            $lte:
+              now,
+          },
+
+          $or: [
+            {
+              "owner.leaseExpiresAt":
+                null,
+            },
+
+            {
+              "owner.leaseExpiresAt": {
+                $lte:
+                  now,
+              },
+            },
+          ],
+
+          $expr: {
+            $lt: [
+              "$attempts.count",
+              "$attempts.maxAttempts",
+            ],
+          },
+        })
+        .sort({
+          "attempts.nextAttemptAt":
+            1,
+
+          createdAt:
+            1,
+        })
+        .limit(
+          safeLimit
+        );
+    },
+  };
+}
+
+function withOptionalScope(
+  filter,
+  scope = {}
+) {
+  const output = {
+    ...filter,
+  };
+
+  if (
+    scope?.organizationId
+  ) {
+    output.organizationId =
+      scope.organizationId;
+  }
+
+  if (
+    scope?.environmentId
+  ) {
+    output.environmentId =
+      scope.environmentId;
+  }
+
+  return output;
+}
+
 module.exports =
-  new WorkflowOutboxPersistenceService();
+  new WorkflowOutboxPersistenceService({
+    repository:
+      workflowOutboxRepository,
+
+    requiresTenantScope:
+      true,
+  });
 
 module.exports
   .WorkflowOutboxPersistenceService =
   WorkflowOutboxPersistenceService;
+
+module.exports
+  .createLegacyModelRepository =
+  createLegacyModelRepository;

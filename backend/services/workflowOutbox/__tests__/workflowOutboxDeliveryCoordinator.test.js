@@ -202,113 +202,119 @@ describe(
     );
 
     test(
-      "retryable publication failure schedules retry",
-      async () => {
-        const event =
-          createEvent({
-            attempts: {
-              count:
-                1,
+  "retryable publication failure schedules retry",
+  async () => {
+    const event =
+      createEvent({
+        attempts: {
+          count:
+            1,
 
-              maxAttempts:
-                5,
+          maxAttempts:
+            5,
+        },
+      });
+
+    dispatcher
+      .dispatch
+      .mockRejectedValue(
+        Object.assign(
+          new Error(
+            "RabbitMQ unavailable"
+          ),
+          {
+            code:
+              "ECONNREFUSED",
+
+            outboxContext: {
+              eventId:
+                "event-1",
+
+              ownerId:
+                "publisher-1",
+
+              claimToken:
+                "token-1",
             },
-          });
-
-        dispatcher
-          .dispatch
-          .mockRejectedValue(
-            Object.assign(
-              new Error(
-                "RabbitMQ unavailable"
-              ),
-              {
-                code:
-                  "ECONNREFUSED",
-
-                outboxContext: {
-                  eventId:
-                    "event-1",
-
-                  ownerId:
-                    "publisher-1",
-
-                  claimToken:
-                    "token-1",
-                },
-              }
-            )
-          );
-
-        const result =
-          await coordinator
-            .deliver(
-              event
-            );
-
-        expect(
-          result.retryScheduled
+          }
         )
-          .toBe(
-            true
-          );
+      );
 
-        expect(
-          result.deadLettered
+    const result =
+      await coordinator
+        .deliver(
+          event
+        );
+
+    expect(
+      result.retryScheduled
+    )
+      .toBe(
+        true
+      );
+
+    expect(
+      result.deadLettered
+    )
+      .toBe(
+        false
+      );
+
+    expect(
+      result.delayMs
+    )
+      .toBe(
+        1000
+      );
+
+    expect(
+      result.nextAttemptAt
+    )
+      .toEqual(
+        new Date(
+          "2026-08-16T10:00:01.000Z"
         )
-          .toBe(
-            false
-          );
+      );
 
-        expect(
-          result.delayMs
-        )
-          .toBe(
-            1000
-          );
+    expect(
+      claimService
+        .markFailed
+    )
+      .toHaveBeenCalledWith({
+        eventId:
+          "event-1",
 
-        expect(
-          result.nextAttemptAt
-        )
-          .toEqual(
-            new Date(
-              "2026-08-16T10:00:01.000Z"
-            )
-          );
+        organizationId:
+          "org-1",
 
-        expect(
-          claimService
-            .markFailed
-        )
-          .toHaveBeenCalledWith({
-            eventId:
-              "event-1",
+        environmentId:
+          "prod",
 
-            ownerId:
-              "publisher-1",
+        ownerId:
+          "publisher-1",
 
-            claimToken:
-              "token-1",
+        claimToken:
+          "token-1",
 
-            error:
-              expect.objectContaining({
-                code:
-                  "ECONNREFUSED",
-              }),
+        error:
+          expect.objectContaining({
+            code:
+              "ECONNREFUSED",
+          }),
 
-            retryable:
-              true,
+        retryable:
+          true,
 
-            nextAttemptAt:
-              new Date(
-                "2026-08-16T10:00:01.000Z"
-              ),
+        nextAttemptAt:
+          new Date(
+            "2026-08-16T10:00:01.000Z"
+          ),
 
-            now:
-              now,
-          });
-      }
-    );
+        now:
+          now,
+      });
+  }
+);
 
     test(
       "retry delay increases with attempt count",
@@ -447,6 +453,12 @@ describe(
             expect.objectContaining({
               eventId:
                 "event-1",
+
+                 organizationId:
+        "org-1",
+
+      environmentId:
+        "prod",
 
               ownerId:
                 "publisher-1",

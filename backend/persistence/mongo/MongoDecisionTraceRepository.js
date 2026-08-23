@@ -10,39 +10,104 @@ const DecisionTrace =
     "../../models/DecisionTrace"
   );
 
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
 class MongoDecisionTraceRepository
   extends DecisionTraceRepository {
   async create(
-    data
+    data,
+    transaction = null
   ) {
-    return DecisionTrace
-      .create(
-        data
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (!session) {
+      return DecisionTrace
+        .create(
+          data
+        );
+    }
+
+    const [
+      created,
+    ] =
+      await DecisionTrace
+        .create(
+          [
+            data,
+          ],
+          {
+            session,
+          }
+        );
+
+    return created;
   }
 
   async updateOne(
     filter,
-    update
+    update,
+    transaction = null
   ) {
-    return DecisionTrace
-      .findOneAndUpdate(
-        filter,
-        update,
-        {
-          new:
-            true,
-        }
+    let query =
+      DecisionTrace
+        .findOneAndUpdate(
+          filter,
+          update,
+          {
+            new:
+              true,
+          }
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async findOne(
-    filter
+    filter,
+    transaction = null
   ) {
-    return DecisionTrace
-      .findOne(
-        filter
+    let query =
+      DecisionTrace
+        .findOne(
+          filter
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async list(
@@ -54,7 +119,8 @@ class MongoDecisionTraceRepository
       },
 
       limit = 50,
-    } = {}
+    } = {},
+    transaction = null
   ) {
     const safeLimit =
       Math.min(
@@ -69,16 +135,31 @@ class MongoDecisionTraceRepository
         200
       );
 
-    return DecisionTrace
-      .find(
-        filter
-      )
-      .sort(
-        sort
-      )
-      .limit(
-        safeLimit
+    let query =
+      DecisionTrace
+        .find(
+          filter
+        )
+        .sort(
+          sort
+        )
+        .limit(
+          safeLimit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 }
 

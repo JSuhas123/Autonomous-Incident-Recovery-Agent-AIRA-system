@@ -164,83 +164,89 @@ describe(
     );
 
     test(
-      "claims and publishes durable handoff",
-      async () => {
-        const event =
-          createEvent();
+  "claims and publishes durable handoff",
+  async () => {
+    const event =
+      createEvent();
 
-        claimService
-          .claim
-          .mockResolvedValue({
-            claimed:
-              true,
+    claimService
+      .claim
+      .mockResolvedValue({
+        claimed:
+          true,
 
-            event,
+        event,
 
-            ownerId:
-              "publisher-1",
+        ownerId:
+          "publisher-1",
 
-            claimToken:
-              "claim-token-1",
+        claimToken:
+          "claim-token-1",
 
-            leaseExpiresAt:
-              new Date(
-                "2026-08-16T10:01:00.000Z"
-              ),
-          });
+        leaseExpiresAt:
+          new Date(
+            "2026-08-16T10:01:00.000Z"
+          ),
+      });
 
-        const result =
-          await dispatcher
-            .dispatch(
-              event
-            );
+    const result =
+      await dispatcher
+        .dispatch(
+          event
+        );
 
-        expect(
-          claimService.claim
-        )
-          .toHaveBeenCalledWith({
-            eventId:
-              "event-1",
+    expect(
+      claimService.claim
+    )
+      .toHaveBeenCalledWith({
+        eventId:
+          "event-1",
 
-            ownerId:
-              "publisher-1",
+        organizationId:
+          "org-1",
 
-            leaseMs:
-              60000,
+        environmentId:
+          "prod",
 
-            now:
-              fixedNow,
-          });
+        ownerId:
+          "publisher-1",
 
-        expect(
-          publish
-        )
-          .toHaveBeenCalledTimes(
-            1
-          );
+        leaseMs:
+          60000,
 
-        expect(
-          result.dispatched
-        )
-          .toBe(
-            true
-          );
+        now:
+          fixedNow,
+      });
 
-        expect(
-          result.published
-        )
-          .toBe(
-            true
-          );
+    expect(
+      publish
+    )
+      .toHaveBeenCalledTimes(
+        1
+      );
 
-        expect(
-          result.executionAuthorized
-        )
-          .toBe(
-            false
-          );
-      }
-    );
+    expect(
+      result.dispatched
+    )
+      .toBe(
+        true
+      );
+
+    expect(
+      result.published
+    )
+      .toBe(
+        true
+      );
+
+    expect(
+      result.executionAuthorized
+    )
+      .toBe(
+        false
+      );
+  }
+);
 
     test(
       "does not publish when event is already delivered",
@@ -328,68 +334,74 @@ describe(
     );
 
     test(
-      "heartbeats before external queue publication",
-      async () => {
-        const event =
-          createEvent();
+  "heartbeats before external queue publication",
+  async () => {
+    const event =
+      createEvent();
 
-        claimService
-          .claim
-          .mockResolvedValue({
-            claimed:
-              true,
+    claimService
+      .claim
+      .mockResolvedValue({
+        claimed:
+          true,
 
-            event,
+        event,
 
-            claimToken:
-              "claim-token-1",
-          });
+        claimToken:
+          "claim-token-1",
+      });
 
-        await dispatcher
-          .dispatch(
-            event
-          );
+    await dispatcher
+      .dispatch(
+        event
+      );
 
-        expect(
-          claimService
-            .heartbeat
-        )
-          .toHaveBeenCalledWith({
-            eventId:
-              "event-1",
+    expect(
+      claimService
+        .heartbeat
+    )
+      .toHaveBeenCalledWith({
+        eventId:
+          "event-1",
 
-            ownerId:
-              "publisher-1",
+        organizationId:
+          "org-1",
 
-            claimToken:
-              "claim-token-1",
+        environmentId:
+          "prod",
 
-            leaseMs:
-              60000,
+        ownerId:
+          "publisher-1",
 
-            now:
-              fixedNow,
-          });
+        claimToken:
+          "claim-token-1",
 
-        const heartbeatOrder =
-          claimService
-            .heartbeat
-            .mock
-            .invocationCallOrder[0];
+        leaseMs:
+          60000,
 
-        const publishOrder =
-          publish
-            .mock
-            .invocationCallOrder[0];
+        now:
+          fixedNow,
+      });
 
-        expect(
-          heartbeatOrder
-        )
-          .toBeLessThan(
-            publishOrder
-          );
-      }
-    );
+    const heartbeatOrder =
+      claimService
+        .heartbeat
+        .mock
+        .invocationCallOrder[0];
+
+    const publishOrder =
+      publish
+        .mock
+        .invocationCallOrder[0];
+
+    expect(
+      heartbeatOrder
+    )
+      .toBeLessThan(
+        publishOrder
+      );
+  }
+);
 
     test(
       "marks event delivered after successful publication",
@@ -422,6 +434,12 @@ describe(
             expect.objectContaining({
               eventId:
                 "event-1",
+
+                  organizationId:
+        "org-1",
+
+      environmentId:
+        "prod",
 
               ownerId:
                 "publisher-1",

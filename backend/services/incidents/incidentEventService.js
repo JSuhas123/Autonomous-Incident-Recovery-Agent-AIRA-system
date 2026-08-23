@@ -450,65 +450,111 @@ class IncidentEventService {
   // ==========================================================================
 
   async retryFailedEvent(
-    eventId,
-    topicName
+  {
+    organizationId,
+    environmentId,
+  },
+  eventId,
+  topicName
+) {
+  if (
+    !organizationId ||
+    !environmentId
   ) {
-    const event =
-      await incidentEventRepository
-        .findByEventId(
-          eventId
-        );
+    throw Object.assign(
+      new Error(
+        "organizationId and environmentId are required to retry IncidentEvent"
+      ),
+      {
+        code:
+          "INCIDENT_EVENT_SCOPE_REQUIRED",
+      }
+    );
+  }
 
-    if (!event) {
-      return null;
-    }
+  const event =
+    await incidentEventRepository
+      .findByEventId(
+        {
+          organizationId,
 
-    if (
-      event.status !==
-      "failed"
-    ) {
-      return {
-        event,
-
-        publication: {
-          published:
-            false,
-
-          reason:
-            "EVENT_NOT_FAILED",
+          environmentId,
         },
-      };
-    }
+        eventId
+      );
 
-    const publication =
-      await this
-        .publishEvent(
-          event,
-          topicName
-        );
+  if (!event) {
+    return null;
+  }
 
+  if (
+    event.status !==
+    "failed"
+  ) {
     return {
       event,
 
-      publication,
+      publication: {
+        published:
+          false,
+
+        reason:
+          "EVENT_NOT_FAILED",
+      },
     };
   }
+
+  const publication =
+    await this.publishEvent(
+      event,
+      topicName
+    );
+
+  return {
+    event,
+
+    publication,
+  };
+}
 
   // ==========================================================================
   // MARK PROCESSED
   // ==========================================================================
 
   async markProcessed(
-    eventId,
-    processingTimeMs =
-      null
+  {
+    organizationId,
+    environmentId,
+  },
+  eventId,
+  processingTimeMs = null
+) {
+  if (
+    !organizationId ||
+    !environmentId
   ) {
-    return incidentEventRepository
-      .markProcessed(
-        eventId,
-        processingTimeMs
-      );
+    throw Object.assign(
+      new Error(
+        "organizationId and environmentId are required to process IncidentEvent"
+      ),
+      {
+        code:
+          "INCIDENT_EVENT_SCOPE_REQUIRED",
+      }
+    );
   }
+
+  return incidentEventRepository
+    .markProcessed(
+      {
+        organizationId,
+
+        environmentId,
+      },
+      eventId,
+      processingTimeMs
+    );
+}
 
   // ==========================================================================
   // QUERY

@@ -2,7 +2,8 @@
 
 class PolicyRepository {
   async findOne(
-    _filter
+    _filter,
+    _transaction = null
   ) {
     throw new Error(
       "PolicyRepository.findOne() is not implemented"
@@ -11,7 +12,8 @@ class PolicyRepository {
 
   async findActiveForTenant(
     _tenantId,
-    _version = null
+    _version = null,
+    _transaction = null
   ) {
     throw new Error(
       "PolicyRepository.findActiveForTenant() is not implemented"
@@ -20,7 +22,8 @@ class PolicyRepository {
 
   async list(
     _filter,
-    _options = {}
+    _options = {},
+    _transaction = null
   ) {
     throw new Error(
       "PolicyRepository.list() is not implemented"

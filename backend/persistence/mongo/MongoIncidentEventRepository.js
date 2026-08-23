@@ -10,38 +10,126 @@ const IncidentEvent =
     "../../models/IncidentEvent"
   );
 
-/**
- * Phase 13 MongoDB compatibility adapter.
- *
- * MongoDB remains authoritative during the persistence-abstraction
- * stage of Phase 13.
- *
- * This adapter deliberately preserves the existing Mongoose behaviour
- * so the IncidentEvent service can become database-agnostic without
- * changing runtime semantics.
- */
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
 class MongoIncidentEventRepository
   extends IncidentEventRepository {
   async create(
-    data
+    data,
+    transaction = null
   ) {
-    return IncidentEvent
-      .create(
-        data
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (!session) {
+      return IncidentEvent
+        .create(
+          data
+        );
+    }
+
+    const [
+      created,
+    ] =
+      await IncidentEvent
+        .create(
+          [
+            data,
+          ],
+          {
+            session,
+          }
+        );
+
+    return created;
   }
 
+  /**
+   * Supports both:
+   *
+   * Legacy:
+   * findByEventId(eventId)
+   *
+   * Phase 13 PostgreSQL-safe:
+   * findByEventId(context, eventId, transaction)
+   */
   async findByEventId(
-    eventId
+    contextOrEventId,
+    eventId = null,
+    transaction = null
   ) {
-    return IncidentEvent
-      .findOne({
+    let filter;
+
+    if (
+      contextOrEventId &&
+      typeof contextOrEventId ===
+        "object" &&
+      !Array.isArray(
+        contextOrEventId
+      )
+    ) {
+      filter = {
+        organizationId:
+          contextOrEventId
+            .organizationId,
+
+        environmentId:
+          contextOrEventId
+            .environmentId,
+
         eventId,
-      });
+      };
+    } else {
+      filter = {
+        eventId:
+          contextOrEventId,
+      };
+
+      /*
+       * Legacy second argument was not a transaction.
+       */
+      transaction =
+        null;
+    }
+
+    let query =
+      IncidentEvent
+        .findOne(
+          filter
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async save(
-    event
+    event,
+    transaction = null
   ) {
     if (
       !event ||
@@ -59,37 +147,113 @@ class MongoIncidentEventRepository
       );
     }
 
-    return event
-      .save();
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    return event.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
   }
 
+  /**
+   * Supports both:
+   *
+   * Legacy:
+   * markProcessed(eventId, processingTimeMs)
+   *
+   * Phase 13:
+   * markProcessed(context, eventId, processingTimeMs, transaction)
+   */
   async markProcessed(
-    eventId,
-    processingTimeMs =
-      null
+    contextOrEventId,
+    eventIdOrProcessingTime = null,
+    processingTimeMs = null,
+    transaction = null
   ) {
-    return IncidentEvent
-      .findOneAndUpdate(
-        {
-          eventId,
-        },
-        {
-          $set: {
-            status:
-              "processed",
+    let filter;
+    let actualProcessingTime;
 
-            processedAt:
-              new Date(),
+    if (
+      contextOrEventId &&
+      typeof contextOrEventId ===
+        "object" &&
+      !Array.isArray(
+        contextOrEventId
+      )
+    ) {
+      filter = {
+        organizationId:
+          contextOrEventId
+            .organizationId,
 
-            processingTimeMs:
-              processingTimeMs,
+        environmentId:
+          contextOrEventId
+            .environmentId,
+
+        eventId:
+          eventIdOrProcessingTime,
+      };
+
+      actualProcessingTime =
+        processingTimeMs;
+    } else {
+      filter = {
+        eventId:
+          contextOrEventId,
+      };
+
+      actualProcessingTime =
+        eventIdOrProcessingTime;
+
+      transaction =
+        null;
+    }
+
+    let query =
+      IncidentEvent
+        .findOneAndUpdate(
+          filter,
+          {
+            $set: {
+              status:
+                "processed",
+
+              processedAt:
+                new Date(),
+
+              processingTimeMs:
+                actualProcessingTime,
+            },
           },
-        },
-        {
-          new:
-            true,
-        }
+          {
+            new:
+              true,
+          }
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async listForIncident(
@@ -98,7 +262,8 @@ class MongoIncidentEventRepository
       environmentId,
     },
     incidentId,
-    limit = 200
+    limit = 200,
+    transaction = null
   ) {
     const safeLimit =
       Math.min(
@@ -112,21 +277,40 @@ class MongoIncidentEventRepository
         1000
       );
 
-    return IncidentEvent
-      .find({
-        organizationId,
+    let query =
+      IncidentEvent
+        .find({
+          organizationId,
 
-        environmentId,
+          environmentId,
 
-        incidentId,
-      })
-      .sort({
-        occurredAt:
-          1,
-      })
-      .limit(
-        safeLimit
-      )
+          incidentId,
+        })
+        .sort({
+          occurredAt:
+            1,
+        })
+        .limit(
+          safeLimit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query
       .lean();
   }
 }

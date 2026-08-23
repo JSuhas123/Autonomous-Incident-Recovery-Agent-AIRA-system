@@ -1,33 +1,70 @@
 "use strict";
 
 class ApprovalRepository {
-  async createRequest(_data) {
+  async createRequest(
+    _data,
+    _transaction = null
+  ) {
     throw new Error(
       "ApprovalRepository.createRequest() is not implemented"
     );
   }
 
-  async findPending(_tenantId) {
+  async findPending(
+    _scope,
+    _transaction = null
+  ) {
     throw new Error(
       "ApprovalRepository.findPending() is not implemented"
     );
   }
 
-  async findByApprovalId(_approvalId) {
+  async findByApprovalId(
+    _approvalId,
+    _scope,
+    _transaction = null
+  ) {
     throw new Error(
       "ApprovalRepository.findByApprovalId() is not implemented"
     );
   }
 
-  async save(_request) {
+  async approve(
+    _request,
+    _approvedBy,
+    _metadata = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "ApprovalRepository.approve() is not implemented"
+    );
+  }
+
+  async reject(
+    _request,
+    _rejectedBy,
+    _reason = "",
+    _metadata = {},
+    _transaction = null
+  ) {
+    throw new Error(
+      "ApprovalRepository.reject() is not implemented"
+    );
+  }
+
+  async save(
+    _request,
+    _transaction = null
+  ) {
     throw new Error(
       "ApprovalRepository.save() is not implemented"
     );
   }
 
   async countByStatus(
-    _tenantId,
-    _status
+    _scope,
+    _status,
+    _transaction = null
   ) {
     throw new Error(
       "ApprovalRepository.countByStatus() is not implemented"

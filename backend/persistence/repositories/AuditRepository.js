@@ -1,19 +1,18 @@
 "use strict";
 
-/**
- * Append-only audit persistence contract.
- *
- * Audit records are immutable.
- */
 class AuditRepository {
-  async create(_data) {
+  async create(
+    _data,
+    _transaction = null
+  ) {
     throw new Error(
       "AuditRepository.create() is not implemented"
     );
   }
 
   async findLatestForTenant(
-    _tenantId
+    _tenantId,
+    _transaction = null
   ) {
     throw new Error(
       "AuditRepository.findLatestForTenant() is not implemented"
@@ -21,7 +20,8 @@ class AuditRepository {
   }
 
   async findOne(
-    _filter
+    _filter,
+    _transaction = null
   ) {
     throw new Error(
       "AuditRepository.findOne() is not implemented"
@@ -30,7 +30,8 @@ class AuditRepository {
 
   async list(
     _filter,
-    _options = {}
+    _options = {},
+    _transaction = null
   ) {
     throw new Error(
       "AuditRepository.list() is not implemented"

@@ -10,39 +10,112 @@ const RuntimeRecoveryCheckpoint =
     "../../models/RuntimeRecoveryCheckpoint"
   );
 
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
 class MongoRuntimeRecoveryCheckpointRepository
   extends RuntimeRecoveryCheckpointRepository {
   async create(
-    data
+    data,
+    transaction = null
   ) {
-    return RuntimeRecoveryCheckpoint
-      .create(
-        data
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (!session) {
+      return RuntimeRecoveryCheckpoint
+        .create(
+          data
+        );
+    }
+
+    const [
+      created,
+    ] =
+      await RuntimeRecoveryCheckpoint
+        .create(
+          [
+            data,
+          ],
+          {
+            session,
+          }
+        );
+
+    return created;
   }
 
   async findOneAndUpdate(
     filter,
-    update
+    update,
+    transaction = null
   ) {
-    return RuntimeRecoveryCheckpoint
-      .findOneAndUpdate(
-        filter,
-        update,
-        {
-          new:
-            true,
-        }
+    let query =
+      RuntimeRecoveryCheckpoint
+        .findOneAndUpdate(
+          filter,
+          update,
+          {
+            new:
+              true,
+          }
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async findOne(
-    filter
+    filter,
+    transaction = null
   ) {
-    return RuntimeRecoveryCheckpoint
-      .findOne(
-        filter
+    let query =
+      RuntimeRecoveryCheckpoint
+        .findOne(
+          filter
+        );
+
+    const session =
+      sessionFrom(
+        transaction
       );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 }
 

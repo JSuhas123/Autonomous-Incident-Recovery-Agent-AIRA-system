@@ -12,61 +12,188 @@ const {
     "../../models/Signal"
   );
 
-/**
- * Mongo compatibility implementation for Phase 13.
- *
- * Mongo remains authoritative during repository extraction.
- */
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
 class MongoSignalRepository
   extends SignalRepository {
   async create(
-    data
+    data,
+    transaction = null
   ) {
-    return Signal
-      .create(
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (!session) {
+      return Signal.create(
         data
       );
+    }
+
+    const [
+      created,
+    ] =
+      await Signal.create(
+        [
+          data,
+        ],
+        {
+          session,
+        }
+      );
+
+    return created;
   }
 
   async findByDatabaseId(
-    id
+  contextOrId,
+  id = null,
+  transaction = null
+) {
+  /*
+   * Legacy Mongo contract:
+   *
+   * findByDatabaseId(id)
+   */
+  if (
+    !contextOrId ||
+    typeof contextOrId !==
+      "object" ||
+    Array.isArray(
+      contextOrId
+    )
   ) {
     return Signal
       .findById(
-        id
+        contextOrId
       );
   }
 
-  async findOne(
-    filter
+  /*
+   * Phase 13 scoped contract:
+   *
+   * findByDatabaseId(
+   *   { organizationId, environmentId },
+   *   id
+   * )
+   */
+  let query =
+    Signal.findOne({
+      _id:
+        id,
+
+      organizationId:
+        contextOrId
+          .organizationId,
+
+      environmentId:
+        contextOrId
+          .environmentId,
+    });
+
+  const session =
+    sessionFrom(
+      transaction
+    );
+
+  if (
+    session &&
+    typeof query.session ===
+      "function"
   ) {
-    return Signal
-      .findOne(
+    query =
+      query.session(
+        session
+      );
+  }
+
+  return query;
+}
+
+  async findOne(
+    filter,
+    transaction = null
+  ) {
+    let query =
+      Signal.findOne(
         filter
       );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async findOneLean(
-    filter
+    filter,
+    transaction = null
   ) {
-    return Signal
-      .findOne(
+    let query =
+      Signal.findOne(
         filter
-      )
-      .lean();
+      );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query.lean();
   }
 
   async findLatestDuplicate(
-    filter
+    filter,
+    transaction = null
   ) {
-    return Signal
-      .findOne(
-        filter
-      )
-      .sort({
-        lastSeenAt:
-          -1,
-      });
+    let query =
+      Signal
+        .findOne(
+          filter
+        )
+        .sort({
+          lastSeenAt:
+            -1,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async list(
@@ -76,8 +203,10 @@ class MongoSignalRepository
         observedAt:
           -1,
       },
+
       limit = 100,
-    } = {}
+    } = {},
+    transaction = null
   ) {
     const safeLimit =
       Math.min(
@@ -91,44 +220,96 @@ class MongoSignalRepository
         )
       );
 
-    return Signal
-      .find(
-        filter
-      )
-      .sort(
-        sort
-      )
-      .limit(
-        safeLimit
-      )
-      .lean();
+    let query =
+      Signal
+        .find(
+          filter
+        )
+        .sort(
+          sort
+        )
+        .limit(
+          safeLimit
+        );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query.lean();
   }
 
   async updateOne(
     filter,
-    update
+    update,
+    transaction = null
   ) {
-    return Signal
-      .updateOne(
+    let query =
+      Signal.updateOne(
         filter,
         update
       );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
   async updateMany(
-  filter,
-  update
-) {
-  return Signal
-    .updateMany(
-      filter,
-      update
-    );
-}
+    filter,
+    update,
+    transaction = null
+  ) {
+    let query =
+      Signal.updateMany(
+        filter,
+        update
+      );
 
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
 
   async save(
-    signal
+    signal,
+    transaction = null
   ) {
     if (
       !signal ||
@@ -146,8 +327,18 @@ class MongoSignalRepository
       );
     }
 
-    return signal
-      .save();
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    return signal.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
   }
 }
 

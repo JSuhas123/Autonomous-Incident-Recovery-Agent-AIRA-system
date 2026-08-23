@@ -12,37 +12,108 @@ const {
     "../../models/Incident"
   );
 
-/**
- * MongoDB/Mongoose implementation of the Phase 13
- * IncidentRepository contract.
- *
- * This adapter intentionally preserves the existing persistence
- * behaviour while business logic is moved behind repository
- * boundaries.
- *
- * MongoDB remains authoritative during this migration step.
- */
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
 class MongoIncidentRepository
   extends IncidentRepository {
-  async findOne(filter) {
-    return Incident.findOne(
-      filter
-    );
+  async findOne(
+    filter,
+    transaction = null
+  ) {
+    let query =
+      Incident.findOne(
+        filter
+      );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
-  async findMany(filter) {
-    return Incident.find(
-      filter
-    );
+  async findMany(
+    filter,
+    transaction = null
+  ) {
+    let query =
+      Incident.find(
+        filter
+      );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
   }
 
-  async create(data) {
-    return Incident.create(
-      data
-    );
+  async create(
+    data,
+    transaction = null
+  ) {
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (!session) {
+      return Incident.create(
+        data
+      );
+    }
+
+    const [
+      created,
+    ] =
+      await Incident.create(
+        [
+          data,
+        ],
+        {
+          session,
+        }
+      );
+
+    return created;
   }
 
-  async save(incident) {
+  async save(
+    incident,
+    transaction = null
+  ) {
     if (
       !incident ||
       typeof incident.save !==
@@ -59,7 +130,18 @@ class MongoIncidentRepository
       );
     }
 
-    return incident.save();
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    return incident.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
   }
 }
 

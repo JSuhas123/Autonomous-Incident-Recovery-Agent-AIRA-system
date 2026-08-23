@@ -5,9 +5,11 @@ const crypto =
     "crypto"
   );
 
-const WorkflowOutboxEvent =
+const {
+  workflowOutboxRepository,
+} =
   require(
-    "../../models/WorkflowOutboxEvent"
+    "../../persistence/repositories"
   );
 
 const {
@@ -19,60 +21,83 @@ const {
     "./workflowOutboxContracts"
   );
 
-/*
- * ============================================================================
- * AIRA PHASE 11.3.5
- * WORKFLOW OUTBOX CLAIM SERVICE
- * ============================================================================
- *
- * Responsibilities:
- *
- * 1. Atomically claim a deliverable outbox event.
- * 2. Assign ownerId + claimToken + lease.
- * 3. Heartbeat only while ownership remains valid.
- * 4. Mark delivered only by the current valid owner.
- * 5. Mark failed only by the current valid owner.
- * 6. Fence stale publishers after ownership changes.
- *
- * IMPORTANT:
- *
- * Claim ownership is NOT execution authorization.
- *
- * It only controls which publisher may deliver this workflow event.
- * ============================================================================
- */
-
 class WorkflowOutboxClaimService {
   constructor(
-    options = {}
+  options = {}
+) {
+  /*
+   * Phase 13.4E2 compatibility rule
+   * --------------------------------
+   *
+   * Production:
+   *   repository -> tenant scope REQUIRED
+   *
+   * Legacy tests:
+   *   WorkflowOutboxEvent -> tenant scope OPTIONAL
+   *
+   * The existing outbox lease/recovery tests inject WorkflowOutboxEvent
+   * directly, so they must remain on the legacy model adapter.
+   */
+
+  const hasLegacyModel =
+    Boolean(
+      options.WorkflowOutboxEvent
+    );
+
+  if (
+    hasLegacyModel
   ) {
-    this.WorkflowOutboxEvent =
-      options.WorkflowOutboxEvent ||
-      WorkflowOutboxEvent;
-
-    this.now =
-      options.now ||
-      (() =>
-        new Date());
-
-    this.generateClaimToken =
-      options.generateClaimToken ||
-      (() =>
-        crypto
-          .randomBytes(
-            24
-          )
-          .toString(
-            "hex"
-          ));
+    this.repository =
+      createLegacyModelRepository(
+        options.WorkflowOutboxEvent
+      );
+  } else {
+    this.repository =
+      options.repository ||
+      workflowOutboxRepository;
   }
 
-  // ==========================================================================
-  // CLAIM
-  // ==========================================================================
+  /*
+   * Explicit option wins.
+   *
+   * Otherwise:
+   *
+   * legacy model     => false
+   * repository path  => true
+   */
+  if (
+    options.requiresTenantScope !==
+      undefined
+  ) {
+    this.requiresTenantScope =
+      options.requiresTenantScope ===
+      true;
+  } else {
+    this.requiresTenantScope =
+      !hasLegacyModel;
+  }
+
+  this.now =
+    options.now ||
+    (() =>
+      new Date());
+
+  this.generateClaimToken =
+    options.generateClaimToken ||
+    (() =>
+      crypto
+        .randomBytes(
+          24
+        )
+        .toString(
+          "hex"
+        ));
+}
 
   async claim({
     eventId,
+    organizationId,
+    environmentId,
     ownerId,
     leaseMs =
       DEFAULT_OUTBOX_LEASE_MS,
@@ -83,6 +108,11 @@ class WorkflowOutboxClaimService {
       eventId,
       ownerId,
       leaseMs,
+    });
+
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
     });
 
     const currentTime =
@@ -100,101 +130,21 @@ class WorkflowOutboxClaimService {
           leaseMs
       );
 
+    const scope = {
+      organizationId,
+      environmentId,
+    };
+
     const claimed =
-      await this
-        .WorkflowOutboxEvent
-        .findOneAndUpdate(
+      await this.repository
+        .claim(
+          scope,
           {
             eventId,
-
-            status: {
-              $in: [
-                OUTBOX_STATUS
-                  .PENDING,
-
-                OUTBOX_STATUS
-                  .FAILED,
-
-                /*
-                 * PROCESSING is included intentionally so an expired
-                 * publisher lease may be atomically reclaimed.
-                 *
-                 * A live PROCESSING event cannot match because the
-                 * lease condition below requires the lease to be
-                 * missing or expired.
-                 */
-                OUTBOX_STATUS
-                  .PROCESSING,
-              ],
-            },
-
-            $or: [
-              {
-                "owner.leaseExpiresAt":
-                  null,
-              },
-
-              {
-                "owner.leaseExpiresAt": {
-                  $lte:
-                    currentTime,
-                },
-              },
-            ],
-
-            $expr: {
-              $lt: [
-                "$attempts.count",
-                "$attempts.maxAttempts",
-              ],
-            },
-          },
-          {
-            $set: {
-              status:
-                OUTBOX_STATUS
-                  .PROCESSING,
-
-              "owner.workerId":
-                ownerId,
-
-              "owner.claimToken":
-                claimToken,
-
-              "owner.claimedAt":
-                currentTime,
-
-              "owner.heartbeatAt":
-                currentTime,
-
-              "owner.leaseExpiresAt":
-                leaseExpiresAt,
-
-              /*
-               * A new delivery attempt starts with no active
-               * failure information from the previous attempt.
-               */
-              "failure.code":
-                null,
-
-              "failure.message":
-                null,
-
-              "failure.retryable":
-                false,
-
-              "failure.failedAt":
-                null,
-            },
-
-            $inc: {
-              "attempts.count":
-                1,
-            },
-          },
-          {
-            new:
-              true,
+            ownerId,
+            claimToken,
+            currentTime,
+            leaseExpiresAt,
           }
         );
 
@@ -216,23 +166,12 @@ class WorkflowOutboxClaimService {
       };
     }
 
-    /*
-     * Atomic claim did not succeed.
-     *
-     * Reload the event so we can explain why:
-     *
-     * - already delivered
-     * - dead-lettered
-     * - active lease
-     * - retry exhausted
-     * - claim conflict
-     */
     const existing =
-      await this
-        .WorkflowOutboxEvent
-        .findOne({
-          eventId,
-        });
+      await this.repository
+        .findByEventId(
+          scope,
+          eventId
+        );
 
     if (
       !existing
@@ -285,14 +224,6 @@ class WorkflowOutboxClaimService {
       };
     }
 
-    /*
-     * Mongoose normally hydrates Date fields into native Date
-     * instances. Test doubles, lean objects, serialized records,
-     * or other adapters may expose ISO strings instead.
-     *
-     * Normalize the value before comparing it so lease behavior
-     * remains deterministic regardless of representation.
-     */
     const existingLeaseExpiresAt =
       this.normalizeOptionalDate(
         existing.owner
@@ -319,13 +250,15 @@ class WorkflowOutboxClaimService {
     const attemptCount =
       Number(
         existing.attempts
-          ?.count ?? 0
+          ?.count ??
+        0
       );
 
     const maxAttempts =
       Number(
         existing.attempts
-          ?.maxAttempts ?? 0
+          ?.maxAttempts ??
+        0
       );
 
     if (
@@ -364,12 +297,10 @@ class WorkflowOutboxClaimService {
     };
   }
 
-  // ==========================================================================
-  // HEARTBEAT
-  // ==========================================================================
-
   async heartbeat({
     eventId,
+    organizationId,
+    environmentId,
     ownerId,
     claimToken,
     leaseMs =
@@ -382,6 +313,11 @@ class WorkflowOutboxClaimService {
       ownerId,
       claimToken,
       leaseMs,
+    });
+
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
     });
 
     const currentTime =
@@ -397,44 +333,18 @@ class WorkflowOutboxClaimService {
       );
 
     const updated =
-      await this
-        .WorkflowOutboxEvent
-        .findOneAndUpdate(
+      await this.repository
+        .heartbeat(
+          {
+            organizationId,
+            environmentId,
+          },
           {
             eventId,
-
-            status:
-              OUTBOX_STATUS
-                .PROCESSING,
-
-            "owner.workerId":
-              ownerId,
-
-            "owner.claimToken":
-              claimToken,
-
-            /*
-             * Heartbeats from publishers whose lease already expired
-             * are rejected. Once ownership expires, the publisher must
-             * not revive itself.
-             */
-            "owner.leaseExpiresAt": {
-              $gt:
-                currentTime,
-            },
-          },
-          {
-            $set: {
-              "owner.heartbeatAt":
-                currentTime,
-
-              "owner.leaseExpiresAt":
-                leaseExpiresAt,
-            },
-          },
-          {
-            new:
-              true,
+            ownerId,
+            claimToken,
+            currentTime,
+            leaseExpiresAt,
           }
         );
 
@@ -468,12 +378,10 @@ class WorkflowOutboxClaimService {
     };
   }
 
-  // ==========================================================================
-  // MARK DELIVERED
-  // ==========================================================================
-
   async markDelivered({
     eventId,
+    organizationId,
+    environmentId,
     ownerId,
     claimToken,
     messageId = null,
@@ -491,6 +399,11 @@ class WorkflowOutboxClaimService {
         1,
     });
 
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
+    });
+
     const currentTime =
       this.normalizeDate(
         now,
@@ -498,81 +411,21 @@ class WorkflowOutboxClaimService {
       );
 
     const updated =
-      await this
-        .WorkflowOutboxEvent
-        .findOneAndUpdate(
+      await this.repository
+        .markDelivered(
+          {
+            organizationId,
+            environmentId,
+          },
           {
             eventId,
-
-            status:
-              OUTBOX_STATUS
-                .PROCESSING,
-
-            "owner.workerId":
-              ownerId,
-
-            "owner.claimToken":
-              claimToken,
-
-            /*
-             * Only a publisher that still owns a live lease may
-             * commit the delivery result.
-             */
-            "owner.leaseExpiresAt": {
-              $gt:
-                currentTime,
-            },
-          },
-          {
-            $set: {
-              status:
-                OUTBOX_STATUS
-                  .DELIVERED,
-
-              "delivery.deliveredAt":
-                currentTime,
-
-              "delivery.messageId":
-                messageId,
-
-              "delivery.queue":
-                queue,
-
-              "delivery.exchange":
-                exchange,
-
-              "delivery.routingKey":
-                routingKey,
-
-              /*
-               * Keep the last owner identity for audit/fencing,
-               * but close the lease immediately.
-               */
-              "owner.heartbeatAt":
-                currentTime,
-
-              "owner.leaseExpiresAt":
-                currentTime,
-
-              "attempts.nextAttemptAt":
-                null,
-
-              "failure.code":
-                null,
-
-              "failure.message":
-                null,
-
-              "failure.retryable":
-                false,
-
-              "failure.failedAt":
-                null,
-            },
-          },
-          {
-            new:
-              true,
+            ownerId,
+            claimToken,
+            currentTime,
+            messageId,
+            queue,
+            exchange,
+            routingKey,
           }
         );
 
@@ -604,12 +457,10 @@ class WorkflowOutboxClaimService {
     };
   }
 
-  // ==========================================================================
-  // MARK FAILED
-  // ==========================================================================
-
   async markFailed({
     eventId,
+    organizationId,
+    environmentId,
     ownerId,
     claimToken,
     error,
@@ -628,6 +479,11 @@ class WorkflowOutboxClaimService {
         1,
     });
 
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
+    });
+
     const currentTime =
       this.normalizeDate(
         now,
@@ -643,70 +499,21 @@ class WorkflowOutboxClaimService {
         : null;
 
     const updated =
-      await this
-        .WorkflowOutboxEvent
-        .findOneAndUpdate(
+      await this.repository
+        .markFailed(
+          {
+            organizationId,
+            environmentId,
+          },
           {
             eventId,
-
-            status:
-              OUTBOX_STATUS
-                .PROCESSING,
-
-            "owner.workerId":
-              ownerId,
-
-            "owner.claimToken":
-              claimToken,
-
-            "owner.leaseExpiresAt": {
-              $gt:
-                currentTime,
-            },
-          },
-          {
-            $set: {
-              status:
-                OUTBOX_STATUS
-                  .FAILED,
-
-              "failure.code":
-                error?.code ||
-                "OUTBOX_DELIVERY_FAILED",
-
-              "failure.message":
-                error?.message ||
-                "Workflow outbox delivery failed",
-
-              "failure.retryable":
-                retryable ===
-                true,
-
-              "failure.failedAt":
-                currentTime,
-
-              "attempts.lastAttemptAt":
-                currentTime,
-
-              "attempts.nextAttemptAt":
-                normalizedNextAttemptAt,
-
-              /*
-               * Close ownership after recording failure.
-               *
-               * A later retry must claim the event again and receive
-               * a new claim token.
-               */
-              "owner.heartbeatAt":
-                currentTime,
-
-              "owner.leaseExpiresAt":
-                currentTime,
-            },
-          },
-          {
-            new:
-              true,
+            ownerId,
+            claimToken,
+            currentTime,
+            error,
+            retryable,
+            nextAttemptAt:
+              normalizedNextAttemptAt,
           }
         );
 
@@ -742,12 +549,10 @@ class WorkflowOutboxClaimService {
     };
   }
 
-  // ==========================================================================
-  // DEAD LETTER
-  // ==========================================================================
-
   async markDeadLetter({
     eventId,
+    organizationId,
+    environmentId,
     ownerId,
     claimToken,
     reason,
@@ -760,6 +565,11 @@ class WorkflowOutboxClaimService {
       claimToken,
       leaseMs:
         1,
+    });
+
+    this.assertTenantScope({
+      organizationId,
+      environmentId,
     });
 
     if (
@@ -790,57 +600,18 @@ class WorkflowOutboxClaimService {
       );
 
     const updated =
-      await this
-        .WorkflowOutboxEvent
-        .findOneAndUpdate(
+      await this.repository
+        .markDeadLetter(
+          {
+            organizationId,
+            environmentId,
+          },
           {
             eventId,
-
-            status:
-              OUTBOX_STATUS
-                .PROCESSING,
-
-            "owner.workerId":
-              ownerId,
-
-            "owner.claimToken":
-              claimToken,
-
-            "owner.leaseExpiresAt": {
-              $gt:
-                currentTime,
-            },
-          },
-          {
-            $set: {
-              status:
-                OUTBOX_STATUS
-                  .DEAD_LETTER,
-
-              "deadLetter.reason":
-                String(
-                  reason
-                ).trim(),
-
-              "deadLetter.deadLetteredAt":
-                currentTime,
-
-              "attempts.nextAttemptAt":
-                null,
-
-              /*
-               * Close the current publisher lease.
-               */
-              "owner.heartbeatAt":
-                currentTime,
-
-              "owner.leaseExpiresAt":
-                currentTime,
-            },
-          },
-          {
-            new:
-              true,
+            ownerId,
+            claimToken,
+            currentTime,
+            reason,
           }
         );
 
@@ -871,10 +642,6 @@ class WorkflowOutboxClaimService {
         updated,
     };
   }
-
-  // ==========================================================================
-  // VALIDATION
-  // ==========================================================================
 
   assertClaimInput({
     eventId,
@@ -978,20 +745,49 @@ class WorkflowOutboxClaimService {
     return true;
   }
 
-  // ==========================================================================
-  // DATE NORMALIZATION
-  // ==========================================================================
-
+  assertTenantScope({
+  organizationId,
+  environmentId,
+} = {}) {
   /*
-   * Converts Date-compatible values into native Date instances.
+   * Legacy WorkflowOutboxEvent model injection intentionally preserves
+   * the pre-Phase-13 API:
    *
-   * This makes safety-sensitive lease comparisons deterministic for:
+   * claim({
+   *   eventId,
+   *   ownerId
+   * })
    *
-   * - hydrated Mongoose documents
-   * - lean Mongo objects
-   * - serialized ISO date strings
-   * - test doubles
+   * This is required by the existing lease/fencing tests and does not
+   * weaken PostgreSQL because PostgresWorkflowOutboxRepository itself
+   * independently requires organization/environment scope.
    */
+  if (
+    this.requiresTenantScope ===
+    false
+  ) {
+    return true;
+  }
+
+  if (
+    !organizationId ||
+    !environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Workflow outbox operation requires tenant scope"
+      ),
+      {
+        code:
+          OUTBOX_ERROR_CODE
+            .TENANT_SCOPE_REQUIRED,
+      }
+    );
+  }
+
+  return true;
+}
+
   normalizeDate(
     value,
     field =
@@ -1056,18 +852,429 @@ class WorkflowOutboxClaimService {
         normalized.getTime()
       )
     ) {
-      /*
-       * An invalid persisted lease value must not accidentally be
-       * interpreted as a valid active lease.
-       *
-       * The atomic claim itself still controls ownership. This
-       * helper is used only to classify why a failed claim occurred.
-       */
       return null;
     }
 
     return normalized;
   }
+}
+
+function createLegacyModelRepository(
+  WorkflowOutboxEvent
+) {
+  return {
+    claim:
+      async (
+        scope,
+        {
+          eventId,
+          ownerId,
+          claimToken,
+          currentTime,
+          leaseExpiresAt,
+        }
+      ) =>
+        WorkflowOutboxEvent
+          .findOneAndUpdate(
+            withOptionalScope(
+              {
+                eventId,
+
+                status: {
+                  $in: [
+                    OUTBOX_STATUS
+                      .PENDING,
+
+                    OUTBOX_STATUS
+                      .FAILED,
+
+                    OUTBOX_STATUS
+                      .PROCESSING,
+                  ],
+                },
+
+                $or: [
+                  {
+                    "owner.leaseExpiresAt":
+                      null,
+                  },
+                  {
+                    "owner.leaseExpiresAt": {
+                      $lte:
+                        currentTime,
+                    },
+                  },
+                ],
+
+                $expr: {
+                  $lt: [
+                    "$attempts.count",
+                    "$attempts.maxAttempts",
+                  ],
+                },
+              },
+              scope
+            ),
+            {
+              $set: {
+                status:
+                  OUTBOX_STATUS
+                    .PROCESSING,
+
+                "owner.workerId":
+                  ownerId,
+
+                "owner.claimToken":
+                  claimToken,
+
+                "owner.claimedAt":
+                  currentTime,
+
+                "owner.heartbeatAt":
+                  currentTime,
+
+                "owner.leaseExpiresAt":
+                  leaseExpiresAt,
+
+                "failure.code":
+                  null,
+
+                "failure.message":
+                  null,
+
+                "failure.retryable":
+                  false,
+
+                "failure.failedAt":
+                  null,
+              },
+
+              $inc: {
+                "attempts.count":
+                  1,
+              },
+            },
+            {
+              new:
+                true,
+            }
+          ),
+
+    findByEventId:
+      async (
+        scope,
+        eventId
+      ) =>
+        WorkflowOutboxEvent
+          .findOne(
+            withOptionalScope(
+              {
+                eventId,
+              },
+              scope
+            )
+          ),
+
+    heartbeat:
+      async (
+        scope,
+        {
+          eventId,
+          ownerId,
+          claimToken,
+          currentTime,
+          leaseExpiresAt,
+        }
+      ) =>
+        WorkflowOutboxEvent
+          .findOneAndUpdate(
+            withOptionalScope(
+              {
+                eventId,
+
+                status:
+                  OUTBOX_STATUS
+                    .PROCESSING,
+
+                "owner.workerId":
+                  ownerId,
+
+                "owner.claimToken":
+                  claimToken,
+
+                "owner.leaseExpiresAt": {
+                  $gt:
+                    currentTime,
+                },
+              },
+              scope
+            ),
+            {
+              $set: {
+                "owner.heartbeatAt":
+                  currentTime,
+
+                "owner.leaseExpiresAt":
+                  leaseExpiresAt,
+              },
+            },
+            {
+              new:
+                true,
+            }
+          ),
+
+    markDelivered:
+      async (
+        scope,
+        {
+          eventId,
+          ownerId,
+          claimToken,
+          currentTime,
+          messageId,
+          queue,
+          exchange,
+          routingKey,
+        }
+      ) =>
+        WorkflowOutboxEvent
+          .findOneAndUpdate(
+            withOptionalScope(
+              {
+                eventId,
+
+                status:
+                  OUTBOX_STATUS
+                    .PROCESSING,
+
+                "owner.workerId":
+                  ownerId,
+
+                "owner.claimToken":
+                  claimToken,
+
+                "owner.leaseExpiresAt": {
+                  $gt:
+                    currentTime,
+                },
+              },
+              scope
+            ),
+            {
+              $set: {
+                status:
+                  OUTBOX_STATUS
+                    .DELIVERED,
+
+                "delivery.deliveredAt":
+                  currentTime,
+
+                "delivery.messageId":
+                  messageId,
+
+                "delivery.queue":
+                  queue,
+
+                "delivery.exchange":
+                  exchange,
+
+                "delivery.routingKey":
+                  routingKey,
+
+                "owner.heartbeatAt":
+                  currentTime,
+
+                "owner.leaseExpiresAt":
+                  currentTime,
+
+                "attempts.nextAttemptAt":
+                  null,
+
+                "failure.code":
+                  null,
+
+                "failure.message":
+                  null,
+
+                "failure.retryable":
+                  false,
+
+                "failure.failedAt":
+                  null,
+              },
+            },
+            {
+              new:
+                true,
+            }
+          ),
+
+    markFailed:
+      async (
+        scope,
+        {
+          eventId,
+          ownerId,
+          claimToken,
+          currentTime,
+          error,
+          retryable,
+          nextAttemptAt,
+        }
+      ) =>
+        WorkflowOutboxEvent
+          .findOneAndUpdate(
+            withOptionalScope(
+              {
+                eventId,
+
+                status:
+                  OUTBOX_STATUS
+                    .PROCESSING,
+
+                "owner.workerId":
+                  ownerId,
+
+                "owner.claimToken":
+                  claimToken,
+
+                "owner.leaseExpiresAt": {
+                  $gt:
+                    currentTime,
+                },
+              },
+              scope
+            ),
+            {
+              $set: {
+                status:
+                  OUTBOX_STATUS
+                    .FAILED,
+
+                "failure.code":
+                  error?.code ||
+                  "OUTBOX_DELIVERY_FAILED",
+
+                "failure.message":
+                  error?.message ||
+                  "Workflow outbox delivery failed",
+
+                "failure.retryable":
+                  retryable ===
+                  true,
+
+                "failure.failedAt":
+                  currentTime,
+
+                "attempts.lastAttemptAt":
+                  currentTime,
+
+                "attempts.nextAttemptAt":
+                  nextAttemptAt,
+
+                "owner.heartbeatAt":
+                  currentTime,
+
+                "owner.leaseExpiresAt":
+                  currentTime,
+              },
+            },
+            {
+              new:
+                true,
+            }
+          ),
+
+    markDeadLetter:
+      async (
+        scope,
+        {
+          eventId,
+          ownerId,
+          claimToken,
+          currentTime,
+          reason,
+        }
+      ) =>
+        WorkflowOutboxEvent
+          .findOneAndUpdate(
+            withOptionalScope(
+              {
+                eventId,
+
+                status:
+                  OUTBOX_STATUS
+                    .PROCESSING,
+
+                "owner.workerId":
+                  ownerId,
+
+                "owner.claimToken":
+                  claimToken,
+
+                "owner.leaseExpiresAt": {
+                  $gt:
+                    currentTime,
+                },
+              },
+              scope
+            ),
+            {
+              $set: {
+                status:
+                  OUTBOX_STATUS
+                    .DEAD_LETTER,
+
+                "deadLetter.reason":
+                  String(
+                    reason
+                  ).trim(),
+
+                "deadLetter.deadLetteredAt":
+                  currentTime,
+
+                "attempts.nextAttemptAt":
+                  null,
+
+                "owner.heartbeatAt":
+                  currentTime,
+
+                "owner.leaseExpiresAt":
+                  currentTime,
+              },
+            },
+            {
+              new:
+                true,
+            }
+          ),
+  };
+}
+
+function withOptionalScope(
+  filter,
+  scope = {}
+) {
+  const output = {
+    ...filter,
+  };
+
+  if (
+    scope.organizationId
+  ) {
+    output.organizationId =
+      scope.organizationId;
+  }
+
+  if (
+    scope.environmentId
+  ) {
+    output.environmentId =
+      scope.environmentId;
+  }
+
+  return output;
 }
 
 module.exports =

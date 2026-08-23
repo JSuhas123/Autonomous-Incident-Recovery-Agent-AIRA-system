@@ -20,35 +20,6 @@ const {
     "./workflowOutboxContracts"
   );
 
-/*
- * ============================================================================
- * AIRA PHASE 11.3.6
- * WORKFLOW OUTBOX DISPATCHER
- * ============================================================================
- *
- * Responsibilities:
- *
- * 1. Route a claimed outbox event to the correct queue publisher.
- * 2. Preserve the existing protected worker boundaries.
- * 3. Reject unknown / unmapped event types.
- * 4. Reject payloads attempting to manufacture execution authority.
- * 5. Mark successful queue publication as DELIVERED.
- * 6. Surface publication failures for the retry layer.
- *
- * IMPORTANT:
- *
- * The dispatcher NEVER:
- *
- * - executes infrastructure
- * - grants authorization
- * - invokes ExecutionWorker directly
- * - invokes VerificationWorker directly
- * - invokes LifecycleWorker directly
- *
- * It only publishes messages into existing protected queue boundaries.
- * ============================================================================
- */
-
 class WorkflowOutboxDispatcher {
   constructor(
     options = {}
@@ -90,10 +61,6 @@ class WorkflowOutboxDispatcher {
             "hex"
           ));
   }
-
-  // ==========================================================================
-  // DISPATCH
-  // ==========================================================================
 
   async dispatch(
     event,
@@ -140,11 +107,16 @@ class WorkflowOutboxDispatcher {
       this.now();
 
     const claim =
-      await this
-        .claimService
+      await this.claimService
         .claim({
           eventId:
             event.eventId,
+
+          organizationId:
+            event.organizationId,
+
+          environmentId:
+            event.environmentId,
 
           ownerId,
 
@@ -193,10 +165,6 @@ class WorkflowOutboxDispatcher {
         now,
       });
   }
-
-  // ==========================================================================
-  // DISPATCH ALREADY-CLAIMED EVENT
-  // ==========================================================================
 
   async dispatchClaimed({
     event,
@@ -259,14 +227,6 @@ class WorkflowOutboxDispatcher {
         event
       );
 
-    /*
-     * Keep the publication message deterministic with respect to
-     * the logical outbox event.
-     *
-     * eventId is the durable handoff identity.
-     *
-     * messageId is transport metadata only.
-     */
     const messageId =
       this.generateMessageId();
 
@@ -276,15 +236,17 @@ class WorkflowOutboxDispatcher {
         messageId,
       });
 
-    /*
-     * Refresh the publisher lease before entering the external
-     * queue publication boundary.
-     */
     await this
       .claimService
       .heartbeat({
         eventId:
           event.eventId,
+
+        organizationId:
+          event.organizationId,
+
+        environmentId:
+          event.environmentId,
 
         ownerId,
 
@@ -312,16 +274,6 @@ class WorkflowOutboxDispatcher {
     } catch (
       error
     ) {
-      /*
-       * IMPORTANT:
-       *
-       * We intentionally do NOT mark the event failed here yet.
-       *
-       * Phase 11.3.7 owns retry classification and backoff.
-       *
-       * This dispatcher only reports the queue publication failure
-       * along with the valid ownership identity.
-       */
       throw Object.assign(
         error instanceof Error
           ? error
@@ -335,6 +287,12 @@ class WorkflowOutboxDispatcher {
 
             eventType:
               event.eventType,
+
+            organizationId:
+              event.organizationId,
+
+            environmentId:
+              event.environmentId,
 
             ownerId,
 
@@ -361,13 +319,6 @@ class WorkflowOutboxDispatcher {
       );
     }
 
-    /*
-     * Publisher may optionally return transport metadata.
-     *
-     * The configured route remains authoritative for the intended
-     * destination, while publisher metadata can refine messageId,
-     * queue, exchange, or routing key if available.
-     */
     const deliveryMetadata = {
       messageId:
         publishResult
@@ -399,6 +350,12 @@ class WorkflowOutboxDispatcher {
         .markDelivered({
           eventId:
             event.eventId,
+
+          organizationId:
+            event.organizationId,
+
+          environmentId:
+            event.environmentId,
 
           ownerId,
 
@@ -472,10 +429,6 @@ class WorkflowOutboxDispatcher {
         false,
     };
   }
-
-  // ==========================================================================
-  // ROUTING
-  // ==========================================================================
 
   resolveRoute(
     event
@@ -572,10 +525,6 @@ class WorkflowOutboxDispatcher {
     };
   }
 
-  // ==========================================================================
-  // MESSAGE BUILDING
-  // ==========================================================================
-
   buildMessage({
     event,
     messageId,
@@ -616,12 +565,6 @@ class WorkflowOutboxDispatcher {
       incidentId:
         event.incidentId,
 
-      /*
-       * The payload remains the actual protected-worker input.
-       *
-       * The dispatcher explicitly forces executionAuthorized=false
-       * at the transport boundary.
-       */
       payload: {
         ...(
           event.payload ||
@@ -666,27 +609,6 @@ class WorkflowOutboxDispatcher {
     };
   }
 
-  // ==========================================================================
-  // DEFAULT ROUTE FACTORY
-  // ==========================================================================
-
-  /*
-   * This helper makes it easy to connect existing queue services.
-   *
-   * Example:
-   *
-   * publishers: {
-   *   [OUTBOX_EVENT_TYPE.VERIFICATION_REQUESTED]:
-   *     WorkflowOutboxDispatcher.route({
-   *       name: "verification-requested",
-   *       queue: "verification",
-   *       publish: async (message) =>
-   *         verificationQueueService.publish(
-   *           message.payload
-   *         ),
-   *     }),
-   * }
-   */
   static route({
     name,
     queue = null,
@@ -717,10 +639,6 @@ class WorkflowOutboxDispatcher {
       publish,
     };
   }
-
-  // ==========================================================================
-  // VALIDATION
-  // ==========================================================================
 
   assertEvent(
     event

@@ -2,45 +2,22 @@
 -- AIRA PHASE 13.4A
 -- MIGRATION 0006 — INCIDENT EVENT REPOSITORY PARITY
 -- ============================================================================
---
--- Purpose:
---
--- Bring PostgreSQL incident_events into parity with the repository contract
--- already used by AIRA.
---
--- IMPORTANT:
---
--- 0002 has already been applied and checksum recorded.
--- Never rewrite an applied migration.
--- Schema evolution happens only through forward migrations.
--- ============================================================================
 
-
--- ============================================================================
--- PROCESSING STATE
--- ============================================================================
-
+-- 1. PROCESSING STATE COLUMNS
 ALTER TABLE incidents.incident_events
-  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
-
-ALTER TABLE incidents.incident_events
-  ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ;
-
-ALTER TABLE incidents.incident_events
+  ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending',
+  ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS processing_time_ms BIGINT;
 
-
--- ============================================================================
--- SAFETY CONSTRAINTS
--- ============================================================================
-
+-- 2. SAFETY CONSTRAINTS
 DO $$
 BEGIN
   IF NOT EXISTS (
     SELECT 1
-    FROM pg_constraint
-    WHERE conname = 'incident_events_processing_time_nonnegative'
-      AND conrelid = 'incidents.incident_events'::regclass
+    FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.connamespace
+    WHERE c.conname = 'incident_events_processing_time_nonnegative'
+      AND n.nspname = 'incidents'
   ) THEN
     ALTER TABLE incidents.incident_events
       ADD CONSTRAINT incident_events_processing_time_nonnegative
@@ -49,38 +26,26 @@ BEGIN
         OR processing_time_ms >= 0
       );
   END IF;
-END
-$$;
+END $$;
 
+-- 3. INDEXES
+CREATE INDEX IF NOT EXISTS idx_incident_events_processing_status
+  ON incidents.incident_events (
+    organization_id,
+    environment_id,
+    status,
+    created_at DESC
+  );
 
--- ============================================================================
--- INDEXES
--- ============================================================================
+CREATE INDEX IF NOT EXISTS idx_incident_events_processed_at
+  ON incidents.incident_events (
+    organization_id,
+    environment_id,
+    processed_at DESC
+  )
+  WHERE processed_at IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS
-  idx_incident_events_processing_status
-ON incidents.incident_events (
-  organization_id,
-  environment_id,
-  status,
-  created_at DESC
-);
-
-
-CREATE INDEX IF NOT EXISTS
-  idx_incident_events_processed_at
-ON incidents.incident_events (
-  organization_id,
-  environment_id,
-  processed_at DESC
-)
-WHERE processed_at IS NOT NULL;
-
-
--- ============================================================================
--- DOCUMENTATION
--- ============================================================================
-
+-- 4. DOCUMENTATION
 COMMENT ON COLUMN incidents.incident_events.public_id IS
   'Canonical AIRA incident event identifier. Maps to IncidentEvent.eventId.';
 

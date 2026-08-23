@@ -1,25 +1,9 @@
 "use strict";
 
-/**
- * Phase 13 — Enterprise Data Architecture
- *
- * Persistence contract for:
- *
- * - current IncidentLifecycle snapshot
- * - immutable IncidentLifecycleTransition history
- *
- * Implementations must preserve:
- *
- * - organization/environment/incident scoping
- * - monotonic lifecycle revision semantics
- * - immutable transition history
- * - transition identity uniqueness
- * - ordered transition retrieval
- * - fail-closed update behaviour
- */
 class IncidentLifecycleRepository {
   async findCurrent(
-    _scope
+    _scope,
+    _transaction = null
   ) {
     throw new Error(
       "IncidentLifecycleRepository.findCurrent() is not implemented"
@@ -27,7 +11,8 @@ class IncidentLifecycleRepository {
   }
 
   async createTransition(
-    _transition
+    _transition,
+    _transaction = null
   ) {
     throw new Error(
       "IncidentLifecycleRepository.createTransition() is not implemented"
@@ -36,7 +21,8 @@ class IncidentLifecycleRepository {
 
   async upsertCurrent(
     _scope,
-    _update
+    _update,
+    _transaction = null
   ) {
     throw new Error(
       "IncidentLifecycleRepository.upsertCurrent() is not implemented"
@@ -45,7 +31,8 @@ class IncidentLifecycleRepository {
 
   async updateCurrent(
     _scope,
-    _update
+    _update,
+    _transaction = null
   ) {
     throw new Error(
       "IncidentLifecycleRepository.updateCurrent() is not implemented"
@@ -54,7 +41,8 @@ class IncidentLifecycleRepository {
 
   async getHistory(
     _scope,
-    _limit = 100
+    _limit = 100,
+    _transaction = null
   ) {
     throw new Error(
       "IncidentLifecycleRepository.getHistory() is not implemented"

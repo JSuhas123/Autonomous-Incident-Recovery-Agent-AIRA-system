@@ -88,34 +88,51 @@ class MongoAgentIntelligenceRunRepository
     );
   }
 
-  async findLatestForIncident({
-    organizationId,
-    environmentId,
-    incidentId,
-  }) {
-    return AgentIntelligenceRun
-      .findOne({
-        organizationId,
+  async findLatestForIncident(
+    {
+      organizationId,
+      environmentId,
+      incidentId,
+    },
+    transaction = null
+  ) {
+    let query =
+      AgentIntelligenceRun
+        .findOne({
+          organizationId,
 
-        environmentId,
+          environmentId,
 
-        incidentId,
-      })
-      .sort({
-        createdAt:
-          -1,
-      })
-      .select({
-        createdAt:
-          1,
+          incidentId,
+        })
+        .sort({
+          createdAt:
+            -1,
+        })
+        .select({
+          createdAt:
+            1,
 
-        status:
-          1,
+          status:
+            1,
 
-        completedAt:
-          1,
-      })
-      .lean();
+          completedAt:
+            1,
+        });
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (session) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query.lean();
   }
 }
 

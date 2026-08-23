@@ -18,137 +18,174 @@ class AuditService {
   // ==========================================================================
 
   static async recordEvent(
-    tenantId,
-    eventType,
-    payload,
-    context = {}
-  ) {
-    try {
-      if (
-        !tenantId
-      ) {
-        throw Object.assign(
-          new Error(
-            "tenantId is required for audit events"
-          ),
-          {
-            code:
-              "AUDIT_TENANT_REQUIRED",
-          }
-        );
-      }
+  tenantId,
+  eventType,
+  payload,
+  context = {}
+) {
+  try {
+    if (
+      !tenantId
+    ) {
+      throw Object.assign(
+        new Error(
+          "tenantId is required for audit events"
+        ),
+        {
+          code:
+            "AUDIT_TENANT_REQUIRED",
+        }
+      );
+    }
 
-      if (
-        !eventType
-      ) {
-        throw Object.assign(
-          new Error(
-            "eventType is required for audit events"
-          ),
-          {
-            code:
-              "AUDIT_EVENT_TYPE_REQUIRED",
-          }
-        );
-      }
+    if (
+      !eventType
+    ) {
+      throw Object.assign(
+        new Error(
+          "eventType is required for audit events"
+        ),
+        {
+          code:
+            "AUDIT_EVENT_TYPE_REQUIRED",
+        }
+      );
+    }
 
-      const lastEvent =
-        await auditRepository
-          .findLatestForTenant(
-            tenantId
-          );
-
-      const previousEventHash =
-        lastEvent
-          ? lastEvent.eventHash
-          : null;
-
-      const eventId =
-        crypto
-          .randomUUID();
-
-      const timestamp =
-        Date.now();
-
-      const signature =
-        this._computeSignature(
-          tenantId,
-          payload,
-          timestamp
+    const lastEvent =
+      await auditRepository
+        .findLatestForTenant(
+          tenantId
         );
 
-      const data = {
-        eventId,
+    const previousEventHash =
+      lastEvent
+        ? lastEvent.eventHash
+        : null;
 
+    /*
+     * Monotonic custody-chain position.
+     *
+     * This field already exists and is required by AuditEvent,
+     * but the previous service implementation never populated it.
+     */
+    const chainIndex =
+      lastEvent
+        ? Number(
+            lastEvent
+              .chainIndex ||
+            0
+          ) +
+          1
+        : 1;
+
+    const eventId =
+      crypto.randomUUID();
+
+    const timestamp =
+      Date.now();
+
+    const signature =
+      this._computeSignature(
         tenantId,
-
-        eventType,
-
         payload,
+        timestamp
+      );
 
-        signature,
+    const data = {
+      eventId,
 
-        previousEventHash,
+      tenantId,
 
-        principal:
-          context.principal ||
-          "system",
+      organizationId:
+        context.organizationId ||
+        null,
 
-        principalId:
-          context.principalId ||
-          context.userId ||
-          "system",
+      environmentId:
+        context.environmentId ||
+        null,
 
-        userId:
-          context.userId,
+      chainIndex,
 
-        ipAddress:
-          context.ipAddress,
+      eventType,
 
-        correlationId:
-          context.correlationId ||
-          crypto
-            .randomUUID(),
+      payload,
 
-        timestamp,
+      metadata:
+        context.metadata ||
+        null,
 
-        status:
-          "created",
-      };
+      action:
+        context.action ||
+        null,
 
-      /*
-       * Compute the complete custody hash BEFORE persistence.
-       *
-       * AuditRepository is append-only and intentionally has no update
-       * method.
-       */
-      data.eventHash =
-        this._computeEventHash(
+      serviceId:
+        context.serviceId ||
+        null,
+
+      actionDetails:
+        context.actionDetails ||
+        null,
+
+      signature,
+
+      previousEventHash,
+
+      principal:
+        context.principal ||
+        "system",
+
+      principalId:
+        context.principalId ||
+        context.userId ||
+        "system",
+
+      userId:
+        context.userId,
+
+      ipAddress:
+        context.ipAddress,
+
+      correlationId:
+        context.correlationId ||
+        crypto.randomUUID(),
+
+      timestamp,
+
+      status:
+        "created",
+    };
+
+    /*
+     * Compute custody hash before append.
+     */
+    data.eventHash =
+      this._computeEventHash(
+        data
+      );
+
+    const auditEvent =
+      await auditRepository
+        .create(
           data
         );
 
-      const auditEvent =
-        await auditRepository
-          .create(
-            data
-          );
+    console.log(
+      `[audit] ✓ Recorded ${eventType} | eventId=${eventId} | tenant=${tenantId}`
+    );
 
-      console.log(
-        `[audit] ✓ Recorded ${eventType} | eventId=${eventId} | tenant=${tenantId}`
-      );
+    return auditEvent;
+  } catch (
+    error
+  ) {
+    console.error(
+      "[audit] Error recording event:",
+      error.message
+    );
 
-      return auditEvent;
-    } catch (
-      error
-    ) {
-      console.error(
-        "[audit] Error recording event:",
-        error.message
-      );
-
-      throw error;
-    }
+    throw error;
   }
+}
 
   // ==========================================================================
   // SIGNATURE

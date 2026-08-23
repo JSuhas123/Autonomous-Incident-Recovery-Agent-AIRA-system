@@ -43,211 +43,100 @@ class SignalIngestionService {
   // ==========================================================================
 
   async ingest(
-    input,
-    context = {},
-    options = {}
-  ) {
-    let persistedSignal =
-      null;
+  input,
+  context = {},
+  options = {}
+) {
+  let persistedSignal =
+    null;
 
-    try {
-      // ----------------------------------------------------------------------
-      // 1. NORMALIZE
-      // ----------------------------------------------------------------------
+  try {
+    // ------------------------------------------------------------------------
+    // 1. NORMALIZE
+    // ------------------------------------------------------------------------
 
-      const normalized =
-        signalNormalizationService
-          .normalize(
-            input,
-            context
-          );
+    const normalized =
+      signalNormalizationService
+        .normalize(
+          input,
+          context
+        );
 
-      // ----------------------------------------------------------------------
-      // 2. DEDUPLICATE
-      // ----------------------------------------------------------------------
+    // ------------------------------------------------------------------------
+    // 2. DEDUPLICATE
+    // ------------------------------------------------------------------------
 
-      const deduplication =
-        await signalDeduplicationService
-          .deduplicate(
-            normalized,
-            {
-              windowMs:
-                options
-                  .dedupWindowMs,
-            }
-          );
+    const deduplication =
+      await signalDeduplicationService
+        .deduplicate(
+          normalized,
+          {
+            windowMs:
+              options
+                .dedupWindowMs,
+          }
+        );
 
-      if (
-        deduplication
-          .duplicate
-      ) {
-        return {
-          accepted:
-            true,
-
-          duplicate:
-            true,
-
-          signal:
-            deduplication
-              .signal,
-
-          correlation:
-            null,
-
-          correlationGroup:
-            null,
-
-          routing: {
-            routed:
-              false,
-
-            reason:
-              "DUPLICATE_SIGNAL",
-          },
-        };
-      }
-
-      // ----------------------------------------------------------------------
-      // 3. ENRICH
-      // ----------------------------------------------------------------------
-
-      const enriched =
-        await signalEnrichmentService
-          .enrich(
-            normalized
-          );
-
-      // ----------------------------------------------------------------------
-      // 4. PERSIST
-      // ----------------------------------------------------------------------
-
-      persistedSignal =
-  await signalRepository
-    .create({
-      ...enriched,
-
-      processingStatus:
-        "enriched",
-
-      enrichedAt:
-        enriched
-          .enrichedAt ||
-        new Date(),
-    });
-
-      // ----------------------------------------------------------------------
-      // 5. CORRELATE
-      // ----------------------------------------------------------------------
-
-      const correlation =
-        await signalCorrelationService
-          .correlate(
-            persistedSignal,
-            {
-              windowMs:
-                options
-                  .correlationWindowMs,
-
-              minimumScore:
-                options
-                  .minimumCorrelationScore,
-            }
-          );
-
-      /*
-       * Refresh after correlation because correlationService
-       * updates the stored document directly.
-       */
-      persistedSignal =
-  await signalRepository
-    .findByDatabaseId(
-      persistedSignal
-        ._id
-    );
-
-      // ----------------------------------------------------------------------
-      // 6. UPDATE / CREATE CORRELATION GROUP
-      // ----------------------------------------------------------------------
-
-      const correlationGroup =
-        await signalCorrelationGroupService
-          .updateGroup(
-            persistedSignal,
-            correlation
-          );
-
-      /*
-       * Refresh again because correlationGroupService may set:
-       *
-       * - correlationGroupId
-       * - correlationScore
-       * - incidentCandidate
-       */
-      persistedSignal =
-  await signalRepository
-    .findByDatabaseId(
-      persistedSignal
-        ._id
-    );
-
-      // ----------------------------------------------------------------------
-      // 7. ROUTE
-      // ----------------------------------------------------------------------
-
-      const routing =
-        await signalRouterService
-          .route(
-            persistedSignal,
-            correlationGroup
-          );
-
-      /*
-       * Router / incident orchestration may attach incidentId and
-       * update processing state.
-       */
-      persistedSignal =
-  await signalRepository
-    .findByDatabaseId(
-      persistedSignal
-        ._id
-    );
-
+    if (
+      deduplication
+        .duplicate
+    ) {
       return {
         accepted:
           true,
 
         duplicate:
-          false,
+          true,
 
         signal:
-          persistedSignal,
+          deduplication
+            .signal,
 
-        correlation,
+        correlation:
+          null,
 
-        correlationGroup,
+        correlationGroup:
+          null,
 
-        routing,
+        routing: {
+          routed:
+            false,
+
+          reason:
+            "DUPLICATE_SIGNAL",
+        },
       };
-    } catch (
-      error
-    ) {
-      // ----------------------------------------------------------------------
-      // FAILURE TRACKING
-      // ----------------------------------------------------------------------
+    }
 
-      if (
-        persistedSignal
-          ?._id
-      ) {
-        try {
-          await signalRepository
-  .updateOne(
-    {
-      _id:
-        persistedSignal
-          ._id,
+    // ------------------------------------------------------------------------
+    // 3. ENRICH
+    // ------------------------------------------------------------------------
 
+    const enriched =
+      await signalEnrichmentService
+        .enrich(
+          normalized
+        );
+
+    // ------------------------------------------------------------------------
+    // 4. PERSIST
+    // ------------------------------------------------------------------------
+
+    persistedSignal =
+      await signalRepository
+        .create({
+          ...enriched,
+
+          processingStatus:
+            "enriched",
+
+          enrichedAt:
+            enriched
+              .enrichedAt ||
+            new Date(),
+        });
+
+    const signalScope = {
       organizationId:
         persistedSignal
           .organizationId,
@@ -255,34 +144,138 @@ class SignalIngestionService {
       environmentId:
         persistedSignal
           .environmentId,
-    },
-    {
-      $set: {
-        processingStatus:
-          "failed",
+    };
 
-        processingError:
-          this
-            .safeErrorMessage(
-              error
-            ),
-      },
-    }
-  );
-        } catch (
-          persistenceError
-        ) {
-          console.error(
-            "[signal-ingestion] Failed to record processing failure:",
-            persistenceError
-              .message
+    // ------------------------------------------------------------------------
+    // 5. CORRELATE
+    // ------------------------------------------------------------------------
+
+    const correlation =
+      await signalCorrelationService
+        .correlate(
+          persistedSignal,
+          {
+            windowMs:
+              options
+                .correlationWindowMs,
+
+            minimumScore:
+              options
+                .minimumCorrelationScore,
+          }
+        );
+
+    persistedSignal =
+      await signalRepository
+        .findByDatabaseId(
+          signalScope,
+          persistedSignal
+            ._id
+        );
+
+    // ------------------------------------------------------------------------
+    // 6. UPDATE / CREATE CORRELATION GROUP
+    // ------------------------------------------------------------------------
+
+    const correlationGroup =
+      await signalCorrelationGroupService
+        .updateGroup(
+          persistedSignal,
+          correlation
+        );
+
+    persistedSignal =
+      await signalRepository
+        .findByDatabaseId(
+          signalScope,
+          persistedSignal
+            ._id
+        );
+
+    // ------------------------------------------------------------------------
+    // 7. ROUTE
+    // ------------------------------------------------------------------------
+
+    const routing =
+      await signalRouterService
+        .route(
+          persistedSignal,
+          correlationGroup
+        );
+
+    persistedSignal =
+      await signalRepository
+        .findByDatabaseId(
+          signalScope,
+          persistedSignal
+            ._id
+        );
+
+    return {
+      accepted:
+        true,
+
+      duplicate:
+        false,
+
+      signal:
+        persistedSignal,
+
+      correlation,
+
+      correlationGroup,
+
+      routing,
+    };
+  } catch (
+    error
+  ) {
+    if (
+      persistedSignal
+        ?._id
+    ) {
+      try {
+        await signalRepository
+          .updateOne(
+            {
+              _id:
+                persistedSignal
+                  ._id,
+
+              organizationId:
+                persistedSignal
+                  .organizationId,
+
+              environmentId:
+                persistedSignal
+                  .environmentId,
+            },
+            {
+              $set: {
+                processingStatus:
+                  "failed",
+
+                processingError:
+                  this
+                    .safeErrorMessage(
+                      error
+                    ),
+              },
+            }
           );
-        }
+      } catch (
+        persistenceError
+      ) {
+        console.error(
+          "[signal-ingestion] Failed to record processing failure:",
+          persistenceError.message
+        );
       }
-
-      throw error;
     }
+
+    throw error;
   }
+}
 
   // ==========================================================================
   // INGEST MANY

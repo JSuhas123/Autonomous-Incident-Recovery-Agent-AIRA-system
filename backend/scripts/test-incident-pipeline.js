@@ -165,29 +165,123 @@ async function main() {
     "[phase5-test] MongoDB connected"
   );
 
-  // ==========================================================================
-  // UNIQUE OWNERSHIP CONTEXT
-  // ==========================================================================
+ // ==========================================================================
+// UNIQUE OWNERSHIP CONTEXT
+// ==========================================================================
 
-  const organizationId =
-    new mongoose
-      .Types.ObjectId();
+const configuredOrganizationId =
+  String(
+    process.env
+      .PHASE5_ORGANIZATION_ID ||
+    ""
+  )
+    .trim();
 
-  const productionEnvironmentId =
-    new mongoose
-      .Types.ObjectId();
+const configuredEnvironmentId =
+  String(
+    process.env
+      .PHASE5_ENVIRONMENT_ID ||
+    ""
+  )
+    .trim();
 
-  const stagingEnvironmentId =
-    new mongoose
-      .Types.ObjectId();
+if (
+  configuredOrganizationId &&
+  !mongoose.Types.ObjectId
+    .isValid(
+      configuredOrganizationId
+    )
+) {
+  throw Object.assign(
+    new Error(
+      "PHASE5_ORGANIZATION_ID must be a valid Mongo ObjectId"
+    ),
+    {
+      code:
+        "PHASE5_ORGANIZATION_ID_INVALID",
+    }
+  );
+}
 
-  const otherOrganizationId =
-    new mongoose
-      .Types.ObjectId();
+if (
+  configuredEnvironmentId &&
+  !mongoose.Types.ObjectId
+    .isValid(
+      configuredEnvironmentId
+    )
+) {
+  throw Object.assign(
+    new Error(
+      "PHASE5_ENVIRONMENT_ID must be a valid Mongo ObjectId"
+    ),
+    {
+      code:
+        "PHASE5_ENVIRONMENT_ID_INVALID",
+    }
+  );
+}
 
-  const tenantId =
-    `phase5-test-${Date.now()}`;
+/*
+ * Primary ownership may be mapped to a real AIRA tenancy.
+ *
+ * This allows Phase 13 Mongo -> PostgreSQL migration validation
+ * to operate on records belonging to an actual bootstrapped
+ * organization/environment.
+ */
+const organizationId =
+  configuredOrganizationId
+    ? new mongoose
+        .Types
+        .ObjectId(
+          configuredOrganizationId
+        )
+    : new mongoose
+        .Types
+        .ObjectId();
 
+const productionEnvironmentId =
+  configuredEnvironmentId
+    ? new mongoose
+        .Types
+        .ObjectId(
+          configuredEnvironmentId
+        )
+    : new mongoose
+        .Types
+        .ObjectId();
+
+/*
+ * These remain deliberately isolated synthetic contexts.
+ *
+ * The Phase 5 environment-isolation test needs another environment,
+ * while the organization-isolation test needs another organization.
+ */
+const stagingEnvironmentId =
+  new mongoose
+    .Types
+    .ObjectId();
+
+const otherOrganizationId =
+  new mongoose
+    .Types
+    .ObjectId();
+
+const tenantId =
+  `phase5-test-${Date.now()}`;
+
+console.log(
+  "[phase5-test] Primary organization:",
+  String(
+    organizationId
+  )
+);
+
+console.log(
+  "[phase5-test] Primary environment:",
+  String(
+    productionEnvironmentId
+  )
+);
   const userId =
     new mongoose
       .Types.ObjectId();
@@ -1971,15 +2065,48 @@ async function main() {
       "\n🎉 PHASE 5 INCIDENT PIPELINE PASSED"
     );
   } finally {
-    // ========================================================================
-    // CLEANUP
-    // ========================================================================
+  // ========================================================================
+  // CLEANUP
+  // ========================================================================
 
-    section(
-      "CLEANUP"
-    );
+  const keepTestData =
+    String(
+      process.env
+        .KEEP_TEST_DATA ||
+        ""
+    )
+      .trim()
+      .toLowerCase() ===
+      "true";
 
-    try {
+  section(
+    keepTestData
+      ? "TEST DATA PRESERVED"
+      : "CLEANUP"
+  );
+
+  try {
+    if (
+  keepTestData
+) {
+  console.log(
+    "[phase5-test] KEEP_TEST_DATA=true — preserving generated MongoDB records for Phase 13 migration validation"
+  );
+
+  console.log(
+    "[phase5-test] Organization:",
+    String(
+      organizationId
+    )
+  );
+
+  console.log(
+    "[phase5-test] Environment:",
+    String(
+      productionEnvironmentId
+    )
+  );
+} else {
       await IncidentEvent
         .deleteMany({
           $or: [
@@ -2067,8 +2194,9 @@ async function main() {
       }
 
       console.log(
-        "[phase5-test] Test records cleaned"
-      );
+  "[phase5-test] Test records cleaned"
+);
+    }
     } catch (
       cleanupError
     ) {

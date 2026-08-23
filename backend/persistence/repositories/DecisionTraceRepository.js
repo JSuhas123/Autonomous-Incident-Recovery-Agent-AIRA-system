@@ -2,7 +2,8 @@
 
 class DecisionTraceRepository {
   async create(
-    _data
+    _data,
+    _transaction = null
   ) {
     throw new Error(
       "DecisionTraceRepository.create() is not implemented"
@@ -11,7 +12,8 @@ class DecisionTraceRepository {
 
   async updateOne(
     _filter,
-    _update
+    _update,
+    _transaction = null
   ) {
     throw new Error(
       "DecisionTraceRepository.updateOne() is not implemented"
@@ -19,7 +21,8 @@ class DecisionTraceRepository {
   }
 
   async findOne(
-    _filter
+    _filter,
+    _transaction = null
   ) {
     throw new Error(
       "DecisionTraceRepository.findOne() is not implemented"
@@ -28,7 +31,8 @@ class DecisionTraceRepository {
 
   async list(
     _filter,
-    _options = {}
+    _options = {},
+    _transaction = null
   ) {
     throw new Error(
       "DecisionTraceRepository.list() is not implemented"

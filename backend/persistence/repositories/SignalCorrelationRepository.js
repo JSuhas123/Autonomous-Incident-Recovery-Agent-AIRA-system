@@ -1,18 +1,11 @@
 "use strict";
 
-/**
- * Phase 13 — Enterprise Data Architecture
- *
- * Persistence boundary for SignalCorrelation groups.
- *
- * Correlation groups are durable operational state and must remain
- * scoped to organization + environment.
- */
 class SignalCorrelationRepository {
   async upsertGroup(
     _scope,
     _correlationGroupId,
-    _update
+    _update,
+    _transaction = null
   ) {
     throw new Error(
       "SignalCorrelationRepository.upsertGroup() is not implemented"
@@ -21,7 +14,8 @@ class SignalCorrelationRepository {
 
   async findGroup(
     _scope,
-    _correlationGroupId
+    _correlationGroupId,
+    _transaction = null
   ) {
     throw new Error(
       "SignalCorrelationRepository.findGroup() is not implemented"
@@ -30,7 +24,8 @@ class SignalCorrelationRepository {
 
   async updateOne(
     _filter,
-    _update
+    _update,
+    _transaction = null
   ) {
     throw new Error(
       "SignalCorrelationRepository.updateOne() is not implemented"
