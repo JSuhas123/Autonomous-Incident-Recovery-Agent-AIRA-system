@@ -45,8 +45,6 @@ describe('Auth Middleware Security Tests', () => {
       ],
     });
     await testTenant.save();
-    const loadedTenant = await TenantConfig.findOne({ tenantId: TEST_TENANT });
-    console.log('TENANT_DEBUG=', JSON.stringify(loadedTenant, null, 2));
 
     await organizationRepository.create({
       tenantId: TEST_TENANT,

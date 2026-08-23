@@ -307,10 +307,15 @@ async function authMiddleware(
      * ----------------------------------------------------------------
      */
     const tenant =
-      await tenantConfigRepository.findOne({
-        tenantId,
-        status: "active",
-      });
+  await tenantConfigRepository.findOne(
+    {
+      tenantId,
+      status: "active",
+    },
+    {
+      includeSecrets: true,
+    }
+  );
 
     if (!tenant) {
       return res.status(403).json({
