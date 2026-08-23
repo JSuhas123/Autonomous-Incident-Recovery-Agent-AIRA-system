@@ -2,8 +2,10 @@
 
 const crypto = require("crypto");
 
-const TenantConfig = require("../models/TenantConfig");
-const Organization = require("../models/Organization");
+const {
+  tenantConfigRepository,
+  organizationRepository,
+} = require("../persistence/repositories");
 
 const MAX_TIMESTAMP_AGE_MS =
   5 * 60 * 1000;
@@ -305,7 +307,7 @@ async function authMiddleware(
      * ----------------------------------------------------------------
      */
     const tenant =
-      await TenantConfig.findOne({
+      await tenantConfigRepository.findOne({
         tenantId,
         status: "active",
       });
@@ -331,7 +333,7 @@ async function authMiddleware(
      * machine APIs.
      */
     const organization =
-      await Organization.findOne({
+      await organizationRepository.findOne({
         tenantId,
         status: "active",
       });

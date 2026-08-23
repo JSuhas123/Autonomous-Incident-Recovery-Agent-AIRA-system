@@ -1,14 +1,15 @@
 "use strict";
 
-const mongoose = require("mongoose");
 const crypto = require("crypto");
 
-const User = require("../../models/User");
-const PasswordCredential = require("../../models/PasswordCredential");
-const Organization = require("../../models/Organization");
-const OrganizationMembership = require("../../models/OrganizationMembership");
-const OrganizationBootstrapService =require("../core/organizationBootstrapService");
-const TenantConfig = require("../../models/TenantConfig");
+const {
+  userRepository,
+  passwordCredentialRepository,
+  organizationMembershipRepository,
+  organizationRepository,
+  tenantConfigRepository,
+  persistenceTransactionManager,
+} = require("../../persistence/repositories");
 const { hashPassword, verifyPassword, needsRehash } = require("./passwordService");
 const { createSession } = require("./sessionService");
 const { record: auditRecord } = require("./identityAuditService");
@@ -33,34 +34,6 @@ function slugToTenantId(slug) {
     .slice(0, 50);
 }
 
-// Attempt transaction; if standalone MongoDB rejects txnNumber, retry without.
-// The code-20 error ("Transaction numbers are only allowed on a ReplicaSet member")
-// only fires on the FIRST transactional operation, so fn() has not yet written
-// anything and can safely be retried without a session.
-async function withTransaction(fn) {
-  let session = null;
-  let transactionActive = false;
-  try {
-    session = await mongoose.startSession();
-    session.startTransaction();
-    transactionActive = true;
-    const result = await fn(session);
-    await session.commitTransaction();
-    return result;
-  } catch (err) {
-    if (session && transactionActive) {
-      try { await session.abortTransaction(); } catch (_) { /* ignore */ }
-    }
-    // Standalone MongoDB: transaction not supported — retry without session
-    if (err.code === 20 || (err.message && err.message.includes("Transaction numbers"))) {
-      return fn(null);
-    }
-    throw err;
-  } finally {
-    if (session) session.endSession();
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Retry helper — re-provisions TenantConfig for a provisioning_failed org
 // without creating duplicate identity records. Only called when the user already
@@ -70,12 +43,9 @@ async function _retryProvisionTenantConfig(user, organization, ip, userAgent) {
   const { tenantId, name: organizationName } = organization;
 
   try {
-    await TenantConfig.findOneAndUpdate(
-      { tenantId },
-      { $setOnInsert: { tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] } },
-      { upsert: true }
-    );
-    await Organization.updateOne({ _id: organization._id }, { status: "active" });
+    const existing = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
+    if (!existing) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
+    await organizationRepository.updateOne({ _id: organization._id }, { status: "active" });
   } catch (tenantErr) {
     await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
       userId: user._id,
@@ -89,7 +59,7 @@ async function _retryProvisionTenantConfig(user, organization, ip, userAgent) {
     throw err;
   }
 
-  const membership = await OrganizationMembership.findOne({ userId: user._id, organizationId: organization._id });
+  const membership = await organizationMembershipRepository.findOne({ userId: user._id, organizationId: organization._id });
   const { session, rawToken, csrfToken } = await createSession({
     userId: user._id,
     organizationId: organization._id,
@@ -119,12 +89,12 @@ async function register(data, { ip = null, userAgent = null } = {}) {
   const { fullName, email, password, organizationName } = data;
   const normalizedEmail = email.toLowerCase().trim();
 
-  const existing = await User.findOne({ normalizedEmail });
+  const existing = await userRepository.findOne({ normalizedEmail });
   if (existing) {
     // Allow retry: if the user exists but their organization is provisioning_failed,
     // attempt to re-provision TenantConfig and re-activate without duplicating records.
     if (existing.primaryOrganizationId) {
-      const existingOrg = await Organization.findById(existing.primaryOrganizationId);
+      const existingOrg = await organizationRepository.findById(existing.primaryOrganizationId);
       if (existingOrg && existingOrg.status === "provisioning_failed") {
         return _retryProvisionTenantConfig(existing, existingOrg, ip, userAgent);
       }
@@ -142,8 +112,8 @@ async function register(data, { ip = null, userAgent = null } = {}) {
   let tenantId = slugToTenantId(slug);
   for (let i = 0; i < 3; i++) {
     const [bySlug, byTenant] = await Promise.all([
-      Organization.findOne({ slug }),
-      Organization.findOne({ tenantId }),
+      organizationRepository.findOne({ slug }),
+      organizationRepository.findOne({ tenantId }),
     ]);
     if (!bySlug && !byTenant) break;
     slug = generateSlug(organizationName);
@@ -152,30 +122,28 @@ async function register(data, { ip = null, userAgent = null } = {}) {
 
   let registrationResult;
   try {
-    registrationResult = await withTransaction(async (txSession) => {
-      const opts = txSession ? { session: txSession } : {};
-
-      const [savedUser] = await User.create(
-        [{ fullName, email, status: "active" }],
-        opts
+    registrationResult = await persistenceTransactionManager.run(async (transaction) => {
+      const savedUser = await userRepository.create(
+        { fullName, email, normalizedEmail, status: "active" },
+        transaction
       );
 
-      await PasswordCredential.create(
-        [{ userId: savedUser._id, passwordHash, algorithm: "argon2id", hashVersion: 1, passwordChangedAt: new Date() }],
-        opts
+      await passwordCredentialRepository.create(
+        { userId: savedUser._id, passwordHash, algorithm: "argon2id", hashVersion: 1, passwordChangedAt: new Date() },
+        transaction
       );
 
-      const [savedOrg] = await Organization.create(
-        [{ name: organizationName, slug, tenantId, status: "active", createdByUserId: savedUser._id }],
-        opts
+      const savedOrg = await organizationRepository.create(
+        { name: organizationName, slug, tenantId, status: "active", createdByUserId: savedUser._id },
+        transaction
       );
 
-      const [savedMembership] = await OrganizationMembership.create(
-        [{ userId: savedUser._id, organizationId: savedOrg._id, role: ORGANIZATION_ROLES.OWNER, status: "active", joinedAt: new Date() }],
-        opts
+      const savedMembership = await organizationMembershipRepository.create(
+        { userId: savedUser._id, organizationId: savedOrg._id, role: ORGANIZATION_ROLES.OWNER, status: "active", joinedAt: new Date() },
+        transaction
       );
 
-      await User.updateOne({ _id: savedUser._id }, { primaryOrganizationId: savedOrg._id }, opts);
+      await userRepository.updateOne({ _id: savedUser._id }, { primaryOrganizationId: savedOrg._id }, {}, transaction);
       savedUser.primaryOrganizationId = savedOrg._id;
 
       return { user: savedUser, organization: savedOrg, membership: savedMembership };
@@ -204,13 +172,10 @@ async function register(data, { ip = null, userAgent = null } = {}) {
   // If this fails, mark the organization as provisioning_failed so the user cannot
   // silently receive a usable session against a broken tenant.
   try {
-    await TenantConfig.findOneAndUpdate(
-      { tenantId },
-      { $setOnInsert: { tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] } },
-      { upsert: true }
-    );
+    const existingTenantConfig = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
+    if (!existingTenantConfig) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
   } catch (tenantErr) {
-    await Organization.updateOne({ _id: organization._id }, { status: "provisioning_failed" });
+    await organizationRepository.updateOne({ _id: organization._id }, { status: "provisioning_failed" });
     await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
       userId: user._id,
       organizationId: organization._id,
@@ -310,7 +275,7 @@ async function login(
 
 
   const user =
-    await User
+    await userRepository
       .findOne({
         normalizedEmail,
       });
@@ -353,14 +318,11 @@ async function login(
 
 
   const credential =
-    await PasswordCredential
+    await passwordCredentialRepository
       .findOne({
         userId:
           user._id,
-      })
-      .select(
-        "+passwordHash"
-      );
+      }, { includePasswordHash: true });
 
 
   if (
@@ -462,7 +424,7 @@ async function login(
           : null;
 
 
-      await PasswordCredential
+      await passwordCredentialRepository
         .updateOne(
           {
             _id:
@@ -669,7 +631,7 @@ async function login(
   /*
    * Successful authentication clears lock/failure state.
    */
-  await PasswordCredential
+  await passwordCredentialRepository
     .updateOne(
       {
         _id:
@@ -708,7 +670,7 @@ async function login(
       );
 
 
-    await PasswordCredential
+    await passwordCredentialRepository
       .updateOne(
         {
           _id:
@@ -732,7 +694,7 @@ async function login(
   }
 
 
-  await User
+  await userRepository
     .updateOne(
       {
         _id:
@@ -748,7 +710,7 @@ async function login(
 
 
   const membership =
-    await OrganizationMembership
+    await organizationMembershipRepository
       .findOne({
         userId:
           user._id,
@@ -763,7 +725,7 @@ async function login(
    */
   const organization =
     membership
-      ? await Organization
+      ? await organizationRepository
           .findOne({
             _id:
               membership

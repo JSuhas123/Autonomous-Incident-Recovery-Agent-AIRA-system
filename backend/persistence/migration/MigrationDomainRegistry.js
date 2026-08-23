@@ -1,363 +1,371 @@
 "use strict";
 
 /**
- * Phase 13.5
+ * AIRA Phase 13
  *
  * Canonical MongoDB -> PostgreSQL migration domain registry.
  *
- * IMPORTANT:
- * Order is dependency-aware.
+ * This file is the SINGLE SOURCE OF TRUTH for:
  *
- * Do not create another competing migration ordering elsewhere.
+ * - migration ordering
+ * - backfill eligibility
+ * - verification eligibility
+ * - shadow-read eligibility
+ * - cutover eligibility
+ * - derived PostgreSQL domains
+ *
+ * Do not maintain competing domain lists in CLI scripts.
  */
 
 const DOMAIN_DEFINITIONS =
   Object.freeze([
-    // ========================================================================
+    // ======================================================================
     // INCIDENT CORE
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "incidents",
+    domain(
+      "incidents",
+      "incidentRepository",
+      100
+    ),
 
-      repository:
-        "incidentRepository",
+    domain(
+      "incidentEvents",
+      "incidentEventRepository",
+      110
+    ),
 
-      order:
-        100,
+    domain(
+      "incidentLifecycleTransitions",
+      "incidentLifecycleRepository",
+      120,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      migrationMode:
-        "write",
-    },
+    domain(
+      "incidentLifecycle",
+      "incidentLifecycleRepository",
+      130
+    ),
 
-    {
-      name:
-        "incidentEvents",
-
-      repository:
-        "incidentEventRepository",
-
-      order:
-        110,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "incidentLifecycleTransitions",
-
-      repository:
-        "incidentLifecycleRepository",
-
-      order:
-        120,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "incidentLifecycle",
-
-      repository:
-        "incidentLifecycleRepository",
-
-      order:
-        130,
-
-      migrationMode:
-        "write",
-    },
-
-    // ========================================================================
+    // ======================================================================
     // SIGNAL CORE
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "signals",
+    domain(
+      "signals",
+      "signalRepository",
+      200
+    ),
 
-      repository:
-        "signalRepository",
-
-      order:
-        200,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "signalCorrelations",
-
-      repository:
-        "signalCorrelationRepository",
-
-      order:
-        210,
-
-      migrationMode:
-        "write",
-    },
+    domain(
+      "signalCorrelations",
+      "signalCorrelationRepository",
+      210,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
     /*
-     * PostgreSQL CorrelationTopologyRepository currently exposes
-     * relationship queries only.
+     * Topology is reconstructed from canonical PostgreSQL resource /
+     * relationship data.
      *
-     * It does not expose a persistence/write contract.
-     *
-     * Therefore this domain is derived/verification-only in 13.5B.
+     * It therefore has no Mongo -> PostgreSQL document backfill.
      */
-    {
-      name:
-        "correlationTopology",
+    derivedDomain(
+      "correlationTopology",
+      "correlationTopologyRepository",
+      220
+    ),
 
-      repository:
-        "correlationTopologyRepository",
-
-      order:
-        220,
-
-      migrationMode:
-        "derived",
-    },
-
-    // ========================================================================
+    // ======================================================================
     // INTELLIGENCE
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "agentIntelligenceRuns",
+    domain(
+      "agentIntelligenceRuns",
+      "agentIntelligenceRunRepository",
+      300,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      repository:
-        "agentIntelligenceRunRepository",
+    domain(
+      "incidentDiagnoses",
+      "incidentDiagnosisRepository",
+      310,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      order:
-        300,
+    domain(
+      "decisionTraces",
+      "decisionTraceRepository",
+      320,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "incidentDiagnoses",
-
-      repository:
-        "incidentDiagnosisRepository",
-
-      order:
-        310,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "decisionTraces",
-
-      repository:
-        "decisionTraceRepository",
-
-      order:
-        320,
-
-      migrationMode:
-        "write",
-    },
-
-    // ========================================================================
+    // ======================================================================
     // RECOVERY / EXECUTION
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "recoveryDecisionRuns",
+    domain(
+      "recoveryDecisionRuns",
+      "recoveryDecisionRepository",
+      400,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      repository:
-        "recoveryDecisionRepository",
+    domain(
+      "recoveryDecisions",
+      "recoveryDecisionRepository",
+      410,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      order:
-        400,
+    domain(
+      "executionAuthorizations",
+      "executionAuthorizationRepository",
+      420,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      migrationMode:
-        "write",
-    },
+    domain(
+      "executionRequests",
+      "executionAuthorizationRepository",
+      430,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-    {
-      name:
-        "recoveryDecisions",
+    domain(
+      "runtimeRecoveryCheckpoints",
+      "runtimeRecoveryCheckpointRepository",
+      440,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      repository:
-        "recoveryDecisionRepository",
+    domain(
+      "approvals",
+      "approvalRepository",
+      450,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      order:
-        410,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "executionAuthorizations",
-
-      repository:
-        "executionAuthorizationRepository",
-
-      order:
-        420,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "executionRequests",
-
-      repository:
-        "executionAuthorizationRepository",
-
-      order:
-        430,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "runtimeRecoveryCheckpoints",
-
-      repository:
-        "runtimeRecoveryCheckpointRepository",
-
-      order:
-        440,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "approvals",
-
-      repository:
-        "approvalRepository",
-
-      order:
-        450,
-
-      migrationMode:
-        "write",
-    },
-
-    // ========================================================================
+    // ======================================================================
     // ENTERPRISE CONTROL / AUDIT
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "audit",
+    domain(
+      "audit",
+      "auditRepository",
+      500,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      repository:
-        "auditRepository",
+    domain(
+      "policies",
+      "policyRepository",
+      600,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
 
-      order:
-        500,
-
-      migrationMode:
-        "write",
-    },
-
-    {
-      name:
-        "policies",
-
-      repository:
-        "policyRepository",
-
-      order:
-        600,
-
-      migrationMode:
-        "write",
-    },
-
-    // ========================================================================
+    // ======================================================================
     // DURABLE WORKFLOW
-    // ========================================================================
+    // ======================================================================
 
-    {
-      name:
-        "workflowOutbox",
-
-      repository:
-        "workflowOutboxRepository",
-
-      order:
-        700,
-
-      migrationMode:
-        "write",
-    },
+    domain(
+      "workflowOutbox",
+      "workflowOutboxRepository",
+      700,
+      {
+        shadowEligible:
+          false,
+      }
+    ),
   ]);
+
+/**
+ * Standard Mongo -> PostgreSQL persisted domain.
+ */
+function domain(
+  name,
+  repository,
+  order,
+  overrides = {}
+) {
+  return Object.freeze({
+    name,
+
+    repository,
+
+    order,
+
+    migrationMode:
+      "write",
+
+    requiresBackfill:
+      true,
+
+    requiresVerification:
+      true,
+
+    shadowEligible:
+      true,
+
+    cutoverEligible:
+      true,
+
+    ...overrides,
+  });
+}
+
+/**
+ * PostgreSQL-derived domain.
+ *
+ * There is no canonical Mongo document stream to backfill.
+ */
+function derivedDomain(
+  name,
+  repository,
+  order,
+  overrides = {}
+) {
+  return Object.freeze({
+    name,
+
+    repository,
+
+    order,
+
+    migrationMode:
+      "derived",
+
+    requiresBackfill:
+      false,
+
+    requiresVerification:
+      false,
+
+    shadowEligible:
+      false,
+
+    cutoverEligible:
+      false,
+
+    ...overrides,
+  });
+}
 
 const DOMAIN_MAP =
   new Map(
-    DOMAIN_DEFINITIONS
-      .map(
-        (
-          definition
-        ) => [
-          definition.name,
-          definition,
-        ]
-      )
+    DOMAIN_DEFINITIONS.map(
+      definition => [
+        definition.name,
+        definition,
+      ]
+    )
   );
 
 class MigrationDomainRegistry {
   list() {
     return [
       ...DOMAIN_DEFINITIONS,
-    ]
-      .sort(
-        (
-          first,
-          second
-        ) =>
-          first.order -
-          second.order
-      );
+    ].sort(
+      (
+        first,
+        second
+      ) =>
+        first.order -
+        second.order
+    );
   }
 
   names() {
     return this
       .list()
       .map(
-        (
-          definition
-        ) =>
+        definition =>
           definition.name
       );
+  }
+
+  has(
+    domainName
+  ) {
+    return DOMAIN_MAP.has(
+      domainName
+    );
+  }
+
+  get(
+    domainName
+  ) {
+    const definition =
+      DOMAIN_MAP.get(
+        domainName
+      );
+
+    if (
+      !definition
+    ) {
+      throw Object.assign(
+        new Error(
+          `Unknown migration domain: ${domainName}`
+        ),
+        {
+          code:
+            "MIGRATION_DOMAIN_UNKNOWN",
+
+          domain:
+            domainName,
+        }
+      );
+    }
+
+    return definition;
   }
 
   writable() {
     return this
       .list()
       .filter(
-        (
-          definition
-        ) =>
+        definition =>
           definition
             .migrationMode ===
           "write"
@@ -368,49 +376,86 @@ class MigrationDomainRegistry {
     return this
       .list()
       .filter(
-        (
-          definition
-        ) =>
+        definition =>
           definition
             .migrationMode ===
           "derived"
       );
   }
 
-  has(
-    domain
-  ) {
-    return DOMAIN_MAP
-      .has(
-        domain
+  backfillable() {
+    return this
+      .list()
+      .filter(
+        definition =>
+          definition
+            .requiresBackfill ===
+          true
       );
   }
 
-  get(
-    domain
+  verifiable() {
+    return this
+      .list()
+      .filter(
+        definition =>
+          definition
+            .requiresVerification ===
+          true
+      );
+  }
+
+  shadowEligible() {
+    return this
+      .list()
+      .filter(
+        definition =>
+          definition
+            .shadowEligible ===
+          true
+      );
+  }
+
+  cutoverEligible() {
+    return this
+      .list()
+      .filter(
+        definition =>
+          definition
+            .cutoverEligible ===
+          true
+      );
+  }
+
+  capabilities(
+    domainName
   ) {
     const definition =
-      DOMAIN_MAP.get(
-        domain
+      this.get(
+        domainName
       );
 
-    if (
-      !definition
-    ) {
-      throw Object.assign(
-        new Error(
-          `Unknown migration domain: ${domain}`
-        ),
-        {
-          code:
-            "MIGRATION_DOMAIN_UNKNOWN",
+    return {
+      migrationMode:
+        definition
+          .migrationMode,
 
-          domain,
-        }
-      );
-    }
+      requiresBackfill:
+        definition
+          .requiresBackfill,
 
-    return definition;
+      requiresVerification:
+        definition
+          .requiresVerification,
+
+      shadowEligible:
+        definition
+          .shadowEligible,
+
+      cutoverEligible:
+        definition
+          .cutoverEligible,
+    };
   }
 }
 

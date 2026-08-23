@@ -2,8 +2,7 @@
 
 const mongoose = require("mongoose");
 
-const Environment = require("../../models/Environment");
-const Organization = require("../../models/Organization");
+const { environmentRepository, organizationRepository } = require("../../persistence/repositories");
 
 const EntitlementService = require(
   "./entitlementService"
@@ -238,7 +237,7 @@ class EnvironmentService {
     );
 
     const organization =
-      await Organization.findOne({
+      await organizationRepository.findOne({
         _id:
           organizationId,
 
@@ -295,9 +294,7 @@ class EnvironmentService {
       };
     }
 
-    return Environment.findOne(
-      query
-    );
+    return environmentRepository.findOne(query);
   }
 
   /**
@@ -367,15 +364,8 @@ class EnvironmentService {
         options.status;
     }
 
-    return Environment.find(
-      query
-    ).sort({
-      type:
-        1,
-
-      createdAt:
-        1,
-    });
+    const environments = await environmentRepository.findMany(query);
+    return environments.sort((left, right) => String(left.type).localeCompare(String(right.type)) || new Date(left.createdAt) - new Date(right.createdAt));
   }
 
   /**
@@ -399,7 +389,7 @@ class EnvironmentService {
       defaultEnvironmentId
     ) {
       const environment =
-        await Environment.findOne({
+        await environmentRepository.findOne({
           _id:
             defaultEnvironmentId,
 
@@ -423,16 +413,14 @@ class EnvironmentService {
      * organizations created before Environment support
      * may not yet have defaultEnvironmentId populated.
      */
-    return Environment.findOne({
+    const environments = await environmentRepository.findMany({
       organizationId:
         organization._id,
 
       status:
         "active",
-    }).sort({
-      createdAt:
-        1,
     });
+    return environments.sort((left, right) => new Date(left.createdAt) - new Date(right.createdAt))[0] || null;
   }
 
   /**
@@ -451,13 +439,13 @@ class EnvironmentService {
       );
 
     const currentCount =
-      await Environment.countDocuments({
+      (await environmentRepository.findMany({
         organizationId,
         status: {
           $ne:
             "archived",
         },
-      });
+      })).length;
 
     /*
      * Enforce plan environment count.
@@ -491,7 +479,7 @@ class EnvironmentService {
         );
 
       const existingProduction =
-        await Environment.findOne({
+        await environmentRepository.findOne({
           organizationId,
 
           type:
@@ -542,7 +530,7 @@ class EnvironmentService {
     }
 
     const duplicateSlug =
-      await Environment.findOne({
+      await environmentRepository.findOne({
         organizationId,
         slug,
       });
@@ -566,7 +554,7 @@ class EnvironmentService {
       "production";
 
     const environment =
-      await Environment.create({
+      await environmentRepository.create({
         organizationId,
 
         name,
@@ -629,7 +617,7 @@ class EnvironmentService {
         .settings
         ?.defaultEnvironmentId
     ) {
-      await Organization.updateOne(
+      await organizationRepository.updateOne(
         {
           _id:
             organizationId,
@@ -824,7 +812,7 @@ class EnvironmentService {
       }
     }
 
-    await environment.save();
+    await environmentRepository.save(environment);
 
     return environment;
   }
@@ -864,7 +852,7 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       new Date();
 
-    await environment.save();
+    await environmentRepository.save(environment);
 
     return environment;
   }
@@ -900,7 +888,7 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       null;
 
-    await environment.save();
+    await environmentRepository.save(environment);
 
     return environment;
   }
@@ -931,7 +919,7 @@ class EnvironmentService {
       );
     }
 
-    await Organization.updateOne(
+    await organizationRepository.updateOne(
       {
         _id:
           organizationId,
@@ -981,7 +969,7 @@ class EnvironmentService {
      * active/maintenance environment.
      */
     const remainingCount =
-      await Environment.countDocuments({
+      (await environmentRepository.findMany({
         organizationId,
 
         _id: {
@@ -995,7 +983,7 @@ class EnvironmentService {
             "maintenance",
           ],
         },
-      });
+      })).length;
 
     if (
       remainingCount ===
@@ -1031,7 +1019,7 @@ class EnvironmentService {
     environment.maintenanceStartedAt =
       null;
 
-    await environment.save();
+    await environmentRepository.save(environment);
 
     /*
      * If the archived environment was the organization's
@@ -1050,7 +1038,7 @@ class EnvironmentService {
         .toString()
     ) {
       const replacement =
-        await Environment.findOne({
+        await environmentRepository.findOne({
           organizationId,
 
           status:
@@ -1071,7 +1059,7 @@ class EnvironmentService {
          * valid environment.
          */
         const maintenanceReplacement =
-          await Environment.findOne({
+          await environmentRepository.findOne({
             organizationId,
 
             status:
@@ -1089,7 +1077,7 @@ class EnvironmentService {
         if (
           maintenanceReplacement
         ) {
-          await Organization.updateOne(
+          await organizationRepository.updateOne(
             {
               _id:
                 organizationId,
@@ -1103,7 +1091,7 @@ class EnvironmentService {
           );
         }
       } else {
-        await Organization.updateOne(
+        await organizationRepository.updateOne(
           {
             _id:
               organizationId,
@@ -1143,7 +1131,7 @@ class EnvironmentService {
       production,
     ] =
       await Promise.all([
-        Environment.countDocuments({
+        environmentRepository.findMany({
           organizationId,
           status: {
             $ne:
@@ -1151,19 +1139,19 @@ class EnvironmentService {
           },
         }),
 
-        Environment.countDocuments({
+        environmentRepository.findMany({
           organizationId,
           status:
             "active",
         }),
 
-        Environment.countDocuments({
+        environmentRepository.findMany({
           organizationId,
           status:
             "maintenance",
         }),
 
-        Environment.countDocuments({
+        environmentRepository.findMany({
           organizationId,
           type:
             "production",
@@ -1189,11 +1177,11 @@ class EnvironmentService {
         );
 
     return {
-      total,
-      active,
-      maintenance,
+      total: total.length,
+      active: active.length,
+      maintenance: maintenance.length,
       hasProduction:
-        production > 0,
+        production.length > 0,
 
       plan:
         subscription.plan,
@@ -1207,7 +1195,7 @@ class EnvironmentService {
           ? null
           : Math.max(
               environmentLimit -
-                total,
+                total.length,
               0
             ),
     };

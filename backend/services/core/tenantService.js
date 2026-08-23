@@ -2,9 +2,9 @@
 
 const crypto = require("crypto");
 
-const TenantConfig = require("../../models/TenantConfig");
 const {
   policyRepository,
+  tenantConfigRepository,
 } =
   require(
     "../../persistence/repositories"
@@ -91,10 +91,10 @@ class TenantService {
   static async getActiveTenant(tenantId) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
           status: "active",
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         console.warn(
@@ -186,9 +186,9 @@ class TenantService {
   ) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         return {
@@ -306,9 +306,9 @@ class TenantService {
       }
 
       let tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         /*
@@ -320,7 +320,7 @@ class TenantService {
          * authorization system going forward.
          */
         tenant =
-          new TenantConfig({
+          await tenantConfigRepository.create({
             tenantId,
             name,
             status,
@@ -335,8 +335,6 @@ class TenantService {
             apiKeys: [],
             admins: [],
           });
-
-        await tenant.save();
 
         console.log(
           `[tenant] ✓ Created new tenant: ${tenantId}`
@@ -357,7 +355,13 @@ class TenantService {
           ...settings,
         };
 
-        await tenant.save();
+        await tenantConfigRepository.updateOne({ tenantId }, {
+          $set: {
+            name: tenant.name,
+            status: tenant.status,
+            settings: tenant.settings,
+          },
+        });
 
         console.log(
           `[tenant] ✓ Updated tenant: ${tenantId}`
@@ -392,9 +396,9 @@ class TenantService {
   ) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         throw new Error(
@@ -481,7 +485,7 @@ class TenantService {
         storedKey
       );
 
-      await tenant.save();
+      await tenantConfigRepository.updateOne({ tenantId }, { $set: { apiKeys: tenant.apiKeys } });
 
       console.log(
         `[tenant] ✓ Rotated API key for tenant=${tenantId} | old=${oldKeyId} → new=${newKeyId}`
@@ -523,9 +527,9 @@ class TenantService {
   ) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         throw new Error(
@@ -550,7 +554,7 @@ class TenantService {
         1
       );
 
-      await tenant.save();
+      await tenantConfigRepository.updateOne({ tenantId }, { $set: { apiKeys: tenant.apiKeys } });
 
       console.log(
         `[tenant] ✓ Removed API key ${keyId} from tenant=${tenantId}`
@@ -584,9 +588,9 @@ class TenantService {
   ) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         throw new Error(
@@ -639,7 +643,7 @@ class TenantService {
             ? [...permissions]
             : [];
 
-        await tenant.save();
+        await tenantConfigRepository.updateOne({ tenantId }, { $set: { admins: tenant.admins } });
 
         return existingAdmin;
       }
@@ -665,7 +669,7 @@ class TenantService {
         admin
       );
 
-      await tenant.save();
+      await tenantConfigRepository.updateOne({ tenantId }, { $set: { admins: tenant.admins } });
 
       console.log(
         `[tenant] ✓ Added legacy admin ${normalizedEmail} (${role}) to tenant=${tenantId}`
@@ -719,33 +723,18 @@ class TenantService {
           status: "active",
         };
 
-      const [
-        tenants,
-        count,
-      ] =
-        await Promise.all([
-          TenantConfig.find(
-            filter
-          )
-            .sort({
-              createdAt: -1,
-            })
-            .limit(limit)
-            .skip(skip),
+      const tenants = await tenantConfigRepository.findMany(filter);
 
-          TenantConfig.countDocuments(
-            filter
-          ),
-        ]);
-
+      tenants.sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt));
+      const pagedTenants = tenants.slice(skip, skip + limit);
       console.log(
-        `[tenant] Retrieved ${tenants.length}/${count} tenants`
+        `[tenant] Retrieved ${pagedTenants.length}/${tenants.length} tenants`
       );
 
       return {
-        tenants,
+        tenants: pagedTenants,
         total:
-          count,
+          tenants.length,
         limit,
         skip,
       };
@@ -767,9 +756,9 @@ class TenantService {
   ) {
     try {
       const tenant =
-        await TenantConfig.findOne({
+        await tenantConfigRepository.findOne({
           tenantId,
-        });
+        }, { includeSecrets: true });
 
       if (!tenant) {
         throw new Error(

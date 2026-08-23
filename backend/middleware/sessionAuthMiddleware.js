@@ -1,8 +1,10 @@
 "use strict";
 
-const User = require("../models/User");
-const Organization = require("../models/Organization");
-const OrganizationMembership = require("../models/OrganizationMembership");
+const {
+  userRepository,
+  organizationMembershipRepository,
+  organizationRepository,
+} = require("../persistence/repositories");
 
 const {
   validateSession,
@@ -63,7 +65,7 @@ async function sessionAuthMiddleware(req, res, next) {
   let user;
 
   try {
-    user = await User.findById(session.userId);
+    user = await userRepository.findById(session.userId);
   } catch {
     return res.status(401).json({
       error: "Not authenticated",
@@ -93,7 +95,7 @@ async function sessionAuthMiddleware(req, res, next) {
 
   if (session.activeOrganizationId) {
     membership =
-      await OrganizationMembership.findOne({
+      await organizationMembershipRepository.findOne({
         userId: user._id,
         organizationId:
           session.activeOrganizationId,
@@ -102,7 +104,7 @@ async function sessionAuthMiddleware(req, res, next) {
 
     if (membership) {
       organization =
-        await Organization.findOne({
+        await organizationRepository.findOne({
           _id: membership.organizationId,
           status: "active",
         });

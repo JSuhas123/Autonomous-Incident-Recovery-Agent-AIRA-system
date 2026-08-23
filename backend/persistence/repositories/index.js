@@ -134,6 +134,33 @@ module.exports = {
 // ============================================================================
 
 function buildMongoRepositories() {
+  const MongoUserRepository =
+    require(
+      "../mongo/MongoUserRepository"
+    );
+
+  const MongoPasswordCredentialRepository =
+    require(
+      "../mongo/MongoPasswordCredentialRepository"
+    );
+
+  const MongoOrganizationMembershipRepository =
+    require(
+      "../mongo/MongoOrganizationMembershipRepository"
+    );
+
+  const MongoOrganizationRepository = require("../mongo/MongoOrganizationRepository");
+  const MongoEnvironmentRepository = require("../mongo/MongoEnvironmentRepository");
+  const MongoTenantConfigRepository = require("../mongo/MongoTenantConfigRepository");
+
+  const MongoUserSessionRepository =
+    require(
+      "../mongo/MongoUserSessionRepository"
+    );
+  const MongoEmailVerificationTokenRepository = require("../mongo/MongoEmailVerificationTokenRepository");
+  const MongoPasswordResetTokenRepository = require("../mongo/MongoPasswordResetTokenRepository");
+  const MongoAuthenticationAuditEventRepository = require("../mongo/MongoAuthenticationAuditEventRepository");
+
   const MongoIncidentRepository =
     require(
       "../mongo/MongoIncidentRepository"
@@ -225,6 +252,26 @@ function buildMongoRepositories() {
     );
 
   return {
+    userRepository:
+      new MongoUserRepository(),
+
+    passwordCredentialRepository:
+      new MongoPasswordCredentialRepository(),
+
+    organizationMembershipRepository:
+      new MongoOrganizationMembershipRepository(),
+
+    organizationRepository: new MongoOrganizationRepository(),
+    environmentRepository: new MongoEnvironmentRepository(),
+    tenantConfigRepository: new MongoTenantConfigRepository(),
+
+    userSessionRepository:
+      new MongoUserSessionRepository(),
+
+    emailVerificationTokenRepository: new MongoEmailVerificationTokenRepository(),
+    passwordResetTokenRepository: new MongoPasswordResetTokenRepository(),
+    authenticationAuditEventRepository: new MongoAuthenticationAuditEventRepository(),
+
     incidentRepository:
       new MongoIncidentRepository(),
 
@@ -287,6 +334,33 @@ function buildMongoRepositories() {
 // ============================================================================
 
 function buildPostgresRepositories() {
+  const PostgresUserRepository =
+    require(
+      "../postgres/PostgresUserRepository"
+    );
+
+  const PostgresPasswordCredentialRepository =
+    require(
+      "../postgres/PostgresPasswordCredentialRepository"
+    );
+
+  const PostgresOrganizationMembershipRepository =
+    require(
+      "../postgres/PostgresOrganizationMembershipRepository"
+    );
+
+  const PostgresOrganizationRepository = require("../postgres/PostgresOrganizationRepository");
+  const PostgresEnvironmentRepository = require("../postgres/PostgresEnvironmentRepository");
+  const PostgresTenantConfigRepository = require("../postgres/PostgresTenantConfigRepository");
+
+  const PostgresUserSessionRepository =
+    require(
+      "../postgres/PostgresUserSessionRepository"
+    );
+  const PostgresEmailVerificationTokenRepository = require("../postgres/PostgresEmailVerificationTokenRepository");
+  const PostgresPasswordResetTokenRepository = require("../postgres/PostgresPasswordResetTokenRepository");
+  const PostgresAuthenticationAuditEventRepository = require("../postgres/PostgresAuthenticationAuditEventRepository");
+
   const PostgresIncidentRepository =
     require(
       "../postgres/PostgresIncidentRepository"
@@ -388,6 +462,26 @@ function buildPostgresRepositories() {
     );
 
   return {
+    userRepository:
+      new PostgresUserRepository(),
+
+    passwordCredentialRepository:
+      new PostgresPasswordCredentialRepository(),
+
+    organizationMembershipRepository:
+      new PostgresOrganizationMembershipRepository(),
+
+    organizationRepository: new PostgresOrganizationRepository(),
+    environmentRepository: new PostgresEnvironmentRepository(),
+    tenantConfigRepository: new PostgresTenantConfigRepository(),
+
+    userSessionRepository:
+      new PostgresUserSessionRepository(),
+
+    emailVerificationTokenRepository: new PostgresEmailVerificationTokenRepository(),
+    passwordResetTokenRepository: new PostgresPasswordResetTokenRepository(),
+    authenticationAuditEventRepository: new PostgresAuthenticationAuditEventRepository(),
+
     incidentRepository:
       new PostgresIncidentRepository(),
 

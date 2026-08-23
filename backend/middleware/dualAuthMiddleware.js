@@ -18,11 +18,11 @@ const {
   validateSession,
 } = require("../services/identity/sessionService");
 
-const User = require("../models/User");
-const Organization = require("../models/Organization");
-const OrganizationMembership = require(
-  "../models/OrganizationMembership"
-);
+const {
+  userRepository,
+  organizationMembershipRepository,
+  organizationRepository,
+} = require("../persistence/repositories");
 
 const authMiddleware = require("./authMiddleware");
 
@@ -66,7 +66,7 @@ async function trySessionAuth(req) {
   let user;
 
   try {
-    user = await User.findById(session.userId);
+    user = await userRepository.findById(session.userId);
   } catch {
     return false;
   }
@@ -96,14 +96,14 @@ async function trySessionAuth(req) {
     try {
       [membership, organization] =
         await Promise.all([
-          OrganizationMembership.findOne({
+          organizationMembershipRepository.findOne({
             userId: user._id,
             organizationId:
               session.activeOrganizationId,
             status: "active",
           }),
 
-          Organization.findOne({
+          organizationRepository.findOne({
             _id: session.activeOrganizationId,
             status: "active",
           }),

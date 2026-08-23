@@ -1,8 +1,7 @@
 "use strict";
 
-const Environment = require("../../models/Environment");
 const Subscription = require("../../models/Subscription");
-const Organization = require("../../models/Organization");
+const { environmentRepository, organizationRepository } = require("../../persistence/repositories");
 
 class OrganizationBootstrapService {
   static async bootstrapOrganization(
@@ -16,14 +15,14 @@ class OrganizationBootstrapService {
     }
 
     let developmentEnvironment =
-      await Environment.findOne({
+      await environmentRepository.findOne({
         organizationId: organization._id,
         slug: "development",
       });
 
     if (!developmentEnvironment) {
       developmentEnvironment =
-        await Environment.create({
+        await environmentRepository.create({
           organizationId: organization._id,
           name: "Development",
           slug: "development",
@@ -54,7 +53,7 @@ class OrganizationBootstrapService {
     if (
       !organization.settings?.defaultEnvironmentId
     ) {
-      await Organization.updateOne(
+      await organizationRepository.updateOne(
         {
           _id: organization._id,
         },

@@ -7,7 +7,7 @@
  */
 
 const crypto = require("crypto");
-const UserSession = require("../../models/UserSession");
+const { userSessionRepository } = require("../../persistence/repositories");
 
 function generateCsrfSecret() {
   return crypto.randomBytes(32).toString("hex");
@@ -17,9 +17,9 @@ function deriveCsrfToken(secret) {
   return crypto.createHmac("sha256", secret).update("csrf-token-v1").digest("hex");
 }
 
-async function attachCsrfSecret(session) {
+async function attachCsrfSecret(session, transaction = null) {
   const secret = generateCsrfSecret();
-  await UserSession.updateOne({ _id: session._id }, { csrfSecret: secret });
+  await userSessionRepository.updateOne({ _id: session._id }, { csrfSecret: secret }, {}, transaction);
   return deriveCsrfToken(secret);
 }
 

@@ -1,12 +1,9 @@
 "use strict";
 
-const mongoose = require(
-  "mongoose"
-);
-
 const EnvironmentService = require(
   "../services/core/environmentService"
 );
+const { isDatabaseIdentifier } = require("../utils/identifier");
 
 const ENVIRONMENT_HEADER =
   "x-aira-environment-id";
@@ -20,11 +17,7 @@ async function resolveRequestedEnvironment(
   organizationId,
   requestedEnvironmentId
 ) {
-  if (
-    !mongoose.Types.ObjectId.isValid(
-      requestedEnvironmentId
-    )
-  ) {
+  if (!isDatabaseIdentifier(requestedEnvironmentId)) {
     return {
       error: {
         status:

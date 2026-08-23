@@ -5,9 +5,9 @@ const crypto =
     "crypto"
   );
 
-const UserSession =
+const { userSessionRepository } =
   require(
-    "../../models/UserSession"
+    "../../persistence/repositories"
   );
 
 const {
@@ -315,6 +315,7 @@ async function createSession({
     "password",
   assuranceLevel =
     "aal1",
+  transaction = null,
 }) {
   if (
     !userId
@@ -361,7 +362,7 @@ async function createSession({
    * caller and placed into the HttpOnly cookie.
    */
   const session =
-    await UserSession
+    await userSessionRepository
       .create({
         userId,
 
@@ -411,13 +412,11 @@ async function createSession({
           hashUserAgent(
             userAgent
           ),
-      });
+      }, transaction);
 
 
   const csrfToken =
-    await attachCsrfSecret(
-      session
-    );
+    await attachCsrfSecret(session, transaction);
 
 
   return {
@@ -463,13 +462,10 @@ async function validateSession(
 
 
   const session =
-    await UserSession
+    await userSessionRepository
       .findOne({
         tokenHash,
-      })
-      .select(
-        "+tokenHash"
-      );
+      }, { includeTokenHash: true });
 
 
   if (
@@ -516,7 +512,7 @@ async function validateSession(
     session
       .absoluteExpiresAt
   ) {
-    await UserSession
+    await userSessionRepository
       .updateOne(
         {
           _id:
@@ -552,7 +548,7 @@ async function validateSession(
     session
       .idleExpiresAt
   ) {
-    await UserSession
+    await userSessionRepository
       .updateOne(
         {
           _id:
@@ -614,7 +610,7 @@ async function validateSession(
      * This reduces the chance of activity refresh racing with
      * session revocation.
      */
-    await UserSession
+    await userSessionRepository
       .updateOne(
         {
           _id:
@@ -678,7 +674,7 @@ async function revokeSession(
 
 
   const result =
-    await UserSession
+    await userSessionRepository
       .updateOne(
         {
           _id:
@@ -746,7 +742,7 @@ async function revokeAllUserSessions(
 
 
   const result =
-    await UserSession
+    await userSessionRepository
       .updateMany(
         filter,
         {

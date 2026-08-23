@@ -1,0 +1,7130 @@
+============================================================
+AIRA PHASE 13 BLOCK A SOURCE
+============================================================
+
+
+============================================================
+FILE: services\identity\authService.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+const crypto = require("crypto");
+
+const {
+  userRepository,
+  passwordCredentialRepository,
+  organizationMembershipRepository,
+  organizationRepository,
+  tenantConfigRepository,
+} = require("../../persistence/repositories");
+const User = userRepository;
+const PasswordCredential = passwordCredentialRepository;
+const OrganizationMembership = organizationMembershipRepository;
+const OrganizationBootstrapService =require("../core/organizationBootstrapService");
+const { hashPassword, verifyPassword, needsRehash } = require("./passwordService");
+const { createSession } = require("./sessionService");
+const { record: auditRecord } = require("./identityAuditService");
+const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../../constants/authEvents");
+const { ORGANIZATION_ROLES } = require("../../constants/roles");
+
+function generateSlug(name) {
+  const base =
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "org";
+  const suffix = crypto.randomBytes(3).toString("hex");
+  return `${base}-${suffix}`;
+}
+
+function slugToTenantId(slug) {
+  return slug
+    .replace(/-/g, "_")
+    .replace(/[^a-zA-Z0-9_]/g, "")
+    .slice(0, 50);
+}
+
+// Attempt transaction; if standalone MongoDB rejects txnNumber, retry without.
+// The code-20 error ("Transaction numbers are only allowed on a ReplicaSet member")
+// only fires on the FIRST transactional operation, so fn() has not yet written
+// anything and can safely be retried without a session.
+async function withTransaction(fn) {
+  let session = null;
+  let transactionActive = false;
+  try {
+    session = await mongoose.startSession();
+    session.startTransaction();
+    transactionActive = true;
+    const result = await fn(session);
+    await session.commitTransaction();
+    return result;
+  } catch (err) {
+    if (session && transactionActive) {
+      try { await session.abortTransaction(); } catch (_) { /* ignore */ }
+    }
+    // Standalone MongoDB: transaction not supported — retry without session
+    if (err.code === 20 || (err.message && err.message.includes("Transaction numbers"))) {
+      return fn(null);
+    }
+    throw err;
+  } finally {
+    if (session) session.endSession();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Retry helper — re-provisions TenantConfig for a provisioning_failed org
+// without creating duplicate identity records. Only called when the user already
+// exists but their organization never finished provisioning.
+// ---------------------------------------------------------------------------
+async function _retryProvisionTenantConfig(user, organization, ip, userAgent) {
+  const { tenantId, name: organizationName } = organization;
+
+  try {
+    const existing = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
+    if (!existing) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
+    await organizationRepository.updateOne({ _id: organization._id }, { status: "active" });
+  } catch (tenantErr) {
+    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
+      userId: user._id,
+      organizationId: organization._id,
+      reasonCode: "TENANT_PROVISIONING_RETRY_FAILED",
+      metadata: { message: tenantErr.message },
+    });
+    const err = new Error("Organization provisioning is still failing. Please contact support.");
+    err.status = 503;
+    err.code = "TENANT_PROVISIONING_FAILED";
+    throw err;
+  }
+
+  const membership = await OrganizationMembership.findOne({ userId: user._id, organizationId: organization._id });
+  const { session, rawToken, csrfToken } = await createSession({
+    userId: user._id,
+    organizationId: organization._id,
+    rememberMe: false,
+    ip,
+    userAgent,
+  });
+
+  await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_SUCCEEDED, AUTH_EVENT_OUTCOMES.SUCCESS, {
+    userId: user._id,
+    organizationId: organization._id,
+    sessionId: session._id,
+    metadata: { retried: true },
+  });
+
+  return {
+    rawToken,
+    session,
+    csrfToken,
+    user: safeUser(user),
+    organization: safeOrg(organization),
+    membership: membership ? safeMembership(membership) : null,
+  };
+}
+
+async function register(data, { ip = null, userAgent = null } = {}) {
+  const { fullName, email, password, organizationName } = data;
+  const normalizedEmail = email.toLowerCase().trim();
+
+  const existing = await User.findOne({ normalizedEmail });
+  if (existing) {
+    // Allow retry: if the user exists but their organization is provisioning_failed,
+    // attempt to re-provision TenantConfig and re-activate without duplicating records.
+    if (existing.primaryOrganizationId) {
+      const existingOrg = await organizationRepository.findById(existing.primaryOrganizationId);
+      if (existingOrg && existingOrg.status === "provisioning_failed") {
+        return _retryProvisionTenantConfig(existing, existingOrg, ip, userAgent);
+      }
+    }
+    const err = new Error("An account with this email address already exists");
+    err.status = 409;
+    err.code = "EMAIL_IN_USE";
+    throw err;
+  }
+
+  const passwordHash = await hashPassword(password);
+
+  // Generate unique slug/tenantId with up to 3 retries
+  let slug = generateSlug(organizationName);
+  let tenantId = slugToTenantId(slug);
+  for (let i = 0; i < 3; i++) {
+    const [bySlug, byTenant] = await Promise.all([
+      organizationRepository.findOne({ slug }),
+      organizationRepository.findOne({ tenantId }),
+    ]);
+    if (!bySlug && !byTenant) break;
+    slug = generateSlug(organizationName);
+    tenantId = slugToTenantId(slug);
+  }
+
+  let registrationResult;
+  try {
+    registrationResult = await withTransaction(async (txSession) => {
+      const opts = txSession ? { session: txSession } : {};
+      const repositoryTransaction = txSession
+        ? { kind: "mongo", session: txSession }
+        : null;
+
+      const savedUser = await User.create(
+        [{ fullName, email, status: "active" }],
+        repositoryTransaction
+      );
+
+      await PasswordCredential.create(
+        [{ userId: savedUser._id, passwordHash, algorithm: "argon2id", hashVersion: 1, passwordChangedAt: new Date() }],
+        repositoryTransaction
+      );
+
+      const savedOrg = await organizationRepository.create(
+        { name: organizationName, slug, tenantId, status: "active", createdByUserId: savedUser._id },
+        repositoryTransaction
+      );
+
+        const savedMembership = await OrganizationMembership.create(
+        [{ userId: savedUser._id, organizationId: savedOrg._id, role: ORGANIZATION_ROLES.OWNER, status: "active", joinedAt: new Date() }],
+        repositoryTransaction
+      );
+
+      await User.updateOne({ _id: savedUser._id }, { primaryOrganizationId: savedOrg._id }, {}, repositoryTransaction);
+      savedUser.primaryOrganizationId = savedOrg._id;
+
+      return { user: savedUser, organization: savedOrg, membership: savedMembership };
+    });
+  } catch (err) {
+    // Handle MongoDB duplicate key (race condition on normalizedEmail)
+    if (err.code === 11000 && err.keyPattern?.normalizedEmail) {
+      const conflict = new Error("An account with this email address already exists");
+      conflict.status = 409;
+      conflict.code = "EMAIL_IN_USE";
+      await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, { reasonCode: "EMAIL_IN_USE", ipHash: ip });
+      throw conflict;
+    }
+    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
+      reasonCode: err.code || "REGISTRATION_ERROR",
+      ipHash: ip,
+      metadata: { message: err.message },
+    });
+    throw err;
+  }
+
+  const { user, organization, membership } = registrationResult;
+
+  // Sync TenantConfig (legacy machine-auth entity) outside the transaction to avoid
+  // catalog-change WriteConflict when the collection does not yet exist.
+  // If this fails, mark the organization as provisioning_failed so the user cannot
+  // silently receive a usable session against a broken tenant.
+  try {
+    const existingTenantConfig = await tenantConfigRepository.findOne({ tenantId }, { includeSecrets: true });
+    if (!existingTenantConfig) await tenantConfigRepository.create({ tenantId, name: organizationName, status: "active", settings: {}, apiKeys: [], admins: [] });
+  } catch (tenantErr) {
+    await organizationRepository.updateOne({ _id: organization._id }, { status: "provisioning_failed" });
+    await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_FAILED, AUTH_EVENT_OUTCOMES.FAILURE, {
+      userId: user._id,
+      organizationId: organization._id,
+      reasonCode: "TENANT_PROVISIONING_FAILED",
+      metadata: { message: tenantErr.message },
+    });
+    const err = new Error("Account created but organization provisioning failed. Please contact support or retry.");
+    err.status = 503;
+    err.code = "TENANT_PROVISIONING_FAILED";
+    throw err;
+  }
+
+  const { session, rawToken, csrfToken } = await createSession({
+    userId: user._id,
+    organizationId: organization._id,
+    rememberMe: false,
+    ip,
+    userAgent,
+  });
+
+  await auditRecord(AUTH_EVENT_TYPES.REGISTRATION_SUCCEEDED, AUTH_EVENT_OUTCOMES.SUCCESS, {
+    userId: user._id,
+    organizationId: organization._id,
+    sessionId: session._id,
+    ipHash: ip,
+  });
+  await auditRecord(AUTH_EVENT_TYPES.SESSION_CREATED, AUTH_EVENT_OUTCOMES.SUCCESS, {
+    userId: user._id,
+    sessionId: session._id,
+  });
+
+  return {
+    rawToken,
+    session,
+    csrfToken,
+    user: safeUser(user),
+    organization: safeOrg(organization),
+    membership: safeMembership(membership),
+  };
+}
+
+async function login(
+  data,
+  {
+    ip =
+      null,
+
+    userAgent =
+      null,
+  } = {}
+) {
+  const {
+    email,
+    password,
+    rememberMe =
+      false,
+  } =
+    data;
+
+
+  const normalizedEmail =
+    String(
+      email ||
+      ""
+    )
+      .toLowerCase()
+      .trim();
+
+
+  /*
+   * Same outward credential error for:
+   *
+   * - unknown user
+   * - missing credential
+   * - wrong password
+   *
+   * This prevents credential/account enumeration.
+   */
+  const credentialsError =
+    (() => {
+      const error =
+        new Error(
+          "Invalid email or password"
+        );
+
+      error.status =
+        401;
+
+      error.code =
+        "INVALID_CREDENTIALS";
+
+      error.executionAuthorized =
+        false;
+
+      return error;
+    })();
+
+
+  const user =
+    await User
+      .findOne({
+        normalizedEmail,
+      });
+
+
+  if (
+    !user
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        reasonCode:
+          "USER_NOT_FOUND",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    /*
+     * Timing defence:
+     * perform expensive password hashing even for unknown users.
+     */
+    await hashPassword(
+      "aira-timing-defense-constant-input"
+    )
+      .catch(
+        () => {}
+      );
+
+
+    throw credentialsError;
+  }
+
+
+  const credential =
+    await PasswordCredential
+      .findOne({
+        userId:
+          user._id,
+      })
+      .select(
+        "+passwordHash"
+      );
+
+
+  if (
+    !credential
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "NO_CREDENTIAL",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    await hashPassword(
+      "aira-timing-defense-constant-input"
+    )
+      .catch(
+        () => {}
+      );
+
+
+    throw credentialsError;
+  }
+
+
+  /*
+   * Prove knowledge of the password BEFORE revealing:
+   *
+   * - account suspended
+   * - account disabled
+   * - account locked
+   *
+   * This prevents email-only account state enumeration.
+   */
+  const valid =
+    await verifyPassword(
+      credential
+        .passwordHash,
+      password
+    );
+
+
+  const now =
+    new Date();
+
+
+  const locked =
+    Boolean(
+      credential
+        .lockedUntil &&
+      credential
+        .lockedUntil >
+      now
+    );
+
+
+  if (
+    !valid
+  ) {
+    /*
+     * Do not expose whether the account is currently locked.
+     *
+     * If already locked, retain the existing lock rather than
+     * extending it for arbitrary bad attempts.
+     */
+    if (
+      !locked
+    ) {
+      const newCount =
+        (
+          credential
+            .failedAttempts ||
+          0
+        ) +
+        1;
+
+
+      const lockUntil =
+        newCount >=
+        10
+          ? new Date(
+              Date.now() +
+              15 *
+                60 *
+                1000
+            )
+          : null;
+
+
+      await PasswordCredential
+        .updateOne(
+          {
+            _id:
+              credential._id,
+          },
+          {
+            $set: {
+              failedAttempts:
+                newCount,
+
+              lastFailedAt:
+                new Date(),
+
+              ...(
+                lockUntil
+                  ? {
+                      lockedUntil:
+                        lockUntil,
+                    }
+                  : {}
+              ),
+            },
+          }
+        );
+
+
+      if (
+        lockUntil
+      ) {
+        await auditRecord(
+          AUTH_EVENT_TYPES
+            .ACCOUNT_LOCKED,
+
+          AUTH_EVENT_OUTCOMES
+            .DENIED,
+
+          {
+            userId:
+              user._id,
+
+            ipHash:
+              ip,
+          }
+        );
+      }
+    }
+
+
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .FAILURE,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "INVALID_PASSWORD",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    throw credentialsError;
+  }
+
+
+  /*
+   * At this point the caller has proven possession of the
+   * correct password, so account-state responses no longer
+   * reveal information to unauthenticated guessers.
+   */
+
+  if (
+    locked
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_LOCKED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account locked. Try again later."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_LOCKED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  if (
+    user.status ===
+    "suspended"
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_SUSPENDED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account suspended. Contact support."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_SUSPENDED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  if (
+    user.status ===
+    "disabled"
+  ) {
+    await auditRecord(
+      AUTH_EVENT_TYPES
+        .LOGIN_FAILED,
+
+      AUTH_EVENT_OUTCOMES
+        .DENIED,
+
+      {
+        userId:
+          user._id,
+
+        reasonCode:
+          "ACCOUNT_DISABLED",
+
+        ipHash:
+          ip,
+      }
+    );
+
+
+    const error =
+      new Error(
+        "Account disabled. Contact support."
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "ACCOUNT_DISABLED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
+
+
+  /*
+   * Successful authentication clears lock/failure state.
+   */
+  await PasswordCredential
+    .updateOne(
+      {
+        _id:
+          credential._id,
+      },
+      {
+        $set: {
+          failedAttempts:
+            0,
+
+          lockedUntil:
+            null,
+
+          lastFailedAt:
+            null,
+        },
+      }
+    );
+
+
+  /*
+   * Transparently migrate old Argon2 parameters.
+   *
+   * The plaintext password exists only within this request and
+   * the newly generated hash replaces the older hash.
+   */
+  if (
+    needsRehash(
+      credential
+        .passwordHash
+    )
+  ) {
+    const newHash =
+      await hashPassword(
+        password
+      );
+
+
+    await PasswordCredential
+      .updateOne(
+        {
+          _id:
+            credential._id,
+        },
+        {
+          $set: {
+            passwordHash:
+              newHash,
+
+            passwordChangedAt:
+              new Date(),
+          },
+
+          $inc: {
+            hashVersion:
+              1,
+          },
+        }
+      );
+  }
+
+
+  await User
+    .updateOne(
+      {
+        _id:
+          user._id,
+      },
+      {
+        $set: {
+          lastLoginAt:
+            new Date(),
+        },
+      }
+    );
+
+
+  const membership =
+    await OrganizationMembership
+      .findOne({
+        userId:
+          user._id,
+
+        status:
+          "active",
+      });
+
+
+  /*
+   * Do not attach an inactive organization to a fresh session.
+   */
+  const organization =
+    membership
+      ? await Organization
+          .findOne({
+            _id:
+              membership
+                .organizationId,
+
+            status:
+              "active",
+          })
+      : null;
+
+
+  const {
+    session,
+    rawToken,
+    csrfToken,
+  } =
+    await createSession({
+      userId:
+        user._id,
+
+      organizationId:
+        organization
+          ?._id ||
+        null,
+
+      rememberMe,
+
+      ip,
+
+      userAgent,
+    });
+
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .LOGIN_SUCCEEDED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      organizationId:
+        organization
+          ?._id,
+
+      sessionId:
+        session._id,
+
+      ipHash:
+        ip,
+    }
+  );
+
+
+  await auditRecord(
+    AUTH_EVENT_TYPES
+      .SESSION_CREATED,
+
+    AUTH_EVENT_OUTCOMES
+      .SUCCESS,
+
+    {
+      userId:
+        user._id,
+
+      sessionId:
+        session._id,
+    }
+  );
+
+
+  return {
+    rawToken,
+
+    session,
+
+    csrfToken,
+
+    user:
+      safeUser(
+        user
+      ),
+
+    organization:
+      organization
+        ? safeOrg(
+            organization
+          )
+        : null,
+
+    membership:
+      membership
+        ? safeMembership(
+            membership
+          )
+        : null,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+function safeUser(user) {
+  return {
+    id: user._id,
+    fullName: user.fullName,
+    email: user.email,
+    status: user.status,
+    primaryOrganizationId: user.primaryOrganizationId || null,
+    emailVerifiedAt: user.emailVerifiedAt || null,
+    lastLoginAt: user.lastLoginAt || null,
+    createdAt: user.createdAt,
+  };
+}
+
+function safeOrg(org) {
+  return {
+    id: org._id,
+    name: org.name,
+    slug: org.slug,
+    tenantId: org.tenantId,
+    status: org.status,
+    createdAt: org.createdAt,
+  };
+}
+
+function safeMembership(m) {
+  return { id: m._id, role: m.role, status: m.status, joinedAt: m.joinedAt || null };
+}
+
+module.exports = { register, login, safeUser, safeOrg, safeMembership };
+
+
+============================================================
+FILE: services\identity\sessionService.js
+============================================================
+"use strict";
+
+const crypto =
+  require(
+    "crypto"
+  );
+
+const { userSessionRepository } =
+  require(
+    "../../persistence/repositories"
+  );
+
+const {
+  attachCsrfSecret,
+} =
+  require(
+    "../identity/csrfHelper"
+  );
+
+
+const COOKIE_NAME_PROD =
+  "__Host-aira_session";
+
+const COOKIE_NAME_DEV =
+  "aira_session_dev";
+
+
+const IDLE_TIMEOUT_MS =
+  parsePositiveInteger(
+    process.env
+      .SESSION_IDLE_TIMEOUT_MS,
+    30 *
+      60 *
+      1000
+  );
+
+
+const ABSOLUTE_TIMEOUT_MS =
+  parsePositiveInteger(
+    process.env
+      .SESSION_ABSOLUTE_TIMEOUT_MS,
+    8 *
+      60 *
+      60 *
+      1000
+  );
+
+
+const REMEMBER_ME_TIMEOUT_MS =
+  parsePositiveInteger(
+    process.env
+      .SESSION_REMEMBER_ME_TIMEOUT_MS,
+    30 *
+      24 *
+      60 *
+      60 *
+      1000
+  );
+
+
+const ACTIVITY_THROTTLE_MS =
+  parsePositiveInteger(
+    process.env
+      .SESSION_ACTIVITY_THROTTLE_MS,
+    60_000
+  );
+
+
+// ============================================================================
+// HELPERS
+// ============================================================================
+
+function parsePositiveInteger(
+  value,
+  fallback
+) {
+  const parsed =
+    Number.parseInt(
+      value,
+      10
+    );
+
+
+  if (
+    !Number.isFinite(
+      parsed
+    ) ||
+    parsed <=
+      0
+  ) {
+    return fallback;
+  }
+
+
+  return parsed;
+}
+
+
+function generateRawToken() {
+  /*
+   * 256 bits of entropy.
+   *
+   * Only the hash is persisted.
+   */
+  return crypto
+    .randomBytes(
+      32
+    )
+    .toString(
+      "hex"
+    );
+}
+
+
+function hashToken(
+  rawToken
+) {
+  if (
+    typeof rawToken !==
+      "string" ||
+    !rawToken
+  ) {
+    throw Object.assign(
+      new Error(
+        "Session token is required"
+      ),
+      {
+        code:
+          "SESSION_TOKEN_REQUIRED",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  return crypto
+    .createHash(
+      "sha256"
+    )
+    .update(
+      rawToken
+    )
+    .digest(
+      "hex"
+    );
+}
+
+
+/*
+ * IP / user-agent values are privacy-sensitive identifiers.
+ *
+ * Use keyed HMAC instead of a plain hash.
+ */
+function getFingerprintKey() {
+  const configured =
+    process.env
+      .SESSION_FINGERPRINT_KEY ||
+    process.env
+      .IP_HASH_SALT;
+
+
+  if (
+    configured
+  ) {
+    return String(
+      configured
+    );
+  }
+
+
+  if (
+    process.env.NODE_ENV ===
+      "test"
+  ) {
+    return "aira-session-test-fingerprint-key";
+  }
+
+
+  if (
+    process.env.NODE_ENV !==
+      "production"
+  ) {
+    /*
+     * Development-only fallback.
+     *
+     * Production NEVER uses this value.
+     */
+    return "aira-development-session-fingerprint-key";
+  }
+
+
+  throw Object.assign(
+    new Error(
+      "SESSION_FINGERPRINT_KEY is required in production"
+    ),
+    {
+      code:
+        "SESSION_FINGERPRINT_KEY_MISSING",
+
+      executionAuthorized:
+        false,
+    }
+  );
+}
+
+
+function fingerprint(
+  value
+) {
+  if (
+    !value
+  ) {
+    return null;
+  }
+
+
+  return crypto
+    .createHmac(
+      "sha256",
+      getFingerprintKey()
+    )
+    .update(
+      String(
+        value
+      )
+    )
+    .digest(
+      "hex"
+    );
+}
+
+
+function hashIp(
+  ip
+) {
+  return fingerprint(
+    ip
+  );
+}
+
+
+function hashUserAgent(
+  userAgent
+) {
+  return fingerprint(
+    userAgent
+  );
+}
+
+
+function getCookieName() {
+  return process.env
+    .NODE_ENV ===
+    "production"
+      ? COOKIE_NAME_PROD
+      : COOKIE_NAME_DEV;
+}
+
+
+// ============================================================================
+// COOKIE POLICY
+// ============================================================================
+
+function buildCookieOptions(
+  maxAgeMs
+) {
+  const isProduction =
+    process.env
+      .NODE_ENV ===
+    "production";
+
+
+  return {
+    httpOnly:
+      true,
+
+    secure:
+      isProduction,
+
+    /*
+     * Production frontend/backend are cross-site in the
+     * current deployment architecture.
+     */
+    sameSite:
+      isProduction
+        ? "none"
+        : "lax",
+
+    path:
+      "/",
+
+    maxAge:
+      maxAgeMs,
+  };
+}
+
+
+// ============================================================================
+// SESSION CREATION
+// ============================================================================
+
+async function createSession({
+  userId,
+  organizationId =
+    null,
+  rememberMe =
+    false,
+  ip =
+    null,
+  userAgent =
+    null,
+  authMethod =
+    "password",
+  assuranceLevel =
+    "aal1",
+}) {
+  if (
+    !userId
+  ) {
+    throw Object.assign(
+      new Error(
+        "Session userId is required"
+      ),
+      {
+        code:
+          "SESSION_USER_REQUIRED",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  const rawToken =
+    generateRawToken();
+
+
+  const tokenHash =
+    hashToken(
+      rawToken
+    );
+
+
+  const now =
+    Date.now();
+
+
+  const absoluteMs =
+    rememberMe
+      ? REMEMBER_ME_TIMEOUT_MS
+      : ABSOLUTE_TIMEOUT_MS;
+
+
+  /*
+   * Only the token HASH is persisted.
+   *
+   * rawToken exists only long enough to be returned to the
+   * caller and placed into the HttpOnly cookie.
+   */
+  const session =
+    await userSessionRepository
+      .create({
+        userId,
+
+        activeOrganizationId:
+          organizationId ||
+          null,
+
+        tokenHash,
+
+        status:
+          "active",
+
+        lastActivityAt:
+          new Date(
+            now
+          ),
+
+        idleExpiresAt:
+          new Date(
+            now +
+            IDLE_TIMEOUT_MS
+          ),
+
+        absoluteExpiresAt:
+          new Date(
+            now +
+            absoluteMs
+          ),
+
+        authenticationMethods: [
+          authMethod,
+        ],
+
+        assuranceLevel,
+
+        rememberMe:
+          Boolean(
+            rememberMe
+          ),
+
+        ipHash:
+          hashIp(
+            ip
+          ),
+
+        userAgentHash:
+          hashUserAgent(
+            userAgent
+          ),
+      });
+
+
+  const csrfToken =
+    await attachCsrfSecret(
+      session
+    );
+
+
+  return {
+    session,
+
+    rawToken,
+
+    csrfToken,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// SESSION VALIDATION
+// ============================================================================
+
+async function validateSession(
+  rawToken
+) {
+  let tokenHash;
+
+
+  try {
+    tokenHash =
+      hashToken(
+        rawToken
+      );
+  } catch {
+    return {
+      valid:
+        false,
+
+      reason:
+        "SESSION_NOT_FOUND",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  const session =
+    await userSessionRepository
+      .findOne({
+        tokenHash,
+      }, { includeTokenHash: true });
+
+
+  if (
+    !session
+  ) {
+    return {
+      valid:
+        false,
+
+      reason:
+        "SESSION_NOT_FOUND",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  if (
+    session.status !==
+      "active"
+  ) {
+    return {
+      valid:
+        false,
+
+      reason:
+        "SESSION_REVOKED",
+
+      session,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  const now =
+    new Date();
+
+
+  if (
+    now >
+    session
+      .absoluteExpiresAt
+  ) {
+    await userSessionRepository
+      .updateOne(
+        {
+          _id:
+            session._id,
+
+          status:
+            "active",
+        },
+        {
+          $set: {
+            status:
+              "expired",
+          },
+        }
+      );
+
+
+    return {
+      valid:
+        false,
+
+      reason:
+        "SESSION_ABSOLUTE_EXPIRED",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  if (
+    now >
+    session
+      .idleExpiresAt
+  ) {
+    await userSessionRepository
+      .updateOne(
+        {
+          _id:
+            session._id,
+
+          status:
+            "active",
+        },
+        {
+          $set: {
+            status:
+              "expired",
+          },
+        }
+      );
+
+
+    return {
+      valid:
+        false,
+
+      reason:
+        "SESSION_IDLE_EXPIRED",
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  const lastActivityAt =
+    session
+      .lastActivityAt instanceof
+      Date
+        ? session
+            .lastActivityAt
+        : new Date(
+            session
+              .lastActivityAt
+          );
+
+
+  if (
+    now.getTime() -
+      lastActivityAt
+        .getTime() >
+    ACTIVITY_THROTTLE_MS
+  ) {
+    const newIdle =
+      new Date(
+        now.getTime() +
+        IDLE_TIMEOUT_MS
+      );
+
+
+    /*
+     * Update only an active session.
+     *
+     * This reduces the chance of activity refresh racing with
+     * session revocation.
+     */
+    await userSessionRepository
+      .updateOne(
+        {
+          _id:
+            session._id,
+
+          status:
+            "active",
+        },
+        {
+          $set: {
+            lastActivityAt:
+              now,
+
+            idleExpiresAt:
+              newIdle,
+          },
+        }
+      );
+
+
+    session.lastActivityAt =
+      now;
+
+    session.idleExpiresAt =
+      newIdle;
+  }
+
+
+  return {
+    valid:
+      true,
+
+    session,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// REVOCATION
+// ============================================================================
+
+async function revokeSession(
+  sessionId,
+  reason =
+    "logout"
+) {
+  if (
+    !sessionId
+  ) {
+    return {
+      revoked:
+        false,
+
+      executionAuthorized:
+        false,
+    };
+  }
+
+
+  const result =
+    await userSessionRepository
+      .updateOne(
+        {
+          _id:
+            sessionId,
+
+          status:
+            "active",
+        },
+        {
+          $set: {
+            status:
+              "revoked",
+
+            revokedAt:
+              new Date(),
+
+            revocationReason:
+              String(
+                reason ||
+                "logout"
+              )
+                .slice(
+                  0,
+                  200
+                ),
+          },
+        }
+      );
+
+
+  return {
+    revoked:
+      Boolean(
+        result
+          ?.modifiedCount
+      ),
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+async function revokeAllUserSessions(
+  userId,
+  exceptSessionId =
+    null
+) {
+  const filter = {
+    userId,
+
+    status:
+      "active",
+  };
+
+
+  if (
+    exceptSessionId
+  ) {
+    filter._id = {
+      $ne:
+        exceptSessionId,
+    };
+  }
+
+
+  const result =
+    await userSessionRepository
+      .updateMany(
+        filter,
+        {
+          $set: {
+            status:
+              "revoked",
+
+            revokedAt:
+              new Date(),
+
+            revocationReason:
+              "logout_all",
+          },
+        }
+      );
+
+
+  return {
+    revokedCount:
+      result
+        ?.modifiedCount ||
+      0,
+
+    executionAuthorized:
+      false,
+  };
+}
+
+
+// ============================================================================
+// COOKIE OPERATIONS
+// ============================================================================
+
+function setSessionCookie(
+  res,
+  rawToken,
+  rememberMe =
+    false
+) {
+  if (
+    !rawToken
+  ) {
+    throw Object.assign(
+      new Error(
+        "Session token is required"
+      ),
+      {
+        code:
+          "SESSION_TOKEN_REQUIRED",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  const maxAgeMs =
+    rememberMe
+      ? REMEMBER_ME_TIMEOUT_MS
+      : ABSOLUTE_TIMEOUT_MS;
+
+
+  res.cookie(
+    getCookieName(),
+    rawToken,
+    buildCookieOptions(
+      maxAgeMs
+    )
+  );
+}
+
+
+function clearSessionCookie(
+  res
+) {
+  const isProduction =
+    process.env
+      .NODE_ENV ===
+    "production";
+
+
+  res.clearCookie(
+    getCookieName(),
+    {
+      httpOnly:
+        true,
+
+      secure:
+        isProduction,
+
+      sameSite:
+        isProduction
+          ? "none"
+          : "lax",
+
+      path:
+        "/",
+    }
+  );
+}
+
+
+function extractRawToken(
+  req
+) {
+  const value =
+    req.cookies
+      ?.[
+        getCookieName()
+      ];
+
+
+  return typeof value ===
+    "string" &&
+    value
+      ? value
+      : null;
+}
+
+
+// ============================================================================
+// EXPORTS
+// ============================================================================
+
+module.exports = {
+  createSession,
+
+  validateSession,
+
+  revokeSession,
+
+  revokeAllUserSessions,
+
+  setSessionCookie,
+
+  clearSessionCookie,
+
+  extractRawToken,
+
+  getCookieName,
+
+  hashToken,
+
+  hashIp,
+
+  hashUserAgent,
+
+  buildCookieOptions,
+};
+
+
+============================================================
+FILE: services\identity\identityAuditService.js
+============================================================
+"use strict";
+
+const crypto =
+  require(
+    "node:crypto"
+  );
+
+const AuthenticationAuditEvent =
+  require(
+    "../../models/AuthenticationAuditEvent"
+  );
+
+
+const MAX_CHAIN_WRITE_RETRIES =
+  5;
+
+
+const FORBIDDEN_KEYS =
+  new Set([
+    "password",
+    "passwd",
+    "passwordhash",
+
+    "secret",
+    "apisecret",
+    "clientsecret",
+
+    "token",
+    "accesstoken",
+    "refreshtoken",
+    "sessiontoken",
+    "bearertoken",
+    "csrftoken",
+
+    "authorization",
+
+    "cookie",
+    "setcookie",
+
+    "apikey",
+
+    "privatekey",
+
+    "credential",
+    "credentials",
+  ]);
+
+
+// ============================================================================
+// SANITIZATION
+// ============================================================================
+
+function normalizeKey(
+  key
+) {
+  return String(
+    key
+  )
+    .replace(
+      /[^a-z0-9]/gi,
+      ""
+    )
+    .toLowerCase();
+}
+
+
+function sanitizeMetadata(
+  value,
+  depth =
+    0
+) {
+  if (
+    depth >
+    10
+  ) {
+    return "[MAX_DEPTH]";
+  }
+
+
+  if (
+    value ===
+      null ||
+    value ===
+      undefined
+  ) {
+    return value;
+  }
+
+
+  if (
+    value instanceof
+    Date
+  ) {
+    return value
+      .toISOString();
+  }
+
+
+  if (
+    Buffer.isBuffer(
+      value
+    )
+  ) {
+    return "[BUFFER_REDACTED]";
+  }
+
+
+  if (
+    Array.isArray(
+      value
+    )
+  ) {
+    return value.map(
+      (
+        item
+      ) =>
+        sanitizeMetadata(
+          item,
+          depth +
+            1
+        )
+    );
+  }
+
+
+  if (
+    typeof value ===
+      "object"
+  ) {
+    const out =
+      {};
+
+
+    for (
+      const [
+        key,
+        childValue,
+      ]
+      of Object.entries(
+        value
+      )
+    ) {
+      if (
+        FORBIDDEN_KEYS
+          .has(
+            normalizeKey(
+              key
+            )
+          )
+      ) {
+        continue;
+      }
+
+
+      out[key] =
+        sanitizeMetadata(
+          childValue,
+          depth +
+            1
+        );
+    }
+
+
+    return out;
+  }
+
+
+  if (
+    typeof value ===
+      "bigint"
+  ) {
+    return value
+      .toString();
+  }
+
+
+  return value;
+}
+
+
+function canonicalize(
+  value
+) {
+  if (
+    value ===
+      null
+  ) {
+    return "null";
+  }
+
+
+  if (
+    value ===
+      undefined
+  ) {
+    return '"[UNDEFINED]"';
+  }
+
+
+  if (
+    value instanceof
+    Date
+  ) {
+    return JSON.stringify(
+      value
+        .toISOString()
+    );
+  }
+
+
+  if (
+    Array.isArray(
+      value
+    )
+  ) {
+    return (
+      "[" +
+      value
+        .map(
+          (
+            item
+          ) =>
+            canonicalize(
+              item
+            )
+        )
+        .join(
+          ","
+        ) +
+      "]"
+    );
+  }
+
+
+  if (
+    typeof value ===
+      "object"
+  ) {
+    const keys =
+      Object.keys(
+        value
+      )
+        .sort();
+
+
+    return (
+      "{" +
+      keys
+        .map(
+          (
+            key
+          ) =>
+            JSON.stringify(
+              key
+            ) +
+            ":" +
+            canonicalize(
+              value[
+                key
+              ]
+            )
+        )
+        .join(
+          ","
+        ) +
+      "}"
+    );
+  }
+
+
+  return JSON.stringify(
+    value
+  );
+}
+
+
+// ============================================================================
+// SIGNING
+// ============================================================================
+
+function getAuditSecret() {
+  const secret =
+    process.env
+      .AUTH_AUDIT_SECRET ||
+    process.env
+      .AUDIT_SECRET;
+
+
+  if (
+    !secret
+  ) {
+    throw Object.assign(
+      new Error(
+        "AUTH_AUDIT_SECRET or AUDIT_SECRET is required"
+      ),
+      {
+        code:
+          "AUTH_AUDIT_SECRET_MISSING",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  return String(
+    secret
+  );
+}
+
+
+function immutableContent(
+  event
+) {
+  return {
+    eventId:
+      event.eventId,
+
+    eventType:
+      event.eventType,
+
+    outcome:
+      event.outcome,
+
+    userId:
+      event.userId
+        ?.toString?.() ||
+      null,
+
+    organizationId:
+      event.organizationId
+        ?.toString?.() ||
+      null,
+
+    sessionId:
+      event.sessionId
+        ?.toString?.() ||
+      null,
+
+    reasonCode:
+      event.reasonCode ||
+      null,
+
+    requestId:
+      event.requestId ||
+      null,
+
+    correlationId:
+      event.correlationId ||
+      null,
+
+    ipHash:
+      event.ipHash ||
+      null,
+
+    userAgentHash:
+      event.userAgentHash ||
+      null,
+
+    chainIndex:
+      Number(
+        event.chainIndex
+      ),
+
+    previousEventHash:
+      event.previousEventHash ||
+      null,
+
+    metadata:
+      sanitizeMetadata(
+        event.metadata ||
+        null
+      ),
+  };
+}
+
+
+function computeSignature(
+  event
+) {
+  return crypto
+    .createHmac(
+      "sha256",
+      getAuditSecret()
+    )
+    .update(
+      canonicalize(
+        immutableContent(
+          event
+        )
+      )
+    )
+    .digest(
+      "hex"
+    );
+}
+
+
+function computeEventHash(
+  event
+) {
+  return crypto
+    .createHash(
+      "sha256"
+    )
+    .update(
+      canonicalize({
+        ...immutableContent(
+          event
+        ),
+
+        signature:
+          event.signature,
+      })
+    )
+    .digest(
+      "hex"
+    );
+}
+
+
+// ============================================================================
+// RECORD
+// ============================================================================
+
+async function record(
+  eventType,
+  outcome,
+  opts =
+    {}
+) {
+  try {
+    for (
+      let attempt =
+        1;
+      attempt <=
+        MAX_CHAIN_WRITE_RETRIES;
+      attempt++
+    ) {
+      try {
+        const last =
+          await AuthenticationAuditEvent
+            .findOne({})
+            .sort({
+              chainIndex:
+                -1,
+
+              createdAt:
+                -1,
+            });
+
+
+        const eventData = {
+          eventId:
+            crypto
+              .randomUUID(),
+
+          eventType,
+
+          outcome,
+
+          userId:
+            opts.userId ||
+            null,
+
+          organizationId:
+            opts.organizationId ||
+            null,
+
+          sessionId:
+            opts.sessionId ||
+            null,
+
+          reasonCode:
+            opts.reasonCode ||
+            null,
+
+          requestId:
+            opts.requestId ||
+            null,
+
+          correlationId:
+            opts.correlationId ||
+            null,
+
+          ipHash:
+            opts.ipHash ||
+            null,
+
+          userAgentHash:
+            opts.userAgentHash ||
+            null,
+
+          metadata:
+            opts.metadata
+              ? sanitizeMetadata(
+                  opts.metadata
+                )
+              : null,
+
+          chainIndex:
+            (
+              Number(
+                last
+                  ?.chainIndex
+              ) ||
+              0
+            ) +
+            1,
+
+          previousEventHash:
+            last
+              ?.eventHash ||
+            null,
+        };
+
+
+        eventData.signature =
+          computeSignature(
+            eventData
+          );
+
+
+        eventData.eventHash =
+          computeEventHash(
+            eventData
+          );
+
+
+        await AuthenticationAuditEvent
+          .create(
+            eventData
+          );
+
+
+        return {
+          recorded:
+            true,
+
+          eventId:
+            eventData.eventId,
+
+          chainIndex:
+            eventData.chainIndex,
+
+          executionAuthorized:
+            false,
+        };
+      } catch (
+        error
+      ) {
+        if (
+          error
+            ?.code ===
+            11000 &&
+          attempt <
+            MAX_CHAIN_WRITE_RETRIES
+        ) {
+          continue;
+        }
+
+
+        throw error;
+      }
+    }
+
+
+    throw Object.assign(
+      new Error(
+        "Unable to append authentication audit event"
+      ),
+      {
+        code:
+          "AUTH_AUDIT_CHAIN_APPEND_CONFLICT",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  } catch (
+    error
+  ) {
+    /*
+     * Authentication remains available even if audit storage
+     * temporarily fails.
+     *
+     * This does NOT manufacture a successful audit record.
+     */
+    console.error(
+      "[identity-audit] Failed to record event:",
+      error.message
+    );
+
+
+    return {
+      recorded:
+        false,
+
+      error:
+        error.code ||
+        "AUTH_AUDIT_WRITE_FAILED",
+
+      executionAuthorized:
+        false,
+    };
+  }
+}
+
+
+// ============================================================================
+// VERIFY
+// ============================================================================
+
+async function verifyIntegrity() {
+  try {
+    const events =
+      await AuthenticationAuditEvent
+        .find({})
+        .sort({
+          chainIndex:
+            1,
+
+          createdAt:
+            1,
+        });
+
+
+    let valid =
+      true;
+
+
+    const results =
+      [];
+
+
+    for (
+      let index =
+        0;
+      index <
+        events.length;
+      index++
+    ) {
+      const event =
+        events[
+          index
+        ];
+
+
+      const signature =
+        computeSignature(
+          event
+        );
+
+
+      const eventHash =
+        computeEventHash(
+          event
+        );
+
+
+      const signatureValid =
+        event.signature ===
+        signature;
+
+
+      const hashValid =
+        event.eventHash ===
+        eventHash;
+
+
+      const chainValid =
+        index ===
+          0
+          ? !event
+              .previousEventHash
+          : (
+              event
+                .previousEventHash ===
+                events[
+                  index -
+                    1
+                ]
+                  .eventHash &&
+              Number(
+                event
+                  .chainIndex
+              ) ===
+                Number(
+                  events[
+                    index -
+                      1
+                  ]
+                    .chainIndex
+                ) +
+                  1
+            );
+
+
+      const eventValid =
+        signatureValid &&
+        hashValid &&
+        chainValid;
+
+
+      if (
+        !eventValid
+      ) {
+        valid =
+          false;
+      }
+
+
+      results.push({
+        eventId:
+          event.eventId,
+
+        chainIndex:
+          event.chainIndex,
+
+        signatureValid,
+
+        hashValid,
+
+        chainValid,
+
+        valid:
+          eventValid,
+      });
+    }
+
+
+    return {
+      valid,
+
+      totalEvents:
+        events.length,
+
+      results,
+
+      executionAuthorized:
+        false,
+    };
+  } catch (
+    error
+  ) {
+    return {
+      valid:
+        false,
+
+      error:
+        error.code ||
+        error.message,
+
+      executionAuthorized:
+        false,
+    };
+  }
+}
+
+
+module.exports = {
+  record,
+
+  sanitizeMetadata,
+
+  verifyIntegrity,
+
+  computeSignature,
+
+  computeEventHash,
+};
+
+
+============================================================
+FILE: middleware\authMiddleware.js
+============================================================
+"use strict";
+
+const crypto = require("crypto");
+
+const TenantConfig = require("../models/TenantConfig");
+const Organization = require("../models/Organization");
+
+const MAX_TIMESTAMP_AGE_MS =
+  5 * 60 * 1000;
+
+/**
+ * SHA-256 helper used for API-key credential verification.
+ *
+ * This matches the hashing scheme currently used by
+ * tenantService when creating/rotating machine credentials.
+ */
+function sha256(value) {
+  return crypto
+    .createHash("sha256")
+    .update(String(value))
+    .digest("hex");
+}
+
+/**
+ * Generate HMAC signature for request verification.
+ */
+function createRequestSignature(
+  value,
+  secret
+) {
+  return crypto
+    .createHmac(
+      "sha256",
+      secret
+    )
+    .update(value)
+    .digest("hex");
+}
+
+function verifyTimestamp(
+  timestamp,
+  maxAgeMs = MAX_TIMESTAMP_AGE_MS
+) {
+  const parsedTimestamp =
+    Number(timestamp);
+
+  if (
+    !Number.isFinite(parsedTimestamp) ||
+    !Number.isInteger(parsedTimestamp)
+  ) {
+    return false;
+  }
+
+  const age =
+    Math.abs(
+      Date.now() -
+        parsedTimestamp
+    );
+
+  return age <= maxAgeMs;
+}
+
+/**
+ * Timing-safe string comparison.
+ *
+ * Returns false instead of throwing when lengths differ.
+ */
+function timingSafeEqualString(
+  left,
+  right
+) {
+  if (
+    typeof left !== "string" ||
+    typeof right !== "string"
+  ) {
+    return false;
+  }
+
+  const leftBuffer =
+    Buffer.from(
+      left,
+      "utf8"
+    );
+
+  const rightBuffer =
+    Buffer.from(
+      right,
+      "utf8"
+    );
+
+  if (
+    leftBuffer.length !==
+    rightBuffer.length
+  ) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(
+    leftBuffer,
+    rightBuffer
+  );
+}
+
+async function authMiddleware(
+  req,
+  res,
+  next
+) {
+  try {
+    /*
+     * CORS preflight requests must not
+     * be blocked by authentication.
+     */
+    if (req.method === "OPTIONS") {
+      return next();
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * TENANT IDENTIFICATION
+     * ----------------------------------------------------------------
+     *
+     * Legacy machine-auth routes currently identify
+     * the tenant using:
+     *
+     * /tenants/:tenantId/...
+     */
+    const tenantId =
+      req.params.tenantId;
+
+    if (!tenantId) {
+      return res.status(400).json({
+        error:
+          "Missing tenantId in URL path",
+        code:
+          "MISSING_TENANT_ID",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * AUTHORIZATION HEADER
+     * ----------------------------------------------------------------
+     *
+     * Current protocol:
+     *
+     * Authorization: Bearer keyId:secret
+     *
+     * The supplied secret is verified against
+     * TenantConfig.apiKeys.secretHash below.
+     */
+    const authHeader =
+      req.headers.authorization;
+
+    if (!authHeader) {
+      return res.status(401).json({
+        error:
+          "Missing Authorization header",
+        code:
+          "MISSING_AUTH_HEADER",
+      });
+    }
+
+    const firstSpaceIndex =
+      authHeader.indexOf(" ");
+
+    if (firstSpaceIndex === -1) {
+      return res.status(401).json({
+        error:
+          "Malformed Authorization header",
+        code:
+          "MALFORMED_AUTH_HEADER",
+      });
+    }
+
+    const scheme =
+      authHeader.slice(
+        0,
+        firstSpaceIndex
+      );
+
+    const credentials =
+      authHeader
+        .slice(
+          firstSpaceIndex + 1
+        )
+        .trim();
+
+    if (scheme !== "Bearer") {
+      return res.status(401).json({
+        error:
+          `Invalid auth scheme "${scheme}", expected "Bearer"`,
+        code:
+          "INVALID_AUTH_SCHEME",
+      });
+    }
+
+    if (
+      !credentials ||
+      !credentials.includes(":")
+    ) {
+      return res.status(401).json({
+        error:
+          "Malformed credentials: expected keyId:secret",
+        code:
+          "MALFORMED_CREDENTIALS",
+      });
+    }
+
+    /*
+     * Split only on the first colon so secrets
+     * containing colons are not truncated.
+     */
+    const separatorIndex =
+      credentials.indexOf(":");
+
+    const keyId =
+      credentials
+        .slice(
+          0,
+          separatorIndex
+        )
+        .trim();
+
+    const secret =
+      credentials.slice(
+        separatorIndex + 1
+      );
+
+    if (!keyId || !secret) {
+      return res.status(401).json({
+        error:
+          "Missing keyId or secret",
+        code:
+          "MISSING_CREDENTIALS",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * TIMESTAMP / REPLAY WINDOW
+     * ----------------------------------------------------------------
+     */
+    const timestamp =
+      req.headers["x-timestamp"];
+
+    if (!timestamp) {
+      return res.status(400).json({
+        error:
+          "Missing X-Timestamp header",
+        code:
+          "MISSING_TIMESTAMP",
+      });
+    }
+
+    if (
+      !verifyTimestamp(
+        timestamp
+      )
+    ) {
+      return res.status(401).json({
+        error:
+          "Invalid or stale request timestamp",
+        code:
+          "STALE_TIMESTAMP",
+      });
+    }
+
+    const parsedTimestamp =
+      Number(timestamp);
+
+    /*
+     * ----------------------------------------------------------------
+     * IDEMPOTENCY
+     * ----------------------------------------------------------------
+     *
+     * State-changing machine operations require
+     * an idempotency key.
+     */
+    const idempotencyKey =
+      req.headers[
+        "x-idempotency-key"
+      ];
+
+    const isReadOnlyMethod =
+      ["GET", "HEAD"].includes(
+        req.method
+      );
+
+    if (
+      !isReadOnlyMethod &&
+      !idempotencyKey
+    ) {
+      return res.status(400).json({
+        error:
+          "Missing X-Idempotency-Key header",
+        code:
+          "MISSING_IDEMPOTENCY_KEY",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * TENANT CONFIG
+     * ----------------------------------------------------------------
+     */
+    const tenant =
+      await TenantConfig.findOne({
+        tenantId,
+        status: "active",
+      });
+
+    if (!tenant) {
+      return res.status(403).json({
+        error:
+          "Tenant not found or inactive",
+        code:
+          "TENANT_NOT_FOUND",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * CANONICAL ORGANIZATION
+     * ----------------------------------------------------------------
+     *
+     * Organization._id is now the canonical enterprise
+     * ownership boundary.
+     *
+     * tenantId remains for backwards-compatible
+     * machine APIs.
+     */
+    const organization =
+      await Organization.findOne({
+        tenantId,
+        status: "active",
+      });
+
+    if (!organization) {
+      return res.status(403).json({
+        error:
+          "Organization not found or inactive",
+        code:
+          "ORGANIZATION_NOT_FOUND",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * API KEY LOOKUP
+     * ----------------------------------------------------------------
+     */
+    const apiKey =
+      tenant.apiKeys?.find(
+        (key) =>
+          key.keyId === keyId &&
+          key.active === true &&
+          key.status !== "retired"
+      );
+
+    if (!apiKey) {
+      return res.status(401).json({
+        error:
+          "API key not found or inactive",
+        code:
+          "API_KEY_NOT_FOUND",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * KEY-ID HASH VERIFICATION
+     * ----------------------------------------------------------------
+     *
+     * keyHash protects against inconsistent/tampered
+     * API-key records.
+     */
+    const suppliedKeyHash =
+      sha256(keyId);
+
+    if (
+      !timingSafeEqualString(
+        suppliedKeyHash,
+        apiKey.keyHash
+      )
+    ) {
+      console.warn(
+        `[auth] API key hash mismatch | tenant=${tenantId} | key=${keyId}`
+      );
+
+      return res.status(401).json({
+        error:
+          "Invalid API credentials",
+        code:
+          "INVALID_API_CREDENTIALS",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * SECRET VERIFICATION
+     * ----------------------------------------------------------------
+     *
+     * This is the critical authentication check.
+     *
+     * The plaintext secret sent by the client must
+     * hash to the secretHash stored in MongoDB.
+     */
+    const suppliedSecretHash =
+      sha256(secret);
+
+    if (
+      !timingSafeEqualString(
+        suppliedSecretHash,
+        apiKey.secretHash
+      )
+    ) {
+      console.warn(
+        `[auth] API secret verification failed | tenant=${tenantId} | key=${keyId}`
+      );
+
+      return res.status(401).json({
+        error:
+          "Invalid API credentials",
+        code:
+          "INVALID_API_CREDENTIALS",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * ROTATION DEADLINE
+     * ----------------------------------------------------------------
+     */
+    if (
+      apiKey.rotationDeadline &&
+      new Date() >
+        new Date(
+          apiKey.rotationDeadline
+        )
+    ) {
+      return res.status(401).json({
+        error:
+          "API key rotation deadline has passed",
+        code:
+          "API_KEY_ROTATED",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * REQUEST SIGNATURE
+     * ----------------------------------------------------------------
+     *
+     * Existing signing protocol:
+     *
+     * HMAC_SHA256(
+     *   JSON(body) + timestamp,
+     *   secret
+     * )
+     */
+    let body = "";
+
+    if (
+      req.body &&
+      typeof req.body ===
+        "object" &&
+      Object.keys(req.body)
+        .length > 0
+    ) {
+      body =
+        JSON.stringify(
+          req.body
+        );
+    }
+
+    const messageToSign =
+      body + timestamp;
+
+    const expectedSignature =
+      createRequestSignature(
+        messageToSign,
+        secret
+      );
+
+    const providedSignature =
+      req.headers[
+        "x-signature"
+      ];
+
+    if (!providedSignature) {
+      return res.status(401).json({
+        error:
+          "Missing X-Signature header",
+        code:
+          "MISSING_SIGNATURE",
+      });
+    }
+
+    if (
+      !timingSafeEqualString(
+        expectedSignature,
+        providedSignature
+      )
+    ) {
+      console.warn(
+        `[auth] Signature mismatch | tenant=${tenantId} | key=${keyId}`
+      );
+
+      return res.status(401).json({
+        error:
+          "Invalid signature",
+        code:
+          "INVALID_SIGNATURE",
+      });
+    }
+
+    /*
+     * ----------------------------------------------------------------
+     * LEGACY TENANT CONTEXT
+     * ----------------------------------------------------------------
+     *
+     * Existing playbook/runbook/execution code still
+     * consumes req.tenant, so preserve it during
+     * Phase 1 migration.
+     */
+    req.tenant = {
+      id:
+        tenantId,
+
+      config:
+        tenant,
+
+      keyId,
+
+      scopes:
+        Array.isArray(
+          apiKey.scopes
+        )
+          ? [...apiKey.scopes]
+          : [],
+
+      timestamp:
+        parsedTimestamp,
+
+      idempotencyKey:
+        idempotencyKey || null,
+    };
+
+    /*
+     * ----------------------------------------------------------------
+     * CANONICAL AUTH CONTEXT
+     * ----------------------------------------------------------------
+     *
+     * Browser and machine identities now both
+     * produce req.auth.
+     */
+    req.auth = {
+      authenticationType:
+        "machine_hmac",
+
+      userId:
+        null,
+
+      sessionId:
+        null,
+
+      organizationId:
+        organization._id,
+
+      tenantId:
+        organization.tenantId,
+
+      membershipId:
+        null,
+
+      role:
+        null,
+
+      assuranceLevel:
+        "machine",
+
+      machineKeyId:
+        keyId,
+
+      scopes:
+        Array.isArray(
+          apiKey.scopes
+        )
+          ? [...apiKey.scopes]
+          : [],
+
+      /*
+       * Internal references.
+       * Never serialize directly to API clients.
+       */
+      _organization:
+        organization,
+
+      _tenantConfig:
+        tenant,
+
+      _apiKey:
+        apiKey,
+    };
+
+    /*
+     * Never log:
+     *
+     * - secret
+     * - secretHash
+     * - Authorization
+     * - request signature
+     */
+    console.log(
+      `[auth] ✓ ${req.method} ${req.path} | tenant=${tenantId} | org=${organization._id} | key=${keyId}`
+    );
+
+    return next();
+  } catch (error) {
+    console.error(
+      "[auth] Middleware error:",
+      error.message
+    );
+
+    return res.status(500).json({
+      error:
+        "Authentication service error",
+      code:
+        "AUTH_ERROR",
+    });
+  }
+}
+
+module.exports =
+  authMiddleware;
+
+
+============================================================
+FILE: middleware\dualAuthMiddleware.js
+============================================================
+"use strict";
+
+/**
+ * Accepts either:
+ *
+ * 1. A valid browser session cookie
+ * 2. A valid machine HMAC Authorization header
+ *
+ * Browser session authentication is attempted first.
+ * If no valid browser session exists, authentication falls
+ * back to the existing HMAC machine authentication middleware.
+ *
+ * Successful authentication populates req.auth.
+ */
+
+const {
+  extractRawToken,
+  validateSession,
+} = require("../services/identity/sessionService");
+
+const { userRepository, organizationMembershipRepository } = require("../persistence/repositories");
+const Organization = require("../models/Organization");
+
+const authMiddleware = require("./authMiddleware");
+
+/**
+ * Attempt browser session authentication.
+ *
+ * Returns:
+ *   true  -> session authentication succeeded
+ *   false -> session authentication unavailable/invalid
+ *
+ * This function does not send responses because the caller
+ * may still fall back to machine authentication.
+ */
+async function trySessionAuth(req) {
+  let rawToken;
+
+  try {
+    rawToken = extractRawToken(req);
+  } catch {
+    return false;
+  }
+
+  if (!rawToken) {
+    return false;
+  }
+
+  let result;
+
+  try {
+    result = await validateSession(rawToken);
+  } catch {
+    return false;
+  }
+
+  if (!result.valid) {
+    return false;
+  }
+
+  const { session } = result;
+
+  let user;
+
+  try {
+    user = await userRepository.findById(session.userId);
+  } catch {
+    return false;
+  }
+
+  if (!user) {
+    return false;
+  }
+
+  if (
+    user.status === "suspended" ||
+    user.status === "disabled"
+  ) {
+    return false;
+  }
+
+  let membership = null;
+  let organization = null;
+
+  /*
+   * If the session has an active organization,
+   * independently verify both:
+   *
+   * 1. The user's membership is still active.
+   * 2. The organization itself is still active.
+   */
+  if (session.activeOrganizationId) {
+    try {
+      [membership, organization] =
+        await Promise.all([
+          organizationMembershipRepository.findOne({
+            userId: user._id,
+            organizationId:
+              session.activeOrganizationId,
+            status: "active",
+          }),
+
+          Organization.findOne({
+            _id: session.activeOrganizationId,
+            status: "active",
+          }),
+        ]);
+    } catch {
+      return false;
+    }
+
+    /*
+     * Fail closed.
+     *
+     * A previously valid session must not retain
+     * organization access after:
+     *
+     * - membership suspension
+     * - membership removal
+     * - organization suspension
+     * - organization deactivation
+     */
+    if (!membership || !organization) {
+      return false;
+    }
+  }
+
+  req.auth = {
+    authenticationType: "user_session",
+
+    userId: user._id.toString(),
+
+    sessionId: session._id.toString(),
+
+    organizationId:
+      organization?._id?.toString() ?? null,
+
+    tenantId:
+      organization?.tenantId ?? null,
+
+    membershipId:
+      membership?._id?.toString() ?? null,
+
+    role:
+      membership?.role ?? null,
+
+    assuranceLevel:
+      session.assuranceLevel ?? null,
+
+    /*
+     * Internal references.
+     *
+     * These are available to downstream middleware
+     * and services but must never be serialized
+     * directly to API clients.
+     */
+    _session: session,
+    _user: user,
+    _organization: organization,
+    _membership: membership,
+  };
+
+  return true;
+}
+
+async function dualAuthMiddleware(
+  req,
+  res,
+  next
+) {
+  if (req.method === "OPTIONS") {
+    return next();
+  }
+
+  try {
+    /*
+     * Browser authentication takes precedence.
+     */
+    const sessionAuthenticated =
+      await trySessionAuth(req);
+
+    if (sessionAuthenticated) {
+      return next();
+    }
+
+    /*
+     * No usable browser session.
+     *
+     * Fall back to the existing machine HMAC
+     * authentication middleware.
+     */
+    return authMiddleware(
+      req,
+      res,
+      next
+    );
+  } catch (error) {
+    console.error(
+      "[dual-auth] Authentication failed:",
+      error.message
+    );
+
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+}
+
+module.exports = dualAuthMiddleware;
+
+
+============================================================
+FILE: middleware\sessionAuthMiddleware.js
+============================================================
+"use strict";
+
+const { userRepository, organizationMembershipRepository } = require("../persistence/repositories");
+const Organization = require("../models/Organization");
+
+const {
+  validateSession,
+  extractRawToken,
+} = require("../services/identity/sessionService");
+
+async function sessionAuthMiddleware(req, res, next) {
+  if (req.method === "OPTIONS") {
+    return next();
+  }
+
+  let rawToken;
+
+  try {
+    rawToken = extractRawToken(req);
+  } catch {
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+
+  if (!rawToken) {
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+
+  let sessionResult;
+
+  try {
+    sessionResult = await validateSession(rawToken);
+  } catch {
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+
+  if (!sessionResult.valid) {
+    const codeMap = {
+      SESSION_REVOKED: "SESSION_REVOKED",
+      SESSION_IDLE_EXPIRED: "SESSION_EXPIRED",
+      SESSION_ABSOLUTE_EXPIRED: "SESSION_EXPIRED",
+    };
+
+    return res.status(401).json({
+      error: "Not authenticated",
+      code:
+        codeMap[sessionResult.reason] ||
+        "NOT_AUTHENTICATED",
+    });
+  }
+
+  const { session } = sessionResult;
+
+  let user;
+
+  try {
+    user = await userRepository.findById(session.userId);
+  } catch {
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+
+  if (!user) {
+    return res.status(401).json({
+      error: "Not authenticated",
+      code: "NOT_AUTHENTICATED",
+    });
+  }
+
+  if (
+    user.status === "suspended" ||
+    user.status === "disabled"
+  ) {
+    return res.status(403).json({
+      error: "Account access denied",
+      code: "ACCOUNT_INACTIVE",
+    });
+  }
+
+  let membership = null;
+  let organization = null;
+
+  if (session.activeOrganizationId) {
+    membership =
+      await organizationMembershipRepository.findOne({
+        userId: user._id,
+        organizationId:
+          session.activeOrganizationId,
+        status: "active",
+      });
+
+    if (membership) {
+      organization =
+        await Organization.findOne({
+          _id: membership.organizationId,
+          status: "active",
+        });
+    }
+
+    /*
+     * Fail closed if the session references an organization
+     * that the user can no longer access.
+     *
+     * This protects against:
+     * - suspended memberships
+     * - removed memberships
+     * - suspended/archived organizations
+     * - stale sessions
+     */
+    if (!membership || !organization) {
+      return res.status(403).json({
+        error: "Organization access denied",
+        code: "ORGANIZATION_ACCESS_DENIED",
+      });
+    }
+  }
+
+  req.auth = {
+    authenticationType: "user_session",
+
+    userId: user._id,
+    sessionId: session._id,
+
+    organizationId:
+      organization?._id || null,
+
+    tenantId:
+      organization?.tenantId || null,
+
+    membershipId:
+      membership?._id || null,
+
+    role:
+      membership?.role || null,
+
+    assuranceLevel:
+      session.assuranceLevel,
+
+    /*
+     * Internal references for downstream middleware/services.
+     * These must never be serialized directly to clients.
+     */
+    _session: session,
+    _user: user,
+    _organization: organization,
+    _membership: membership,
+  };
+
+  return next();
+}
+
+module.exports = {
+  sessionAuthMiddleware,
+};
+
+
+============================================================
+FILE: middleware\csrfMiddleware.js
+============================================================
+"use strict";
+
+const crypto = require("crypto");
+const { userSessionRepository } = require("../persistence/repositories");
+const { deriveCsrfToken } = require("../services/identity/csrfHelper");
+const { record: auditRecord } = require("../services/identity/identityAuditService");
+const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../constants/authEvents");
+
+const PRODUCTION_FRONTEND = "https://autonomous-incident-recovery-agent-ten.vercel.app";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Public browser auth routes that establish a session — no CSRF token available yet
+const CSRF_EXEMPT_PATHS = new Set([
+  "/api/v1/auth/register",
+  "/api/v1/auth/login",
+]);
+
+function generateCsrfSecret() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+/** Constant-time comparison of two hex CSRF tokens. */
+function validateCsrfToken(secret, provided) {
+  const expected = deriveCsrfToken(secret);
+  if (expected.length !== provided.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(provided, "hex"));
+  } catch {
+    return false;
+  }
+}
+
+function getAllowedOrigins() {
+  const raw = process.env.CORS_ORIGINS || `http://localhost:5173,http://localhost:3000,${PRODUCTION_FRONTEND}`;
+  return new Set(raw.split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean));
+}
+
+/** Attach a CSRF secret to a new session and return the browser-visible token. */
+async function attachCsrfSecret(session) {
+  const secret = generateCsrfSecret();
+  await userSessionRepository.updateOne({ _id: session._id }, { csrfSecret: secret });
+  return deriveCsrfToken(secret);
+}
+
+/** Get the browser-visible CSRF token for an active session. */
+async function getCsrfTokenForSession(sessionId) {
+  const session = await userSessionRepository.findById(sessionId, { includeCsrfSecret: true });
+  if (!session || !session.csrfSecret) return null;
+  return deriveCsrfToken(session.csrfSecret);
+}
+
+/**
+ * csrfProtection middleware.
+ *
+ * Applied only to cookie-authenticated browser mutations.
+ * Machine HMAC routes, public auth endpoints and safe methods are bypassed.
+ *
+ * The middleware runs AFTER sessionAuthMiddleware, so req.auth is populated.
+ * It must NOT run on machine-auth routes (/api/v1/tenants/:tenantId/*).
+ */
+function csrfProtection(req, res, next) {
+  // Safe HTTP methods never mutate state
+  if (SAFE_METHODS.has(req.method)) return next();
+
+  // Public register/login are exempt — no session exists yet at that point
+  if (CSRF_EXEMPT_PATHS.has(req.path)) return next();
+
+  // Routes not using cookie auth (machine HMAC) must not be blocked here
+  if (!req.auth || req.auth.authenticationType !== "user_session") return next();
+
+  const origin = req.headers["origin"];
+  const allowedOrigins = getAllowedOrigins();
+
+  // Reject mutations from unexpected origins
+  if (origin) {
+    const normalized = origin.replace(/\/+$/, "");
+    if (!allowedOrigins.has(normalized)) {
+      auditRecord(AUTH_EVENT_TYPES.PERMISSION_DENIED, AUTH_EVENT_OUTCOMES.DENIED, {
+        userId: req.auth?.userId,
+        reasonCode: "CSRF_INVALID_ORIGIN",
+        metadata: { origin },
+      }).catch(() => {});
+      return res.status(403).json({ error: "Forbidden: invalid origin", code: "CSRF_INVALID_ORIGIN" });
+    }
+  }
+
+  const provided = req.headers["x-csrf-token"];
+  if (!provided) {
+    auditRecord(AUTH_EVENT_TYPES.PERMISSION_DENIED, AUTH_EVENT_OUTCOMES.DENIED, {
+      userId: req.auth?.userId,
+      reasonCode: "CSRF_MISSING_TOKEN",
+    }).catch(() => {});
+    return res.status(403).json({ error: "Forbidden: missing CSRF token", code: "CSRF_MISSING_TOKEN" });
+  }
+
+  // Load the session's csrfSecret synchronously — we need the DB value
+  userSessionRepository.findById(req.auth.sessionId, { includeCsrfSecret: true })
+    .then((session) => {
+      if (!session || !session.csrfSecret) {
+        return res.status(403).json({ error: "Forbidden: no CSRF state", code: "CSRF_NO_STATE" });
+      }
+      if (!validateCsrfToken(session.csrfSecret, provided)) {
+        auditRecord(AUTH_EVENT_TYPES.PERMISSION_DENIED, AUTH_EVENT_OUTCOMES.DENIED, {
+          userId: req.auth?.userId,
+          sessionId: req.auth?.sessionId,
+          reasonCode: "CSRF_INVALID_TOKEN",
+        }).catch(() => {});
+        return res.status(403).json({ error: "Forbidden: invalid CSRF token", code: "CSRF_INVALID_TOKEN" });
+      }
+      next();
+    })
+    .catch(() => res.status(500).json({ error: "CSRF validation error" }));
+}
+
+module.exports = { csrfProtection, getCsrfTokenForSession };
+
+
+============================================================
+FILE: middleware\environmentContextMiddleware.js
+============================================================
+"use strict";
+
+const mongoose = require(
+  "mongoose"
+);
+
+const EnvironmentService = require(
+  "../services/core/environmentService"
+);
+
+const ENVIRONMENT_HEADER =
+  "x-aira-environment-id";
+
+/**
+ * Resolve an environment explicitly requested by the client.
+ *
+ * The environment MUST belong to the active organization.
+ */
+async function resolveRequestedEnvironment(
+  organizationId,
+  requestedEnvironmentId
+) {
+  if (
+    !mongoose.Types.ObjectId.isValid(
+      requestedEnvironmentId
+    )
+  ) {
+    return {
+      error: {
+        status:
+          400,
+
+        body: {
+          error:
+            "Invalid environment identifier",
+
+          code:
+            "INVALID_ENVIRONMENT_ID",
+        },
+      },
+    };
+  }
+
+  const environment =
+    await EnvironmentService
+      .getByIdForOrganization(
+        requestedEnvironmentId,
+        organizationId
+      );
+
+  if (!environment) {
+    /*
+     * Return 404 regardless of whether the environment exists
+     * under another organization.
+     *
+     * This avoids cross-tenant information leakage.
+     */
+    return {
+      error: {
+        status:
+          404,
+
+        body: {
+          error:
+            "Environment not found",
+
+          code:
+            "ENVIRONMENT_NOT_FOUND",
+        },
+      },
+    };
+  }
+
+  return {
+    environment,
+  };
+}
+
+/**
+ * Required environment context.
+ *
+ * Resolution order:
+ *
+ * 1. X-AIRA-Environment-Id header
+ * 2. ?environmentId=
+ * 3. organization's default environment
+ * 4. first active environment
+ */
+async function environmentContextMiddleware(
+  req,
+  res,
+  next
+) {
+  try {
+    if (!req.context) {
+      return res
+        .status(500)
+        .json({
+          error:
+            "Request context is unavailable",
+
+          code:
+            "REQUEST_CONTEXT_MISSING",
+        });
+    }
+
+    const organizationId =
+      req.context
+        .organizationId;
+
+    if (!organizationId) {
+      return res
+        .status(403)
+        .json({
+          error:
+            "No active organization",
+
+          code:
+            "NO_ACTIVE_ORGANIZATION",
+        });
+    }
+
+    const requestedEnvironmentId =
+      req.headers[
+        ENVIRONMENT_HEADER
+      ] ||
+      req.query
+        .environmentId ||
+      null;
+
+    let environment =
+      null;
+
+    if (
+      requestedEnvironmentId
+    ) {
+      const result =
+        await resolveRequestedEnvironment(
+          organizationId,
+          requestedEnvironmentId
+        );
+
+      if (result.error) {
+        return res
+          .status(
+            result.error
+              .status
+          )
+          .json(
+            result.error
+              .body
+          );
+      }
+
+      environment =
+        result.environment;
+    }
+
+    /*
+     * No explicit environment requested.
+     * Resolve organization's configured default.
+     */
+    if (!environment) {
+      environment =
+        await EnvironmentService
+          .getDefaultForOrganization(
+            req.context
+              .organization
+          );
+    }
+
+    if (!environment) {
+      return res
+        .status(409)
+        .json({
+          error:
+            "Organization has no active environment",
+
+          code:
+            "NO_ACTIVE_ENVIRONMENT",
+        });
+    }
+
+    req.context
+      .environmentId =
+      environment._id
+        .toString();
+
+    req.context
+      .environment =
+      environment;
+
+    /*
+     * Helpful for debugging and frontend validation.
+     */
+    res.setHeader(
+      "X-AIRA-Environment-Id",
+      environment._id
+        .toString()
+    );
+
+    return next();
+  } catch (error) {
+    console.error(
+      "[environment-context] Failed:",
+      error.message
+    );
+
+    return next(error);
+  }
+}
+
+/**
+ * Optional environment context.
+ *
+ * Organization-level endpoints do not always need an
+ * environment. When no environment is requested this
+ * middleware simply continues.
+ */
+async function optionalEnvironmentContextMiddleware(
+  req,
+  res,
+  next
+) {
+  try {
+    if (
+      !req.context
+        ?.organizationId
+    ) {
+      return next();
+    }
+
+    const requestedEnvironmentId =
+      req.headers[
+        ENVIRONMENT_HEADER
+      ] ||
+      req.query
+        .environmentId ||
+      null;
+
+    if (
+      !requestedEnvironmentId
+    ) {
+      return next();
+    }
+
+    const result =
+      await resolveRequestedEnvironment(
+        req.context
+          .organizationId,
+        requestedEnvironmentId
+      );
+
+    if (result.error) {
+      return res
+        .status(
+          result.error.status
+        )
+        .json(
+          result.error.body
+        );
+    }
+
+    req.context
+      .environmentId =
+      result.environment
+        ._id
+        .toString();
+
+    req.context
+      .environment =
+      result.environment;
+
+    res.setHeader(
+      "X-AIRA-Environment-Id",
+      result.environment
+        ._id
+        .toString()
+    );
+
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+}
+
+module.exports = {
+  environmentContextMiddleware,
+  optionalEnvironmentContextMiddleware,
+  ENVIRONMENT_HEADER,
+};
+
+
+============================================================
+FILE: persistence\repositories\index.js
+============================================================
+"use strict";
+
+// ============================================================================
+// AIRA PERSISTENCE REPOSITORY FACTORY
+// ============================================================================
+//
+// Phase 13 — Enterprise Data Architecture
+//
+// Responsibilities:
+//
+// - expose database-neutral repository instances
+// - keep MongoDB authoritative before PostgreSQL cutover
+// - allow explicit PostgreSQL provider selection
+// - enable controlled Mongo-primary/PostgreSQL-shadow reads
+// - preserve provider-specific transaction semantics
+// - preserve provider-specific identifier policies
+//
+// IMPORTANT:
+//
+// MIGRATION_MODE=shadow does NOT make PostgreSQL authoritative.
+//
+// In shadow mode:
+//
+// MongoDB = client-visible primary
+// PostgreSQL = comparison-only secondary
+//
+// ============================================================================
+
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const provider =
+  String(
+    process.env
+      .PERSISTENCE_PROVIDER ||
+    "mongo"
+  )
+    .trim()
+    .toLowerCase();
+
+const migrationMode =
+  String(
+    process.env
+      .MIGRATION_MODE ||
+    "disabled"
+  )
+    .trim()
+    .toLowerCase();
+
+const supportedProviders =
+  new Set([
+    "mongo",
+    "postgres",
+  ]);
+
+if (
+  !supportedProviders
+    .has(
+      provider
+    )
+) {
+  throw Object.assign(
+    new Error(
+      `Unsupported persistence provider: ${provider}`
+    ),
+    {
+      code:
+        "PERSISTENCE_PROVIDER_INVALID",
+    }
+  );
+}
+
+
+// ============================================================================
+// BUILD ACTIVE REPOSITORY SET
+// ============================================================================
+
+let repositories;
+
+if (
+  provider ===
+  "postgres"
+) {
+  repositories =
+    buildPostgresRepositories();
+} else {
+  repositories =
+    buildMongoRepositories();
+
+  /*
+   * --------------------------------------------------------------------------
+   * PHASE 13.5C — SHADOW READS
+   * --------------------------------------------------------------------------
+   *
+   * Mongo remains authoritative.
+   *
+   * We wrap only repositories that have explicitly completed shadow-read
+   * implementation and verification.
+   *
+   * PostgreSQL repository construction itself does not establish a database
+   * connection because AIRA's PostgreSQL pool is lazy.
+   * --------------------------------------------------------------------------
+   */
+  if (
+    migrationMode ===
+    "shadow"
+  ) {
+    repositories =
+      applyShadowRepositories(
+        repositories
+      );
+  }
+}
+
+
+// ============================================================================
+// PUBLIC EXPORTS
+// ============================================================================
+
+module.exports = {
+  ...repositories,
+
+  persistenceProvider:
+    provider,
+
+  migrationMode,
+};
+
+
+// ============================================================================
+// MONGO REPOSITORIES
+// ============================================================================
+
+function buildMongoRepositories() {
+  const MongoUserRepository =
+    require(
+      "../mongo/MongoUserRepository"
+    );
+
+  const MongoPasswordCredentialRepository =
+    require(
+      "../mongo/MongoPasswordCredentialRepository"
+    );
+
+  const MongoOrganizationMembershipRepository =
+    require(
+      "../mongo/MongoOrganizationMembershipRepository"
+    );
+
+  const MongoOrganizationRepository = require("../mongo/MongoOrganizationRepository");
+  const MongoEnvironmentRepository = require("../mongo/MongoEnvironmentRepository");
+  const MongoTenantConfigRepository = require("../mongo/MongoTenantConfigRepository");
+
+  const MongoUserSessionRepository =
+    require(
+      "../mongo/MongoUserSessionRepository"
+    );
+
+  const MongoIncidentRepository =
+    require(
+      "../mongo/MongoIncidentRepository"
+    );
+
+  const MongoIncidentEventRepository =
+    require(
+      "../mongo/MongoIncidentEventRepository"
+    );
+
+  const MongoIncidentLifecycleRepository =
+    require(
+      "../mongo/MongoIncidentLifecycleRepository"
+    );
+
+  const MongoSignalRepository =
+    require(
+      "../mongo/MongoSignalRepository"
+    );
+
+  const MongoSignalCorrelationRepository =
+    require(
+      "../mongo/MongoSignalCorrelationRepository"
+    );
+
+  const MongoCorrelationTopologyRepository =
+    require(
+      "../mongo/MongoCorrelationTopologyRepository"
+    );
+
+  const MongoAgentIntelligenceRunRepository =
+    require(
+      "../mongo/MongoAgentIntelligenceRunRepository"
+    );
+
+  const MongoIncidentDiagnosisRepository =
+    require(
+      "../mongo/MongoIncidentDiagnosisRepository"
+    );
+
+  const MongoDecisionTraceRepository =
+    require(
+      "../mongo/MongoDecisionTraceRepository"
+    );
+
+  const MongoRecoveryDecisionRepository =
+    require(
+      "../mongo/MongoRecoveryDecisionRepository"
+    );
+
+  const MongoExecutionAuthorizationRepository =
+    require(
+      "../mongo/MongoExecutionAuthorizationRepository"
+    );
+
+  const MongoRuntimeRecoveryCheckpointRepository =
+    require(
+      "../mongo/MongoRuntimeRecoveryCheckpointRepository"
+    );
+
+  const MongoApprovalRepository =
+    require(
+      "../mongo/MongoApprovalRepository"
+    );
+
+  const MongoAuditRepository =
+    require(
+      "../mongo/MongoAuditRepository"
+    );
+
+  const MongoPolicyRepository =
+    require(
+      "../mongo/MongoPolicyRepository"
+    );
+
+  const MongoWorkflowOutboxRepository =
+    require(
+      "../mongo/MongoWorkflowOutboxRepository"
+    );
+
+  const MongoPersistenceTransactionManager =
+    require(
+      "../transactions/MongoPersistenceTransactionManager"
+    );
+
+  const MongoIdentifierPolicy =
+    require(
+      "../identifiers/MongoIdentifierPolicy"
+    );
+
+  return {
+    userRepository:
+      new MongoUserRepository(),
+
+    passwordCredentialRepository:
+      new MongoPasswordCredentialRepository(),
+
+    organizationMembershipRepository:
+      new MongoOrganizationMembershipRepository(),
+
+    organizationRepository: new MongoOrganizationRepository(),
+    environmentRepository: new MongoEnvironmentRepository(),
+    tenantConfigRepository: new MongoTenantConfigRepository(),
+
+    userSessionRepository:
+      new MongoUserSessionRepository(),
+
+    incidentRepository:
+      new MongoIncidentRepository(),
+
+    incidentEventRepository:
+      new MongoIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new MongoIncidentLifecycleRepository(),
+
+    signalRepository:
+      new MongoSignalRepository(),
+
+    signalCorrelationRepository:
+      new MongoSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new MongoCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new MongoAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new MongoIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new MongoDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new MongoRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new MongoExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new MongoRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new MongoApprovalRepository(),
+
+    auditRepository:
+      new MongoAuditRepository(),
+
+    policyRepository:
+      new MongoPolicyRepository(),
+
+    workflowOutboxRepository:
+      new MongoWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new MongoPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new MongoIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// POSTGRESQL REPOSITORIES
+// ============================================================================
+
+function buildPostgresRepositories() {
+  const PostgresUserRepository =
+    require(
+      "../postgres/PostgresUserRepository"
+    );
+
+  const PostgresPasswordCredentialRepository =
+    require(
+      "../postgres/PostgresPasswordCredentialRepository"
+    );
+
+  const PostgresOrganizationMembershipRepository =
+    require(
+      "../postgres/PostgresOrganizationMembershipRepository"
+    );
+
+  const PostgresOrganizationRepository = require("../postgres/PostgresOrganizationRepository");
+  const PostgresEnvironmentRepository = require("../postgres/PostgresEnvironmentRepository");
+  const PostgresTenantConfigRepository = require("../postgres/PostgresTenantConfigRepository");
+
+  const PostgresUserSessionRepository =
+    require(
+      "../postgres/PostgresUserSessionRepository"
+    );
+
+  const PostgresIncidentRepository =
+    require(
+      "../postgres/PostgresIncidentRepository"
+    );
+
+  const PostgresIncidentEventRepository =
+    require(
+      "../postgres/PostgresIncidentEventRepository"
+    );
+
+  const PostgresIncidentLifecycleRepository =
+    require(
+      "../postgres/PostgresIncidentLifecycleRepository"
+    );
+
+  const PostgresSignalRepository =
+    require(
+      "../postgres/PostgresSignalRepository"
+    );
+
+  const PostgresSignalCorrelationRepository =
+    require(
+      "../postgres/PostgresSignalCorrelationRepository"
+    );
+
+  const PostgresCorrelationTopologyRepository =
+    require(
+      "../postgres/PostgresCorrelationTopologyRepository"
+    );
+
+  const PostgresAgentIntelligenceRunRepository =
+    require(
+      "../postgres/PostgresAgentIntelligenceRunRepository"
+    );
+
+  const PostgresIncidentDiagnosisRepository =
+    require(
+      "../postgres/PostgresIncidentDiagnosisRepository"
+    );
+
+  const PostgresDecisionTraceRepository =
+    require(
+      "../postgres/PostgresDecisionTraceRepository"
+    );
+
+  const PostgresRecoveryDecisionRepository =
+    require(
+      "../postgres/PostgresRecoveryDecisionRepository"
+    );
+
+  const PostgresExecutionAuthorizationRepository =
+    require(
+      "../postgres/PostgresExecutionAuthorizationRepository"
+    );
+
+  const PostgresRuntimeRecoveryCheckpointRepository =
+    require(
+      "../postgres/PostgresRuntimeRecoveryCheckpointRepository"
+    );
+
+  const PostgresApprovalRepository =
+    require(
+      "../postgres/PostgresApprovalRepository"
+    );
+
+  const PostgresAuditRepository =
+    require(
+      "../postgres/PostgresAuditRepository"
+    );
+
+  const PostgresPolicyRepository =
+    require(
+      "../postgres/PostgresPolicyRepository"
+    );
+
+  const PostgresWorkflowOutboxRepository =
+    require(
+      "../postgres/PostgresWorkflowOutboxRepository"
+    );
+
+  const PostgresPersistenceTransactionManager =
+    require(
+      "../transactions/PostgresPersistenceTransactionManager"
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * This concrete implementation actually exists at:
+   *
+   * persistence/postgres/PostgresIdentifierPolicy.js
+   *
+   * Do NOT instantiate PersistenceIdentifierPolicy here.
+   * PersistenceIdentifierPolicy is the database-neutral contract.
+   */
+  const PostgresIdentifierPolicy =
+    require(
+      "../postgres/PostgresIdentifierPolicy"
+    );
+
+  return {
+    userRepository:
+      new PostgresUserRepository(),
+
+    passwordCredentialRepository:
+      new PostgresPasswordCredentialRepository(),
+
+    organizationMembershipRepository:
+      new PostgresOrganizationMembershipRepository(),
+
+    organizationRepository: new PostgresOrganizationRepository(),
+    environmentRepository: new PostgresEnvironmentRepository(),
+    tenantConfigRepository: new PostgresTenantConfigRepository(),
+
+    userSessionRepository:
+      new PostgresUserSessionRepository(),
+
+    incidentRepository:
+      new PostgresIncidentRepository(),
+
+    incidentEventRepository:
+      new PostgresIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new PostgresIncidentLifecycleRepository(),
+
+    signalRepository:
+      new PostgresSignalRepository(),
+
+    signalCorrelationRepository:
+      new PostgresSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new PostgresCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new PostgresAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new PostgresIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new PostgresDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new PostgresRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new PostgresExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new PostgresRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new PostgresApprovalRepository(),
+
+    auditRepository:
+      new PostgresAuditRepository(),
+
+    policyRepository:
+      new PostgresPolicyRepository(),
+
+    workflowOutboxRepository:
+      new PostgresWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new PostgresPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new PostgresIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// PHASE 13.5C SHADOW REPOSITORIES
+// ============================================================================
+
+function applyShadowRepositories(
+  primaryRepositories
+) {
+  if (
+    !primaryRepositories
+  ) {
+    throw Object.assign(
+      new Error(
+        "Primary repositories are required for shadow mode"
+      ),
+      {
+        code:
+          "SHADOW_PRIMARY_REPOSITORIES_REQUIRED",
+      }
+    );
+  }
+
+  const postgresRepositories =
+    buildPostgresRepositories();
+
+  const ShadowIncidentRepository =
+    require(
+      "../migration/ShadowIncidentRepository"
+    );
+
+  const ShadowIncidentEventRepository =
+    require(
+      "../migration/ShadowIncidentEventRepository"
+    );
+
+  const ShadowIncidentLifecycleRepository =
+    require(
+      "../migration/ShadowIncidentLifecycleRepository"
+    );
+
+  const ShadowSignalRepository =
+    require(
+      "../migration/ShadowSignalRepository"
+    );
+
+  return {
+    ...primaryRepositories,
+
+    incidentRepository:
+      new ShadowIncidentRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentRepository,
+      }),
+
+    incidentEventRepository:
+      new ShadowIncidentEventRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentEventRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentEventRepository,
+      }),
+
+    incidentLifecycleRepository:
+      new ShadowIncidentLifecycleRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentLifecycleRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentLifecycleRepository,
+      }),
+
+    signalRepository:
+      new ShadowSignalRepository({
+        primaryRepository:
+          primaryRepositories
+            .signalRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .signalRepository,
+      }),
+  };
+}
+
+
+// ============================================================================
+// FACTORY EXPORTS
+// ============================================================================
+//
+// These are useful for:
+//
+// - migration tests
+// - provider-specific tests
+// - shadow tests
+// - cutover validation
+//
+// ============================================================================
+
+module.exports
+  .buildMongoRepositories =
+  buildMongoRepositories;
+
+module.exports
+  .buildPostgresRepositories =
+  buildPostgresRepositories;
+
+module.exports
+  .applyShadowRepositories =
+  applyShadowRepositories;
+
+
+============================================================
+FILE: persistence\repositories\UserRepository.js
+============================================================
+"use strict";
+
+class UserRepository {
+  async findOne() { throw new Error("UserRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("UserRepository.findById() is not implemented"); }
+  async findMany() { throw new Error("UserRepository.findMany() is not implemented"); }
+  async create() { throw new Error("UserRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("UserRepository.updateOne() is not implemented"); }
+  async updateMany() { throw new Error("UserRepository.updateMany() is not implemented"); }
+  async save() { throw new Error("UserRepository.save() is not implemented"); }
+}
+
+module.exports = UserRepository;
+
+
+============================================================
+FILE: persistence\repositories\UserSessionRepository.js
+============================================================
+"use strict";
+
+class UserSessionRepository {
+  async findOne() { throw new Error("UserSessionRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("UserSessionRepository.findById() is not implemented"); }
+  async findMany() { throw new Error("UserSessionRepository.findMany() is not implemented"); }
+  async create() { throw new Error("UserSessionRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("UserSessionRepository.updateOne() is not implemented"); }
+  async updateMany() { throw new Error("UserSessionRepository.updateMany() is not implemented"); }
+  async save() { throw new Error("UserSessionRepository.save() is not implemented"); }
+  async deleteMany() { throw new Error("UserSessionRepository.deleteMany() is not implemented"); }
+}
+
+module.exports = UserSessionRepository;
+
+
+============================================================
+FILE: persistence\repositories\PasswordCredentialRepository.js
+============================================================
+"use strict";
+
+class PasswordCredentialRepository {
+  async findOne() { throw new Error("PasswordCredentialRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("PasswordCredentialRepository.findById() is not implemented"); }
+  async create() { throw new Error("PasswordCredentialRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("PasswordCredentialRepository.updateOne() is not implemented"); }
+  async updateMany() { throw new Error("PasswordCredentialRepository.updateMany() is not implemented"); }
+  async save() { throw new Error("PasswordCredentialRepository.save() is not implemented"); }
+}
+
+module.exports = PasswordCredentialRepository;
+
+
+============================================================
+FILE: persistence\repositories\OrganizationRepository.js
+============================================================
+"use strict";
+
+class OrganizationRepository {
+  async findOne() { throw new Error("OrganizationRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("OrganizationRepository.findById() is not implemented"); }
+  async findMany() { throw new Error("OrganizationRepository.findMany() is not implemented"); }
+  async create() { throw new Error("OrganizationRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("OrganizationRepository.updateOne() is not implemented"); }
+  async save() { throw new Error("OrganizationRepository.save() is not implemented"); }
+}
+
+module.exports = OrganizationRepository;
+
+
+============================================================
+FILE: persistence\repositories\OrganizationMembershipRepository.js
+============================================================
+"use strict";
+
+class OrganizationMembershipRepository {
+  async findOne() { throw new Error("OrganizationMembershipRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("OrganizationMembershipRepository.findById() is not implemented"); }
+  async findMany() { throw new Error("OrganizationMembershipRepository.findMany() is not implemented"); }
+  async create() { throw new Error("OrganizationMembershipRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("OrganizationMembershipRepository.updateOne() is not implemented"); }
+  async updateMany() { throw new Error("OrganizationMembershipRepository.updateMany() is not implemented"); }
+  async save() { throw new Error("OrganizationMembershipRepository.save() is not implemented"); }
+}
+
+module.exports = OrganizationMembershipRepository;
+
+
+============================================================
+FILE: persistence\repositories\EnvironmentRepository.js
+============================================================
+"use strict";
+
+class EnvironmentRepository {
+  async findOne() { throw new Error("EnvironmentRepository.findOne() is not implemented"); }
+  async findById() { throw new Error("EnvironmentRepository.findById() is not implemented"); }
+  async findMany() { throw new Error("EnvironmentRepository.findMany() is not implemented"); }
+  async create() { throw new Error("EnvironmentRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("EnvironmentRepository.updateOne() is not implemented"); }
+  async save() { throw new Error("EnvironmentRepository.save() is not implemented"); }
+}
+
+module.exports = EnvironmentRepository;
+
+
+============================================================
+FILE: persistence\repositories\TenantConfigRepository.js
+============================================================
+"use strict";
+
+class TenantConfigRepository {
+  async findOne() { throw new Error("TenantConfigRepository.findOne() is not implemented"); }
+  async findMany() { throw new Error("TenantConfigRepository.findMany() is not implemented"); }
+  async create() { throw new Error("TenantConfigRepository.create() is not implemented"); }
+  async updateOne() { throw new Error("TenantConfigRepository.updateOne() is not implemented"); }
+  async save() { throw new Error("TenantConfigRepository.save() is not implemented"); }
+}
+
+module.exports = TenantConfigRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresIdentityRepositoryBase.js
+============================================================
+"use strict";
+
+const PostgresIdentityRepositorySupport = require("./PostgresIdentityRepositorySupport");
+
+function camelize(value) {
+  return value.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
+}
+
+function parseValue(column, value) {
+  if (["metadata", "project_ids", "authentication_methods", "settings", "api_keys", "admins", "retention", "document"].includes(column)) {
+    if (typeof value === "string") {
+      try { return JSON.parse(value); } catch (_error) { return value; }
+    }
+  }
+  return value;
+}
+
+class PostgresIdentityRepositoryBase {
+  constructor(options, config) {
+    this.support = options.support || new PostgresIdentityRepositorySupport(options);
+    this.table = config.table;
+    this.columns = config.columns;
+    this.jsonColumns = config.jsonColumns || [];
+    this.hiddenColumns = config.hiddenColumns || [];
+    this.secretOptions = config.secretOptions || {};
+    this.foreignKeyColumns = config.foreignKeyColumns || {};
+    this.identifierColumns = config.identifierColumns;
+  }
+
+  async resolveForeignKey(transaction, column, value) {
+    if (value === null || value === undefined || !this.foreignKeyColumns[column]) return value;
+    const table = this.foreignKeyColumns[column];
+    const result = await this.support.query(
+      transaction,
+      `SELECT id, public_id, legacy_mongo_id FROM ${table} WHERE public_id = $1 OR legacy_mongo_id = $1 OR id::text = $1 LIMIT 1`,
+      [PostgresIdentityRepositorySupport.identifier(value)]
+    );
+    if (!result.rows[0]) {
+      throw Object.assign(new Error(`PostgreSQL foreign key not found: ${value}`), { code: "POSTGRES_IDENTITY_REFERENCE_NOT_FOUND" });
+    }
+    return result.rows[0].id;
+  }
+
+  async mapForeignKey(transaction, column, value) {
+    if (value === null || value === undefined || !this.foreignKeyColumns[column]) return value;
+    const table = this.foreignKeyColumns[column];
+    const result = await this.support.query(
+      transaction,
+      `SELECT id, public_id, legacy_mongo_id FROM ${table} WHERE id = $1 OR public_id = $1 OR legacy_mongo_id = $1 LIMIT 1`,
+      [value]
+    );
+    const row = result.rows[0];
+    return row ? row.public_id || row.legacy_mongo_id || String(row.id) : value;
+  }
+
+  async mapRow(row, options = {}, transaction = null) {
+    if (!row) return null;
+    const result = { _id: row.public_id || row.legacy_mongo_id || String(row.id) };
+    for (const column of this.columns) {
+      const secretOption = this.secretOptions[column];
+      if (this.hiddenColumns?.includes(column) && options.includeSecrets !== true && (!secretOption || options[secretOption] !== true)) continue;
+      if (row[column] !== undefined) {
+        const value = await this.mapForeignKey(transaction, column, row[column]);
+        result[camelize(column)] = parseValue(column, value);
+      }
+    }
+    if (row.legacy_mongo_id) result.legacyMongoId = row.legacy_mongo_id;
+    return result;
+  }
+
+  async buildFilter(filter = {}, transaction = null) {
+    const mapped = {};
+    const identifier = filter._id ?? filter.id ?? filter.publicId ?? filter.legacyMongoId;
+    if (identifier !== undefined) mapped._id = identifier;
+    for (const column of this.columns) {
+      const key = camelize(column);
+      if (filter[key] !== undefined && (typeof filter[key] !== "object" || filter[key] === null || Array.isArray(filter[key]))) {
+        mapped[key] = await this.resolveForeignKey(transaction, column, filter[key]);
+      }
+    }
+    const where = PostgresIdentityRepositorySupport.where(mapped, Object.fromEntries(
+      Object.keys(mapped).map((key) => [key, key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)])
+    ), this.identifierColumns);
+    for (const column of this.columns) {
+      const key = camelize(column);
+      const condition = filter[key];
+      if (!condition || typeof condition !== "object" || Array.isArray(condition)) continue;
+      if (condition.$ne !== undefined) {
+        const value = await this.resolveForeignKey(transaction, column, condition.$ne);
+        where.text += ` AND ${column} <> $${where.values.length + 1}`;
+        where.values.push(value);
+      }
+      if (condition.$in !== undefined && Array.isArray(condition.$in)) {
+        const placeholders = [];
+        for (const value of condition.$in) {
+          where.values.push(await this.resolveForeignKey(transaction, column, value));
+          placeholders.push(`$${where.values.length}`);
+        }
+        where.text += ` AND ${column} IN (${placeholders.join(", ")})`;
+      }
+    }
+    return where;
+  }
+
+  async findOne(filter = {}, options = {}, transaction = null) {
+    if (options?.kind === "postgres" || options?.client) {
+      transaction = options;
+      options = {};
+    }
+    const where = await this.buildFilter(filter, transaction);
+    const result = await this.support.query(transaction, `SELECT * FROM ${this.table} WHERE ${where.text} LIMIT 1`, where.values);
+    return this.mapRow(result.rows[0], options, transaction);
+  }
+
+  async findMany(filter = {}, options = {}, transaction = null) {
+    if (options?.kind === "postgres" || options?.client) {
+      transaction = options;
+      options = {};
+    }
+    const where = await this.buildFilter(filter, transaction);
+    const result = await this.support.query(transaction, `SELECT * FROM ${this.table} WHERE ${where.text} ORDER BY created_at ASC`, where.values);
+    return Promise.all(result.rows.map((row) => this.mapRow(row, options, transaction)));
+  }
+
+  async create(data, transaction = null) {
+    data = Array.isArray(data) ? data[0] : data;
+    const values = [];
+    const names = [];
+    const placeholders = [];
+    for (const column of this.columns) {
+      const key = camelize(column);
+      const rawValue = column === "public_id" ? data._id || data.publicId : data[key];
+      const value = await this.resolveForeignKey(transaction, column, rawValue);
+      if (value === undefined && column !== "legacy_mongo_id") continue;
+      names.push(column);
+      values.push(value === undefined ? null : this.jsonColumns.includes(column) ? JSON.stringify(value) : value);
+      placeholders.push(`$${values.length}${this.jsonColumns.includes(column) ? "::jsonb" : ""}`);
+    }
+    const result = await this.support.query(transaction, `INSERT INTO ${this.table} (${names.join(", ")}) VALUES (${placeholders.join(", ")}) RETURNING *`, values);
+    return this.mapRow(result.rows[0], {}, transaction);
+  }
+
+  async save(document, transaction = null) {
+    if (!document || (!document._id && !document.id)) {
+      throw Object.assign(new Error("Postgres identity save requires a persisted document"), { code: "INVALID_POSTGRES_DOCUMENT" });
+    }
+    const values = [];
+    const assignments = [];
+    for (const column of this.columns) {
+      if (["public_id", "legacy_mongo_id"].includes(column)) continue;
+      const key = camelize(column);
+      if (document[key] === undefined) continue;
+      const value = await this.resolveForeignKey(transaction, column, document[key]);
+      values.push(this.jsonColumns.includes(column) ? JSON.stringify(value) : value);
+      assignments.push(`${column} = $${values.length}${this.jsonColumns.includes(column) ? "::jsonb" : ""}`);
+    }
+    if (!assignments.length) return document;
+    const identifier = PostgresIdentityRepositorySupport.identifier(document._id || document.id);
+    values.push(identifier);
+    const identifiers = (this.identifierColumns || ["public_id", "legacy_mongo_id", "id::text"])
+      .map((column) => `${column} = $${values.length}`)
+      .join(" OR ");
+    const result = await this.support.query(transaction, `UPDATE ${this.table} SET ${assignments.join(", ")} WHERE ${identifiers} RETURNING *`, values);
+    return this.mapRow(result.rows[0], {}, transaction) || document;
+  }
+
+  async updateOne(filter = {}, update = {}, options = {}, transaction = null) {
+    if (options?.kind === "postgres" || options?.client) transaction = options;
+    const where = await this.buildFilter(filter, transaction);
+    const assignments = await this.buildAssignments(update, transaction);
+    if (!assignments.text) return { acknowledged: true, matchedCount: 0, modifiedCount: 0 };
+    const offsetWhere = where.text.replace(/\$(\d+)/g, (_match, number) => `$${Number(number) + assignments.values.length}`);
+    const result = await this.support.query(
+      transaction,
+      `UPDATE ${this.table} SET ${assignments.text} WHERE ${offsetWhere}`,
+      assignments.values.concat(where.values)
+    );
+    return { acknowledged: true, matchedCount: result.rowCount, modifiedCount: result.rowCount };
+  }
+
+  async updateMany(filter = {}, update = {}, options = {}, transaction = null) {
+    return this.updateOne(filter, update, options, transaction);
+  }
+
+  async buildAssignments(update = {}, transaction = null) {
+    const assignments = [];
+    const values = [];
+    const set = update.$set || (Object.keys(update).some((key) => key.startsWith("$")) ? {} : update);
+    for (const [key, value] of Object.entries(set)) {
+      const column = this.columns.find((candidate) => camelize(candidate) === key);
+      const dotted = key.split(".");
+      const jsonColumn = this.columns.find((candidate) => camelize(candidate) === dotted[0] && this.jsonColumns.includes(candidate));
+      if (!column && jsonColumn && dotted.length > 1) {
+        values.push(JSON.stringify(value));
+        assignments.push(`${jsonColumn} = jsonb_set(COALESCE(${jsonColumn}, '{}'::jsonb), '{${dotted.slice(1).join(",")}}', $${values.length}::jsonb, true)`);
+        continue;
+      }
+      if (!column) continue;
+      const resolved = await this.resolveForeignKey(transaction, column, value);
+      values.push(this.jsonColumns.includes(column) ? JSON.stringify(resolved) : resolved);
+      assignments.push(`${column} = $${values.length}${this.jsonColumns.includes(column) ? "::jsonb" : ""}`);
+    }
+    for (const [key, amount] of Object.entries(update.$inc || {})) {
+      const column = this.columns.find((candidate) => camelize(candidate) === key);
+      if (!column) continue;
+      values.push(amount);
+      assignments.push(`${column} = ${column} + $${values.length}`);
+    }
+    return { text: assignments.join(", "), values };
+  }
+}
+
+module.exports = PostgresIdentityRepositoryBase;
+
+
+============================================================
+FILE: persistence\postgres\PostgresIdentityRepositorySupport.js
+============================================================
+"use strict";
+
+const { getPostgresPool } = require("./postgresPool");
+const { translatePostgresError } = require("./postgresDomainMapper");
+
+class PostgresIdentityRepositorySupport {
+  constructor(options = {}) {
+    this.pool = options.pool || null;
+  }
+
+  async run(transaction, work) {
+    if (transaction?.kind === "postgres") {
+      return work(transaction.client);
+    }
+
+    const client = await (this.pool || getPostgresPool()).connect();
+    try {
+      return await work(client);
+    } finally {
+      client.release();
+    }
+  }
+
+  async query(transaction, text, values = []) {
+    return this.run(transaction, async (client) => {
+      try {
+        return await client.query(text, values);
+      } catch (error) {
+        throw translatePostgresError(error);
+      }
+    });
+  }
+
+  static identifier(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value.toHexString === "function") return value.toHexString();
+    return String(value);
+  }
+
+  static where(filter = {}, columns = {}, identifierColumns = ["public_id", "legacy_mongo_id", "id::text"]) {
+    const clauses = [];
+    const values = [];
+    let index = 1;
+
+    for (const [key, column] of Object.entries(columns)) {
+      if (filter[key] !== undefined) {
+        clauses.push(`${column} = $${index++}`);
+        values.push(filter[key]);
+      }
+    }
+
+    const identifier = filter._id ?? filter.id ?? filter.publicId ?? filter.legacyMongoId;
+    if (identifier !== undefined) {
+      const identifierClauses = identifierColumns
+        .map((column) => `${column} = $${index}`)
+        .join(" OR ");
+      clauses.push(`(${identifierClauses})`);
+      values.push(PostgresIdentityRepositorySupport.identifier(identifier));
+    }
+
+    return {
+      text: clauses.length ? clauses.join(" AND ") : "TRUE",
+      values,
+    };
+  }
+}
+
+module.exports = PostgresIdentityRepositorySupport;
+
+
+============================================================
+FILE: persistence\postgres\PostgresUserRepository.js
+============================================================
+"use strict";
+
+const UserRepository = require("../repositories/UserRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+class PostgresUserRepository extends UserRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "identity.users",
+      columns: ["public_id", "legacy_mongo_id", "full_name", "email", "normalized_email", "status", "email_verified_at", "primary_organization_id", "last_login_at", "metadata", "created_at", "updated_at"],
+      jsonColumns: ["metadata"],
+      foreignKeyColumns: { primary_organization_id: "tenancy.organizations" },
+    });
+  }
+  findOne(...args) { return this.repository.findOne(...args); }
+  findById(id, ...args) { return this.repository.findOne({ _id: id }, ...args); }
+  findMany(...args) { return this.repository.findMany(...args); }
+  create(...args) { return this.repository.create(...args); }
+  updateOne(...args) { return this.repository.updateOne(...args); }
+  updateMany(...args) { return this.repository.updateMany(...args); }
+  save(...args) { return this.repository.save(...args); }
+}
+
+module.exports = PostgresUserRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresUserSessionRepository.js
+============================================================
+"use strict";
+
+const UserSessionRepository = require("../repositories/UserSessionRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+class PostgresUserSessionRepository extends UserSessionRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "identity.user_sessions",
+      columns: ["public_id", "legacy_mongo_id", "user_id", "active_organization_id", "token_hash", "status", "last_activity_at", "idle_expires_at", "absolute_expires_at", "revoked_at", "revocation_reason", "ip_hash", "user_agent_hash", "device_id", "device_label", "authentication_methods", "assurance_level", "remember_me", "csrf_secret", "metadata", "created_at", "updated_at"],
+      jsonColumns: ["authentication_methods", "metadata"],
+      hiddenColumns: ["token_hash", "ip_hash", "user_agent_hash", "csrf_secret"],
+      secretOptions: {
+        token_hash: "includeTokenHash",
+        csrf_secret: "includeCsrfSecret",
+        ip_hash: "includeNetworkHashes",
+        user_agent_hash: "includeNetworkHashes",
+      },
+      foreignKeyColumns: {
+        user_id: "identity.users",
+        active_organization_id: "tenancy.organizations",
+      },
+    });
+  }
+  findOne(...args) { return this.repository.findOne(...args); }
+  findById(id, ...args) { return this.repository.findOne({ _id: id }, ...args); }
+  findMany(...args) { return this.repository.findMany(...args); }
+  create(...args) { return this.repository.create(...args); }
+  updateOne(...args) { return this.repository.updateOne(...args); }
+  updateMany(...args) { return this.repository.updateMany(...args); }
+  save(...args) { return this.repository.save(...args); }
+  deleteMany(filter = {}, options = {}, transaction = null) {
+    if (options?.kind === "postgres" || options?.client) {
+      transaction = options;
+    }
+    return this.repository.buildFilter(filter, transaction).then((where) =>
+      this.repository.support.query(transaction, `DELETE FROM identity.user_sessions WHERE ${where.text}`, where.values)
+    );
+  }
+}
+
+module.exports = PostgresUserSessionRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresPasswordCredentialRepository.js
+============================================================
+"use strict";
+
+const PasswordCredentialRepository = require("../repositories/PasswordCredentialRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+class PostgresPasswordCredentialRepository extends PasswordCredentialRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "identity.password_credentials",
+      columns: ["legacy_mongo_id", "user_id", "password_hash", "algorithm", "hash_version", "password_changed_at", "failed_attempts", "locked_until", "last_failed_at", "created_at", "updated_at"],
+      hiddenColumns: ["password_hash"],
+      secretOptions: { password_hash: "includePasswordHash" },
+      foreignKeyColumns: { user_id: "identity.users" },
+      identifierColumns: ["legacy_mongo_id", "id::text"],
+    });
+  }
+  findOne(...args) { return this.repository.findOne(...args); }
+  findById(id, ...args) { return this.repository.findOne({ _id: id }, ...args); }
+  create(...args) { return this.repository.create(...args); }
+  updateOne(...args) { return this.repository.updateOne(...args); }
+  updateMany(...args) { return this.repository.updateMany(...args); }
+  save(...args) { return this.repository.save(...args); }
+}
+
+module.exports = PostgresPasswordCredentialRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresOrganizationRepository.js
+============================================================
+"use strict";
+
+const crypto = require("crypto");
+const OrganizationRepository = require("../repositories/OrganizationRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+function normalizeFilter(filter = {}) {
+  const result = { ...filter };
+  if (result.tenantId !== undefined) {
+    result.tenantPublicId = result.tenantId;
+    delete result.tenantId;
+  }
+  return result;
+}
+
+function normalizeData(data = {}) {
+  const result = { ...data };
+  result._id = result._id || result.publicId || crypto.randomUUID();
+  if (result.tenantId !== undefined) {
+    result.tenantPublicId = result.tenantId;
+    delete result.tenantId;
+  }
+  return result;
+}
+
+class PostgresOrganizationRepository extends OrganizationRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "tenancy.organizations",
+      columns: ["public_id", "legacy_mongo_id", "tenant_public_id", "name", "status", "settings", "metadata", "created_by_user_id", "created_by_user_legacy_id", "created_at", "updated_at"],
+      jsonColumns: ["settings", "metadata"],
+      foreignKeyColumns: { created_by_user_id: "identity.users" },
+    });
+  }
+  findOne(filter = {}, ...args) { return this.repository.findOne(normalizeFilter(filter), ...args).then((row) => row && { ...row, tenantId: row.tenantPublicId }); }
+  findById(id, ...args) { return this.findOne({ _id: id }, ...args); }
+  findMany(filter = {}, ...args) { return this.repository.findMany(normalizeFilter(filter), ...args).then((rows) => rows.map((row) => ({ ...row, tenantId: row.tenantPublicId }))); }
+  create(data, ...args) { return this.repository.create(normalizeData(data), ...args).then((row) => row && { ...row, tenantId: row.tenantPublicId }); }
+  updateOne(filter, update, ...args) { return this.repository.updateOne(normalizeFilter(filter), normalizeData(update), ...args); }
+  save(organization, ...args) { return this.repository.save(normalizeData(organization), ...args); }
+}
+
+module.exports = PostgresOrganizationRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresOrganizationMembershipRepository.js
+============================================================
+"use strict";
+
+const OrganizationMembershipRepository = require("../repositories/OrganizationMembershipRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+class PostgresOrganizationMembershipRepository extends OrganizationMembershipRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "identity.organization_memberships",
+      columns: ["public_id", "legacy_mongo_id", "user_id", "organization_id", "role", "status", "project_ids", "invited_by_user_id", "joined_at", "suspended_at", "metadata", "created_at", "updated_at"],
+      jsonColumns: ["project_ids", "metadata"],
+      foreignKeyColumns: {
+        user_id: "identity.users",
+        organization_id: "tenancy.organizations",
+        invited_by_user_id: "identity.users",
+      },
+    });
+  }
+  findOne(...args) { return this.repository.findOne(...args); }
+  findById(id, ...args) { return this.repository.findOne({ _id: id }, ...args); }
+  findMany(...args) { return this.repository.findMany(...args); }
+  create(...args) { return this.repository.create(...args); }
+  updateOne(...args) { return this.repository.updateOne(...args); }
+  updateMany(...args) { return this.repository.updateMany(...args); }
+  save(...args) { return this.repository.save(...args); }
+}
+
+module.exports = PostgresOrganizationMembershipRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresEnvironmentRepository.js
+============================================================
+"use strict";
+
+const crypto = require("crypto");
+const EnvironmentRepository = require("../repositories/EnvironmentRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+function normalizeFilter(filter = {}) {
+  const result = { ...filter };
+  if (result.type !== undefined) {
+    result.environmentType = result.type;
+    delete result.type;
+  }
+  return result;
+}
+
+function normalizeData(data = {}) {
+  const result = { ...data };
+  result._id = result._id || result.publicId || crypto.randomUUID();
+  if (result.type !== undefined) {
+    result.environmentType = result.type;
+    delete result.type;
+  }
+  return result;
+}
+
+function expose(row) {
+  if (!row) return row;
+  const result = { ...row, type: row.environmentType };
+  delete result.environmentType;
+  return result;
+}
+
+class PostgresEnvironmentRepository extends EnvironmentRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "tenancy.environments",
+      columns: ["public_id", "legacy_mongo_id", "organization_id", "tenant_id", "name", "environment_type", "status", "criticality", "description", "settings", "created_by_user_id", "created_by_user_legacy_id", "maintenance_reason", "maintenance_started_at", "archived_at", "archived_by_user_id", "archive_reason", "metadata", "created_at", "updated_at"],
+      jsonColumns: ["settings", "metadata"],
+      foreignKeyColumns: { organization_id: "tenancy.organizations", tenant_id: "tenancy.tenants", created_by_user_id: "identity.users", archived_by_user_id: "identity.users" },
+    });
+  }
+  findOne(filter = {}, ...args) { return this.repository.findOne(normalizeFilter(filter), ...args).then(expose); }
+  findById(id, ...args) { return this.findOne({ _id: id }, ...args); }
+  findMany(filter = {}, ...args) { return this.repository.findMany(normalizeFilter(filter), ...args).then((rows) => rows.map(expose)); }
+  create(data, ...args) { return this.repository.create(normalizeData(data), ...args).then(expose); }
+  updateOne(filter, update, ...args) { return this.repository.updateOne(normalizeFilter(filter), normalizeData(update), ...args); }
+  save(environment, ...args) { return this.repository.save(normalizeData(environment), ...args).then(expose); }
+}
+
+module.exports = PostgresEnvironmentRepository;
+
+
+============================================================
+FILE: persistence\postgres\PostgresTenantConfigRepository.js
+============================================================
+"use strict";
+
+const TenantConfigRepository = require("../repositories/TenantConfigRepository");
+const Base = require("./PostgresIdentityRepositoryBase");
+
+function normalizeFilter(filter = {}) {
+  const result = { ...filter };
+  if (result.tenantId !== undefined) {
+    result.tenantPublicId = result.tenantId;
+    delete result.tenantId;
+  }
+  return result;
+}
+
+function normalizeData(data = {}) {
+  const result = { ...data };
+  if (result.tenantId !== undefined) {
+    result.tenantPublicId = result.tenantId;
+    delete result.tenantId;
+  }
+  return result;
+}
+
+class PostgresTenantConfigRepository extends TenantConfigRepository {
+  constructor(options = {}) {
+    super();
+    this.repository = new Base(options, {
+      table: "tenancy.tenant_configs",
+      columns: ["legacy_mongo_id", "tenant_public_id", "name", "status", "policy_version", "settings", "api_keys", "admins", "retention", "document", "created_at", "updated_at"],
+      jsonColumns: ["settings", "api_keys", "admins", "retention", "document"],
+      hiddenColumns: ["api_keys", "admins", "document"],
+    });
+  }
+  findOne(filter = {}, options = {}, transaction = null) {
+    return this.repository.findOne(normalizeFilter(filter), options, transaction).then((row) => row && { ...row, tenantId: row.tenantPublicId });
+  }
+  findMany(filter = {}, options = {}, transaction = null) {
+    return this.repository.findMany(normalizeFilter(filter), options, transaction).then((rows) => rows.map((row) => ({ ...row, tenantId: row.tenantPublicId })));
+  }
+  create(data, ...args) { return this.repository.create(normalizeData(data), ...args).then((row) => row && { ...row, tenantId: row.tenantPublicId }); }
+  updateOne(filter, update, ...args) { return this.repository.updateOne(normalizeFilter(filter), normalizeData(update), ...args); }
+  save(config, ...args) { return this.repository.save(normalizeData(config), ...args).then((row) => row && { ...row, tenantId: row.tenantPublicId }); }
+}
+
+module.exports = PostgresTenantConfigRepository;
+
+
+============================================================
+FILE: persistence\mongo\MongoIdentityRepositorySupport.js
+============================================================
+"use strict";
+
+function sessionFrom(transaction) {
+  return transaction?.kind === "mongo" ? transaction.session : null;
+}
+
+function applySession(query, transaction) {
+  const session = sessionFrom(transaction);
+  return session && typeof query.session === "function"
+    ? query.session(session)
+    : query;
+}
+
+async function create(model, data, transaction) {
+  const session = sessionFrom(transaction);
+  if (!session) return model.create(data);
+  const [created] = await model.create([data], { session });
+  return created;
+}
+
+async function save(document, transaction, name) {
+  if (!document || typeof document.save !== "function") {
+    throw Object.assign(new Error(`${name}.save() requires a Mongoose document`), {
+      code: "INVALID_MONGO_DOCUMENT",
+    });
+  }
+
+  const session = sessionFrom(transaction);
+  return document.save(session ? { session } : undefined);
+}
+
+function projection(query, options = {}) {
+  if (options.select) return query.select(options.select);
+  return query;
+}
+
+function mutationOptions(options = {}, transaction = null) {
+  if (options?.kind === "mongo" || options?.clientSession) {
+    return { options: {}, transaction: options };
+  }
+  return { options, transaction };
+}
+
+function normalizeUpdate(update = {}) {
+  return Object.keys(update).some((key) => key.startsWith("$"))
+    ? update
+    : { $set: update };
+}
+
+function updateResult(result) {
+  return {
+    acknowledged: result.acknowledged !== false,
+    matchedCount: result.matchedCount ?? result.n ?? 0,
+    modifiedCount: result.modifiedCount ?? result.nModified ?? 0,
+  };
+}
+
+async function updateOne(model, filter, update, options, transaction) {
+  const parsed = mutationOptions(options, transaction);
+  const query = applySession(
+    model.updateOne(filter, normalizeUpdate(update), parsed.options),
+    parsed.transaction
+  );
+  return updateResult(await query.exec());
+}
+
+async function updateMany(model, filter, update, options, transaction) {
+  const parsed = mutationOptions(options, transaction);
+  const query = applySession(
+    model.updateMany(filter, normalizeUpdate(update), parsed.options),
+    parsed.transaction
+  );
+  return updateResult(await query.exec());
+}
+
+module.exports = {
+  sessionFrom,
+  applySession,
+  create,
+  save,
+  projection,
+  mutationOptions,
+  updateOne,
+  updateMany,
+};
+
+
+============================================================
+FILE: persistence\transactions\PersistenceTransactionManager.js
+============================================================
+"use strict";
+
+/**
+ * Phase 13 — Enterprise Data Architecture
+ *
+ * Database-neutral transactional execution boundary.
+ *
+ * Transaction context is deliberately opaque to business services.
+ */
+class PersistenceTransactionManager {
+  async run(
+    _work
+  ) {
+    throw new Error(
+      "PersistenceTransactionManager.run() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  PersistenceTransactionManager;
+
+
+============================================================
+FILE: persistence\transactions\MongoPersistenceTransactionManager.js
+============================================================
+"use strict";
+
+const mongoose =
+  require(
+    "mongoose"
+  );
+
+const PersistenceTransactionManager =
+  require(
+    "./PersistenceTransactionManager"
+  );
+
+class MongoPersistenceTransactionManager
+  extends PersistenceTransactionManager {
+  async run(
+    work
+  ) {
+    if (
+      typeof work !==
+      "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Transaction work function is required"
+        ),
+        {
+          code:
+            "PERSISTENCE_TRANSACTION_WORK_REQUIRED",
+        }
+      );
+    }
+
+    const session =
+      await mongoose
+        .startSession();
+
+    try {
+      let result;
+
+      await session
+        .withTransaction(
+          async () => {
+            result =
+              await work({
+                kind:
+                  "mongo",
+
+                session,
+              });
+          }
+        );
+
+      return result;
+    } finally {
+      await session
+        .endSession();
+    }
+  }
+}
+
+module.exports =
+  MongoPersistenceTransactionManager;
+
+
+============================================================
+FILE: persistence\transactions\PostgresPersistenceTransactionManager.js
+============================================================
+"use strict";
+
+const PersistenceTransactionManager =
+  require(
+    "./PersistenceTransactionManager"
+  );
+
+const {
+  getPostgresPool,
+} =
+  require(
+    "../postgres/postgresPool"
+  );
+
+const VALID_ISOLATION_LEVELS =
+  new Set([
+    "READ COMMITTED",
+    "REPEATABLE READ",
+    "SERIALIZABLE",
+  ]);
+
+class PostgresPersistenceTransactionManager
+  extends PersistenceTransactionManager {
+  constructor(
+    options = {}
+  ) {
+    super();
+
+    this.pool =
+      options.pool ||
+      null;
+
+    this.isolationLevel =
+      normalizeIsolationLevel(
+        options.isolationLevel ||
+        process.env
+          .POSTGRES_TRANSACTION_ISOLATION ||
+        "READ COMMITTED"
+      );
+  }
+
+  async run(
+    work
+  ) {
+    if (
+      typeof work !==
+      "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Transaction work function is required"
+        ),
+        {
+          code:
+            "PERSISTENCE_TRANSACTION_WORK_REQUIRED",
+        }
+      );
+    }
+
+    const activePool =
+      this.pool ||
+      getPostgresPool();
+
+    const client =
+      await activePool
+        .connect();
+
+    let transactionStarted =
+      false;
+
+    try {
+      await client
+        .query(
+          `BEGIN ISOLATION LEVEL ${this.isolationLevel}`
+        );
+
+      transactionStarted =
+        true;
+
+      const result =
+        await work({
+          kind:
+            "postgres",
+
+          client,
+        });
+
+      await client
+        .query(
+          "COMMIT"
+        );
+
+      transactionStarted =
+        false;
+
+      return result;
+    } catch (
+      error
+    ) {
+      if (
+        transactionStarted
+      ) {
+        try {
+          await client
+            .query(
+              "ROLLBACK"
+            );
+        } catch (
+          rollbackError
+        ) {
+          console.error(
+            "[postgres] Transaction rollback failed:",
+            rollbackError
+          );
+
+          error
+            .rollbackError =
+            rollbackError;
+        }
+      }
+
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+}
+
+function normalizeIsolationLevel(
+  value
+) {
+  const normalized =
+    String(
+      value ||
+      ""
+    )
+      .trim()
+      .toUpperCase();
+
+  if (
+    !VALID_ISOLATION_LEVELS
+      .has(
+        normalized
+      )
+  ) {
+    throw Object.assign(
+      new Error(
+        `Unsupported PostgreSQL transaction isolation level: ${value}`
+      ),
+      {
+        code:
+          "POSTGRES_TRANSACTION_ISOLATION_INVALID",
+      }
+    );
+  }
+
+  return normalized;
+}
+
+module.exports =
+  PostgresPersistenceTransactionManager;
+
+module.exports
+  .normalizeIsolationLevel =
+  normalizeIsolationLevel;
+
+
+============================================================
+FILE: models\EmailVerificationToken.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+
+const emailVerificationTokenSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    tokenHash: {
+      type: String,
+      required: true,
+      select: false,
+    },
+    expiresAt: {
+      type: Date,
+      required: true,
+    },
+    usedAt: {
+      type: Date,
+      default: null,
+    },
+    revokedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    versionKey: false,
+    timestamps: { createdAt: true, updatedAt: false },
+  }
+);
+
+emailVerificationTokenSchema.index({ tokenHash: 1 }, { unique: true });
+emailVerificationTokenSchema.index({ userId: 1 });
+// TTL index: MongoDB purges documents once expiresAt is in the past
+emailVerificationTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+module.exports = mongoose.model("EmailVerificationToken", emailVerificationTokenSchema);
+
+
+============================================================
+FILE: models\PasswordResetToken.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+
+const passwordResetTokenSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    tokenHash: {
+      type: String,
+      required: true,
+      select: false,
+    },
+    expiresAt: {
+      type: Date,
+      required: true,
+    },
+    usedAt: {
+      type: Date,
+      default: null,
+    },
+    revokedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    versionKey: false,
+    timestamps: { createdAt: true, updatedAt: false },
+  }
+);
+
+passwordResetTokenSchema.index({ tokenHash: 1 }, { unique: true });
+passwordResetTokenSchema.index({ userId: 1 });
+// TTL index: MongoDB purges documents once expiresAt is in the past
+passwordResetTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+module.exports = mongoose.model("PasswordResetToken", passwordResetTokenSchema);
+
+
+============================================================
+FILE: models\AuthenticationAuditEvent.js
+============================================================
+"use strict";
+
+const mongoose =
+  require(
+    "mongoose"
+  );
+
+const {
+  AUTH_EVENT_TYPE_VALUES,
+  AUTH_EVENT_OUTCOME_VALUES,
+} =
+  require(
+    "../constants/authEvents"
+  );
+
+
+const authenticationAuditEventSchema =
+  new mongoose.Schema(
+    {
+      eventId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        unique:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      eventType: {
+        type:
+          String,
+
+        enum:
+          AUTH_EVENT_TYPE_VALUES,
+
+        required:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      userId: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
+
+        ref:
+          "User",
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      organizationId: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
+
+        ref:
+          "Organization",
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      sessionId: {
+        type:
+          mongoose.Schema.Types
+            .ObjectId,
+
+        ref:
+          "UserSession",
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      outcome: {
+        type:
+          String,
+
+        enum:
+          AUTH_EVENT_OUTCOME_VALUES,
+
+        required:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      reasonCode: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      requestId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      correlationId: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      ipHash: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      userAgentHash: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      /*
+       * Identity audit events are chained globally.
+       *
+       * Identity events may not always have an organization yet
+       * (e.g. failed login for an unknown user), so organization
+       * cannot be the chain partition.
+       */
+      chainIndex: {
+        type:
+          Number,
+
+        required:
+          true,
+
+        min:
+          1,
+
+        immutable:
+          true,
+      },
+
+
+      previousEventHash: {
+        type:
+          String,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+
+
+      signature: {
+        type:
+          String,
+
+        required:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      eventHash: {
+        type:
+          String,
+
+        required:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      /*
+       * Never store passwords, tokens, secrets or authorization
+       * headers here. identityAuditService sanitizes recursively.
+       */
+      metadata: {
+        type:
+          mongoose.Schema.Types
+            .Mixed,
+
+        default:
+          null,
+
+        immutable:
+          true,
+      },
+    },
+    {
+      versionKey:
+        false,
+
+      timestamps: {
+        createdAt:
+          true,
+
+        updatedAt:
+          false,
+      },
+    }
+  );
+
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+authenticationAuditEventSchema
+  .index({
+    userId:
+      1,
+
+    createdAt:
+      -1,
+  });
+
+
+authenticationAuditEventSchema
+  .index({
+    organizationId:
+      1,
+
+    createdAt:
+      -1,
+  });
+
+
+authenticationAuditEventSchema
+  .index({
+    eventType:
+      1,
+
+    createdAt:
+      -1,
+  });
+
+
+authenticationAuditEventSchema
+  .index({
+    createdAt:
+      -1,
+  });
+
+
+authenticationAuditEventSchema
+  .index(
+    {
+      chainIndex:
+        1,
+    },
+    {
+      unique:
+        true,
+    }
+  );
+
+
+// ============================================================================
+// APPEND-ONLY GUARDS
+// ============================================================================
+
+function immutableIdentityAuditError() {
+  return Object.assign(
+    new Error(
+      "AuthenticationAuditEvent records are append-only and immutable"
+    ),
+    {
+      code:
+        "AUTH_AUDIT_EVENT_IMMUTABLE",
+
+      executionAuthorized:
+        false,
+    }
+  );
+}
+
+
+authenticationAuditEventSchema.pre(
+  [
+    "updateOne",
+    "updateMany",
+    "findOneAndUpdate",
+    "findOneAndReplace",
+    "replaceOne",
+    "findOneAndDelete",
+    "findByIdAndDelete",
+    "deleteOne",
+    "deleteMany",
+  ],
+  function guardImmutable() {
+    throw immutableIdentityAuditError();
+  }
+);
+
+
+authenticationAuditEventSchema.pre(
+  "save",
+  function guardExistingDocumentMutation(
+    next
+  ) {
+    if (
+      !this.isNew &&
+      this.isModified()
+    ) {
+      return next(
+        immutableIdentityAuditError()
+      );
+    }
+
+    return next();
+  }
+);
+
+
+module.exports =
+  mongoose.model(
+    "AuthenticationAuditEvent",
+    authenticationAuditEventSchema
+  );
+
+
+============================================================
+FILE: persistence\postgres\migrations\0014_identity_platform_auth.sql
+============================================================
+-- ============================================================================
+-- AIRA PHASE 13.6A
+-- MIGRATION 0014 — IDENTITY + PLATFORM AUTH FOUNDATION
+-- ============================================================================
+--
+-- Purpose
+--
+-- Move AIRA's human identity/session/platform tenancy foundation toward
+-- PostgreSQL so MongoDB can eventually be retired completely.
+--
+-- Existing migrations are immutable. This migration only evolves forward.
+-- ============================================================================
+
+
+-- ============================================================================
+-- SCHEMA
+-- ============================================================================
+
+CREATE SCHEMA IF NOT EXISTS identity;
+
+
+-- ============================================================================
+-- ORGANIZATION PARITY
+-- ============================================================================
+
+ALTER TABLE tenancy.organizations
+  ADD COLUMN IF NOT EXISTS slug TEXT;
+
+ALTER TABLE tenancy.organizations
+  ADD COLUMN IF NOT EXISTS tenant_public_id TEXT;
+
+ALTER TABLE tenancy.organizations
+  ADD COLUMN IF NOT EXISTS settings JSONB
+    NOT NULL
+    DEFAULT '{}'::jsonb;
+
+ALTER TABLE tenancy.organizations
+  ADD COLUMN IF NOT EXISTS created_by_user_legacy_id TEXT;
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+  idx_organizations_slug_unique
+ON tenancy.organizations (
+  slug
+)
+WHERE slug IS NOT NULL;
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_organizations_tenant_public_id
+ON tenancy.organizations (
+  tenant_public_id
+)
+WHERE tenant_public_id IS NOT NULL;
+
+
+-- ============================================================================
+-- ENVIRONMENT PARITY
+-- ============================================================================
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS slug TEXT;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS criticality TEXT
+    NOT NULL
+    DEFAULT 'medium';
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS description TEXT
+    NOT NULL
+    DEFAULT '';
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS settings JSONB
+    NOT NULL
+    DEFAULT '{}'::jsonb;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS created_by_user_legacy_id TEXT;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS maintenance_reason TEXT;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS maintenance_started_at TIMESTAMPTZ;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS archived_by_user_legacy_id TEXT;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS archive_reason TEXT;
+
+
+CREATE UNIQUE INDEX IF NOT EXISTS
+  idx_environments_org_slug_unique
+ON tenancy.environments (
+  organization_id,
+  slug
+)
+WHERE slug IS NOT NULL;
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_environments_org_type
+ON tenancy.environments (
+  organization_id,
+  environment_type
+);
+
+
+-- ============================================================================
+-- USERS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS identity.users (
+  id UUID PRIMARY KEY
+    DEFAULT gen_random_uuid(),
+
+  public_id TEXT NOT NULL,
+
+  legacy_mongo_id TEXT,
+
+  full_name TEXT NOT NULL,
+
+  email TEXT NOT NULL,
+
+  normalized_email TEXT NOT NULL,
+
+  status TEXT NOT NULL
+    DEFAULT 'pending_verification',
+
+  email_verified_at TIMESTAMPTZ,
+
+  primary_organization_id UUID
+    REFERENCES tenancy.organizations(id)
+    ON DELETE SET NULL,
+
+  last_login_at TIMESTAMPTZ,
+
+  metadata JSONB NOT NULL
+    DEFAULT '{}'::jsonb,
+
+  created_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  CONSTRAINT identity_users_public_id_unique
+    UNIQUE (
+      public_id
+    ),
+
+  CONSTRAINT identity_users_legacy_mongo_id_unique
+    UNIQUE (
+      legacy_mongo_id
+    ),
+
+  CONSTRAINT identity_users_normalized_email_unique
+    UNIQUE (
+      normalized_email
+    ),
+
+  CONSTRAINT identity_users_status_check
+    CHECK (
+      status IN (
+        'pending_verification',
+        'active',
+        'suspended',
+        'disabled'
+      )
+    )
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_identity_users_primary_org
+ON identity.users (
+  primary_organization_id
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_identity_users_status
+ON identity.users (
+  status
+);
+
+
+-- ============================================================================
+-- PASSWORD CREDENTIALS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS identity.password_credentials (
+  id UUID PRIMARY KEY
+    DEFAULT gen_random_uuid(),
+
+  legacy_mongo_id TEXT,
+
+  user_id UUID NOT NULL
+    REFERENCES identity.users(id)
+    ON DELETE CASCADE,
+
+  password_hash TEXT NOT NULL,
+
+  algorithm TEXT NOT NULL
+    DEFAULT 'argon2id',
+
+  hash_version INTEGER NOT NULL
+    DEFAULT 1,
+
+  password_changed_at TIMESTAMPTZ
+    NOT NULL
+    DEFAULT NOW(),
+
+  failed_attempts INTEGER NOT NULL
+    DEFAULT 0,
+
+  locked_until TIMESTAMPTZ,
+
+  last_failed_at TIMESTAMPTZ,
+
+  created_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  CONSTRAINT password_credentials_user_unique
+    UNIQUE (
+      user_id
+    ),
+
+  CONSTRAINT password_credentials_legacy_unique
+    UNIQUE (
+      legacy_mongo_id
+    ),
+
+  CONSTRAINT password_credentials_algorithm_check
+    CHECK (
+      algorithm = 'argon2id'
+    ),
+
+  CONSTRAINT password_credentials_hash_version_check
+    CHECK (
+      hash_version >= 1
+    ),
+
+  CONSTRAINT password_credentials_failed_attempts_check
+    CHECK (
+      failed_attempts >= 0
+    ),
+
+  CONSTRAINT password_credentials_hash_check
+    CHECK (
+      password_hash LIKE '$argon2%'
+    )
+);
+
+
+-- ============================================================================
+-- ORGANIZATION MEMBERSHIPS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS identity.organization_memberships (
+  id UUID PRIMARY KEY
+    DEFAULT gen_random_uuid(),
+
+  public_id TEXT NOT NULL,
+
+  legacy_mongo_id TEXT,
+
+  user_id UUID NOT NULL
+    REFERENCES identity.users(id)
+    ON DELETE CASCADE,
+
+  organization_id UUID NOT NULL
+    REFERENCES tenancy.organizations(id)
+    ON DELETE CASCADE,
+
+  role TEXT NOT NULL,
+
+  status TEXT NOT NULL
+    DEFAULT 'invited',
+
+  project_ids JSONB NOT NULL
+    DEFAULT '[]'::jsonb,
+
+  invited_by_user_id UUID
+    REFERENCES identity.users(id)
+    ON DELETE SET NULL,
+
+  joined_at TIMESTAMPTZ,
+
+  suspended_at TIMESTAMPTZ,
+
+  metadata JSONB NOT NULL
+    DEFAULT '{}'::jsonb,
+
+  created_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  CONSTRAINT organization_memberships_public_unique
+    UNIQUE (
+      public_id
+    ),
+
+  CONSTRAINT organization_memberships_legacy_unique
+    UNIQUE (
+      legacy_mongo_id
+    ),
+
+  CONSTRAINT organization_memberships_user_org_unique
+    UNIQUE (
+      user_id,
+      organization_id
+    ),
+
+  CONSTRAINT organization_memberships_status_check
+    CHECK (
+      status IN (
+        'invited',
+        'active',
+        'suspended',
+        'removed'
+      )
+    )
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_memberships_org_status
+ON identity.organization_memberships (
+  organization_id,
+  status
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_memberships_user_status
+ON identity.organization_memberships (
+  user_id,
+  status
+);
+
+
+-- ============================================================================
+-- USER SESSIONS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS identity.user_sessions (
+  id UUID PRIMARY KEY
+    DEFAULT gen_random_uuid(),
+
+  public_id TEXT NOT NULL,
+
+  legacy_mongo_id TEXT,
+
+  user_id UUID NOT NULL
+    REFERENCES identity.users(id)
+    ON DELETE CASCADE,
+
+  active_organization_id UUID
+    REFERENCES tenancy.organizations(id)
+    ON DELETE SET NULL,
+
+  token_hash TEXT NOT NULL,
+
+  status TEXT NOT NULL
+    DEFAULT 'active',
+
+  last_activity_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  idle_expires_at TIMESTAMPTZ NOT NULL,
+
+  absolute_expires_at TIMESTAMPTZ NOT NULL,
+
+  revoked_at TIMESTAMPTZ,
+
+  revocation_reason TEXT,
+
+  ip_hash TEXT,
+
+  user_agent_hash TEXT,
+
+  device_id TEXT,
+
+  device_label TEXT,
+
+  authentication_methods JSONB NOT NULL
+    DEFAULT '["password"]'::jsonb,
+
+  assurance_level TEXT NOT NULL
+    DEFAULT 'aal1',
+
+  remember_me BOOLEAN NOT NULL
+    DEFAULT FALSE,
+
+  csrf_secret TEXT,
+
+  metadata JSONB NOT NULL
+    DEFAULT '{}'::jsonb,
+
+  created_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  updated_at TIMESTAMPTZ NOT NULL
+    DEFAULT NOW(),
+
+  CONSTRAINT user_sessions_public_unique
+    UNIQUE (
+      public_id
+    ),
+
+  CONSTRAINT user_sessions_legacy_unique
+    UNIQUE (
+      legacy_mongo_id
+    ),
+
+  CONSTRAINT user_sessions_token_hash_unique
+    UNIQUE (
+      token_hash
+    ),
+
+  CONSTRAINT user_sessions_status_check
+    CHECK (
+      status IN (
+        'active',
+        'revoked',
+        'expired'
+      )
+    ),
+
+  CONSTRAINT user_sessions_assurance_check
+    CHECK (
+      assurance_level IN (
+        'aal1',
+        'aal2',
+        'aal3'
+      )
+    )
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_user_sessions_user_status
+ON identity.user_sessions (
+  user_id,
+  status
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_user_sessions_idle_expiry
+ON identity.user_sessions (
+  idle_expires_at
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_user_sessions_absolute_expiry
+ON identity.user_sessions (
+  absolute_expires_at
+);
+
+
+-- ============================================================================
+-- EMAIL VERIFICATION TOKENS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS
+  identity.email_verification_tokens (
+    id UUID PRIMARY KEY
+      DEFAULT gen_random_uuid(),
+
+    legacy_mongo_id TEXT,
+
+    user_id UUID NOT NULL
+      REFERENCES identity.users(id)
+      ON DELETE CASCADE,
+
+    token_hash TEXT NOT NULL,
+
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    used_at TIMESTAMPTZ,
+
+    revoked_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW(),
+
+    CONSTRAINT email_verification_tokens_legacy_unique
+      UNIQUE (
+        legacy_mongo_id
+      ),
+
+    CONSTRAINT email_verification_tokens_hash_unique
+      UNIQUE (
+        token_hash
+      )
+  );
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_email_verification_user
+ON identity.email_verification_tokens (
+  user_id
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_email_verification_expiry
+ON identity.email_verification_tokens (
+  expires_at
+);
+
+
+-- ============================================================================
+-- PASSWORD RESET TOKENS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS
+  identity.password_reset_tokens (
+    id UUID PRIMARY KEY
+      DEFAULT gen_random_uuid(),
+
+    legacy_mongo_id TEXT,
+
+    user_id UUID NOT NULL
+      REFERENCES identity.users(id)
+      ON DELETE CASCADE,
+
+    token_hash TEXT NOT NULL,
+
+    expires_at TIMESTAMPTZ NOT NULL,
+
+    used_at TIMESTAMPTZ,
+
+    revoked_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW(),
+
+    CONSTRAINT password_reset_tokens_legacy_unique
+      UNIQUE (
+        legacy_mongo_id
+      ),
+
+    CONSTRAINT password_reset_tokens_hash_unique
+      UNIQUE (
+        token_hash
+      )
+  );
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_password_reset_user
+ON identity.password_reset_tokens (
+  user_id
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_password_reset_expiry
+ON identity.password_reset_tokens (
+  expires_at
+);
+
+
+-- ============================================================================
+-- TENANT CONFIGURATION
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS
+  tenancy.tenant_configs (
+    id UUID PRIMARY KEY
+      DEFAULT gen_random_uuid(),
+
+    tenant_id UUID
+      REFERENCES tenancy.tenants(id)
+      ON DELETE CASCADE,
+
+    tenant_public_id TEXT NOT NULL,
+
+    legacy_mongo_id TEXT,
+
+    name TEXT,
+
+    status TEXT NOT NULL
+      DEFAULT 'active',
+
+    policy_version INTEGER,
+
+    settings JSONB NOT NULL
+      DEFAULT '{}'::jsonb,
+
+    api_keys JSONB NOT NULL
+      DEFAULT '[]'::jsonb,
+
+    admins JSONB NOT NULL
+      DEFAULT '[]'::jsonb,
+
+    retention JSONB NOT NULL
+      DEFAULT '{}'::jsonb,
+
+    document JSONB NOT NULL
+      DEFAULT '{}'::jsonb,
+
+    created_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW(),
+
+    updated_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW(),
+
+    CONSTRAINT tenant_configs_public_unique
+      UNIQUE (
+        tenant_public_id
+      ),
+
+    CONSTRAINT tenant_configs_legacy_unique
+      UNIQUE (
+        legacy_mongo_id
+      )
+  );
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_tenant_configs_status
+ON tenancy.tenant_configs (
+  status
+);
+
+
+-- ============================================================================
+-- AUTHENTICATION AUDIT EVENTS
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS
+  identity.authentication_audit_events (
+    id UUID PRIMARY KEY
+      DEFAULT gen_random_uuid(),
+
+    event_id TEXT NOT NULL,
+
+    legacy_mongo_id TEXT,
+
+    user_id UUID
+      REFERENCES identity.users(id)
+      ON DELETE SET NULL,
+
+    organization_id UUID
+      REFERENCES tenancy.organizations(id)
+      ON DELETE SET NULL,
+
+    session_id UUID
+      REFERENCES identity.user_sessions(id)
+      ON DELETE SET NULL,
+
+    event_type TEXT NOT NULL,
+
+    outcome TEXT NOT NULL,
+
+    reason_code TEXT,
+
+    request_id TEXT,
+
+    correlation_id TEXT,
+
+    ip_hash TEXT,
+
+    user_agent_hash TEXT,
+
+    chain_index BIGINT NOT NULL,
+
+    previous_event_hash TEXT,
+
+    signature TEXT NOT NULL,
+
+    event_hash TEXT NOT NULL,
+
+    metadata JSONB,
+
+    created_at TIMESTAMPTZ NOT NULL
+      DEFAULT NOW(),
+
+    CONSTRAINT authentication_audit_event_id_unique
+      UNIQUE (
+        event_id
+      ),
+
+    CONSTRAINT authentication_audit_legacy_unique
+      UNIQUE (
+        legacy_mongo_id
+      ),
+
+    CONSTRAINT authentication_audit_chain_unique
+      UNIQUE (
+        chain_index
+      ),
+
+    CONSTRAINT authentication_audit_hash_unique
+      UNIQUE (
+        event_hash
+      ),
+
+    CONSTRAINT authentication_audit_chain_positive
+      CHECK (
+        chain_index >= 1
+      )
+  );
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_auth_audit_user_created
+ON identity.authentication_audit_events (
+  user_id,
+  created_at DESC
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_auth_audit_org_created
+ON identity.authentication_audit_events (
+  organization_id,
+  created_at DESC
+);
+
+
+CREATE INDEX IF NOT EXISTS
+  idx_auth_audit_type_created
+ON identity.authentication_audit_events (
+  event_type,
+  created_at DESC
+);
+
+
+-- ============================================================================
+-- ORGANIZATION / USER CROSS REFERENCES
+-- ============================================================================
+
+ALTER TABLE tenancy.organizations
+  ADD COLUMN IF NOT EXISTS created_by_user_id UUID;
+
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname =
+      'organizations_created_by_user_fk'
+  ) THEN
+    ALTER TABLE tenancy.organizations
+      ADD CONSTRAINT organizations_created_by_user_fk
+      FOREIGN KEY (
+        created_by_user_id
+      )
+      REFERENCES identity.users(id)
+      ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS created_by_user_id UUID;
+
+ALTER TABLE tenancy.environments
+  ADD COLUMN IF NOT EXISTS archived_by_user_id UUID;
+
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname =
+      'environments_created_by_user_fk'
+  ) THEN
+    ALTER TABLE tenancy.environments
+      ADD CONSTRAINT environments_created_by_user_fk
+      FOREIGN KEY (
+        created_by_user_id
+      )
+      REFERENCES identity.users(id)
+      ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname =
+      'environments_archived_by_user_fk'
+  ) THEN
+    ALTER TABLE tenancy.environments
+      ADD CONSTRAINT environments_archived_by_user_fk
+      FOREIGN KEY (
+        archived_by_user_id
+      )
+      REFERENCES identity.users(id)
+      ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
+
+-- ============================================================================
+-- UPDATED_AT TRIGGERS
+-- ============================================================================
+
+DROP TRIGGER IF EXISTS
+  trg_identity_users_updated_at
+ON identity.users;
+
+CREATE TRIGGER
+  trg_identity_users_updated_at
+BEFORE UPDATE
+ON identity.users
+FOR EACH ROW
+EXECUTE FUNCTION
+  public.aira_set_updated_at();
+
+
+DROP TRIGGER IF EXISTS
+  trg_password_credentials_updated_at
+ON identity.password_credentials;
+
+CREATE TRIGGER
+  trg_password_credentials_updated_at
+BEFORE UPDATE
+ON identity.password_credentials
+FOR EACH ROW
+EXECUTE FUNCTION
+  public.aira_set_updated_at();
+
+
+DROP TRIGGER IF EXISTS
+  trg_memberships_updated_at
+ON identity.organization_memberships;
+
+CREATE TRIGGER
+  trg_memberships_updated_at
+BEFORE UPDATE
+ON identity.organization_memberships
+FOR EACH ROW
+EXECUTE FUNCTION
+  public.aira_set_updated_at();
+
+
+DROP TRIGGER IF EXISTS
+  trg_user_sessions_updated_at
+ON identity.user_sessions;
+
+CREATE TRIGGER
+  trg_user_sessions_updated_at
+BEFORE UPDATE
+ON identity.user_sessions
+FOR EACH ROW
+EXECUTE FUNCTION
+  public.aira_set_updated_at();
+
+
+DROP TRIGGER IF EXISTS
+  trg_tenant_configs_updated_at
+ON tenancy.tenant_configs;
+
+CREATE TRIGGER
+  trg_tenant_configs_updated_at
+BEFORE UPDATE
+ON tenancy.tenant_configs
+FOR EACH ROW
+EXECUTE FUNCTION
+  public.aira_set_updated_at();
+
+
+-- ============================================================================
+-- COMMENTS
+-- ============================================================================
+
+COMMENT ON SCHEMA identity IS
+  'AIRA human identity, authentication, sessions, credentials and identity audit data.';
+
+COMMENT ON TABLE identity.users IS
+  'Canonical AIRA human users after MongoDB retirement.';
+
+COMMENT ON TABLE identity.password_credentials IS
+  'Argon2id password credentials. Password hashes must never be exposed through API serialization.';
+
+COMMENT ON TABLE identity.user_sessions IS
+  'Server-side login sessions. Stores only token hashes, never raw session tokens.';
+
+COMMENT ON TABLE tenancy.tenant_configs IS
+  'Compatibility configuration for tenant-scoped machine APIs during the Phase 13 migration.';
+  

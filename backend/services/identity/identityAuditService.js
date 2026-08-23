@@ -5,10 +5,9 @@ const crypto =
     "node:crypto"
   );
 
-const AuthenticationAuditEvent =
-  require(
-    "../../models/AuthenticationAuditEvent"
-  );
+const {
+  authenticationAuditEventRepository,
+} = require("../../persistence/repositories");
 
 
 const MAX_CHAIN_WRITE_RETRIES =
@@ -439,16 +438,7 @@ async function record(
       attempt++
     ) {
       try {
-        const last =
-          await AuthenticationAuditEvent
-            .findOne({})
-            .sort({
-              chainIndex:
-                -1,
-
-              createdAt:
-                -1,
-            });
+        const last = await authenticationAuditEventRepository.findLast();
 
 
         const eventData = {
@@ -528,10 +518,7 @@ async function record(
           );
 
 
-        await AuthenticationAuditEvent
-          .create(
-            eventData
-          );
+        await authenticationAuditEventRepository.create(eventData);
 
 
         return {
@@ -614,16 +601,7 @@ async function record(
 
 async function verifyIntegrity() {
   try {
-    const events =
-      await AuthenticationAuditEvent
-        .find({})
-        .sort({
-          chainIndex:
-            1,
-
-          createdAt:
-            1,
-        });
+    const events = await authenticationAuditEventRepository.findMany();
 
 
     let valid =

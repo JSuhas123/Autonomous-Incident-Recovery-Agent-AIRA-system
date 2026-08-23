@@ -1,7 +1,7 @@
 "use strict";
 
 const crypto = require("crypto");
-const UserSession = require("../models/UserSession");
+const { userSessionRepository } = require("../persistence/repositories");
 const { deriveCsrfToken } = require("../services/identity/csrfHelper");
 const { record: auditRecord } = require("../services/identity/identityAuditService");
 const { AUTH_EVENT_TYPES, AUTH_EVENT_OUTCOMES } = require("../constants/authEvents");
@@ -38,13 +38,13 @@ function getAllowedOrigins() {
 /** Attach a CSRF secret to a new session and return the browser-visible token. */
 async function attachCsrfSecret(session) {
   const secret = generateCsrfSecret();
-  await UserSession.updateOne({ _id: session._id }, { csrfSecret: secret });
+  await userSessionRepository.updateOne({ _id: session._id }, { csrfSecret: secret });
   return deriveCsrfToken(secret);
 }
 
 /** Get the browser-visible CSRF token for an active session. */
 async function getCsrfTokenForSession(sessionId) {
-  const session = await UserSession.findById(sessionId).select("+csrfSecret");
+  const session = await userSessionRepository.findById(sessionId, { includeCsrfSecret: true });
   if (!session || !session.csrfSecret) return null;
   return deriveCsrfToken(session.csrfSecret);
 }
@@ -94,7 +94,7 @@ function csrfProtection(req, res, next) {
   }
 
   // Load the session's csrfSecret synchronously — we need the DB value
-  UserSession.findById(req.auth.sessionId).select("+csrfSecret")
+  userSessionRepository.findById(req.auth.sessionId, { includeCsrfSecret: true })
     .then((session) => {
       if (!session || !session.csrfSecret) {
         return res.status(403).json({ error: "Forbidden: no CSRF state", code: "CSRF_NO_STATE" });

@@ -1,0 +1,3144 @@
+============================================================
+AIRA PHASE 13.6B INPUT
+Generated: 08/23/2026 13:14:55
+============================================================
+
+============================================================
+FILE: models\User.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+
+const userSchema = new mongoose.Schema(
+  {
+    fullName: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    normalizedEmail: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    status: {
+      type: String,
+      enum: ["pending_verification", "active", "suspended", "disabled"],
+      default: "pending_verification",
+    },
+    emailVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+    primaryOrganizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      default: null,
+    },
+    lastLoginAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    versionKey: false,
+    timestamps: true,
+  }
+);
+
+userSchema.index({ normalizedEmail: 1 }, { unique: true });
+
+// Normalize before validation so the required check on normalizedEmail passes
+userSchema.pre("validate", function (next) {
+  if (this.email) {
+    this.normalizedEmail = this.email.toLowerCase().trim();
+  }
+  next();
+});
+
+userSchema.set("toJSON", {
+  virtuals: true,
+  transform(_doc, ret) {
+    delete ret.__v;
+    return ret;
+  },
+});
+
+module.exports = mongoose.model("User", userSchema);
+
+
+============================================================
+FILE: models\PasswordCredential.js
+============================================================
+"use strict";
+
+const mongoose =
+  require(
+    "mongoose"
+  );
+
+
+const passwordCredentialSchema =
+  new mongoose.Schema(
+    {
+      userId: {
+        type:
+          mongoose.Schema
+            .Types
+            .ObjectId,
+
+        ref:
+          "User",
+
+        required:
+          true,
+
+        immutable:
+          true,
+      },
+
+
+      /*
+       * Password material must never appear in normal queries.
+       *
+       * Authentication code must explicitly request:
+       *
+       *   .select("+passwordHash")
+       */
+      passwordHash: {
+        type:
+          String,
+
+        required:
+          true,
+
+        select:
+          false,
+      },
+
+
+      algorithm: {
+        type:
+          String,
+
+        enum: [
+          "argon2id",
+        ],
+
+        default:
+          "argon2id",
+
+        immutable:
+          true,
+      },
+
+
+      hashVersion: {
+        type:
+          Number,
+
+        default:
+          1,
+
+        min:
+          1,
+      },
+
+
+      passwordChangedAt: {
+        type:
+          Date,
+
+        default:
+          Date.now,
+      },
+
+
+      failedAttempts: {
+        type:
+          Number,
+
+        default:
+          0,
+
+        min:
+          0,
+      },
+
+
+      lockedUntil: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+
+
+      lastFailedAt: {
+        type:
+          Date,
+
+        default:
+          null,
+      },
+    },
+    {
+      versionKey:
+        false,
+
+      timestamps:
+        true,
+    }
+  );
+
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+/*
+ * Exactly one password credential record per user.
+ */
+passwordCredentialSchema
+  .index(
+    {
+      userId:
+        1,
+    },
+    {
+      unique:
+        true,
+    }
+  );
+
+
+// ============================================================================
+// SECRET REDACTION
+// ============================================================================
+
+function removeSensitiveFields(
+  _doc,
+  ret
+) {
+  if (
+    !ret
+  ) {
+    return ret;
+  }
+
+
+  delete ret
+    .passwordHash;
+
+  delete ret
+    .__v;
+
+
+  /*
+   * Explicit credential-boundary invariant.
+   *
+   * Authentication state is fine to expose internally, but
+   * password material never is.
+   */
+  return ret;
+}
+
+
+passwordCredentialSchema
+  .set(
+    "toJSON",
+    {
+      transform:
+        removeSensitiveFields,
+    }
+  );
+
+
+passwordCredentialSchema
+  .set(
+    "toObject",
+    {
+      transform:
+        removeSensitiveFields,
+    }
+  );
+
+
+// ============================================================================
+// DEFENSIVE SAVE VALIDATION
+// ============================================================================
+
+passwordCredentialSchema
+  .pre(
+    "save",
+    function credentialSecretGuard(
+      next
+    ) {
+      if (
+        typeof this.passwordHash !==
+          "string" ||
+        !this.passwordHash
+          .startsWith(
+            "$argon2"
+          )
+      ) {
+        return next(
+          Object.assign(
+            new Error(
+              "PasswordCredential requires an Argon2 password hash"
+            ),
+            {
+              code:
+                "INVALID_PASSWORD_HASH",
+
+              executionAuthorized:
+                false,
+            }
+          )
+        );
+      }
+
+
+      return next();
+    }
+  );
+
+
+module.exports =
+  mongoose.model(
+    "PasswordCredential",
+    passwordCredentialSchema
+  );
+
+============================================================
+FILE: models\OrganizationMembership.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+const { ORGANIZATION_ROLE_VALUES } = require("../constants/roles");
+
+const organizationMembershipSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      required: true,
+    },
+    role: {
+      type: String,
+      enum: ORGANIZATION_ROLE_VALUES,
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: ["invited", "active", "suspended", "removed"],
+      default: "invited",
+    },
+    // Reserved for future project-level authorization
+    projectIds: {
+      type: [mongoose.Schema.Types.ObjectId],
+      default: [],
+    },
+    invitedByUserId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    joinedAt: {
+      type: Date,
+      default: null,
+    },
+    suspendedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  {
+    versionKey: false,
+    timestamps: true,
+  }
+);
+
+organizationMembershipSchema.index({ userId: 1, organizationId: 1 }, { unique: true });
+organizationMembershipSchema.index({ organizationId: 1, status: 1 });
+organizationMembershipSchema.index({ userId: 1, status: 1 });
+
+module.exports = mongoose.model("OrganizationMembership", organizationMembershipSchema);
+
+
+============================================================
+FILE: models\UserSession.js
+============================================================
+"use strict";
+
+const mongoose = require("mongoose");
+
+const userSessionSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    activeOrganizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Organization",
+      default: null,
+    },
+    // Only the hash is stored; the raw token must never be persisted
+    tokenHash: {
+      type: String,
+      required: true,
+      select: false,
+    },
+    status: {
+      type: String,
+      enum: ["active", "revoked", "expired"],
+      default: "active",
+    },
+    lastActivityAt: {
+      type: Date,
+      default: Date.now,
+    },
+    idleExpiresAt: {
+      type: Date,
+      required: true,
+    },
+    absoluteExpiresAt: {
+      type: Date,
+      required: true,
+    },
+    revokedAt: {
+      type: Date,
+      default: null,
+    },
+    revocationReason: {
+      type: String,
+      default: null,
+    },
+    ipHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    userAgentHash: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    deviceId: {
+      type: String,
+      default: null,
+    },
+    deviceLabel: {
+      type: String,
+      default: null,
+    },
+    authenticationMethods: {
+      type: [
+        {
+          type: String,
+          enum: ["password", "totp", "passkey", "oidc", "recovery_code"],
+        },
+      ],
+      default: ["password"],
+    },
+    assuranceLevel: {
+      type: String,
+      enum: ["aal1", "aal2", "aal3"],
+      default: "aal1",
+    },
+    rememberMe: {
+      type: Boolean,
+      default: false,
+    },
+    // Per-session CSRF secret; browser receives a derived token, never this value
+    csrfSecret: {
+      type: String,
+      default: null,
+      select: false,
+    },
+  },
+  {
+    versionKey: false,
+    timestamps: true,
+  }
+);
+
+userSessionSchema.index({ tokenHash: 1 }, { unique: true });
+userSessionSchema.index({ userId: 1, status: 1 });
+userSessionSchema.index({ idleExpiresAt: 1 });
+userSessionSchema.index({ absoluteExpiresAt: 1 });
+
+// Remove all hashes and PII-adjacent fields from any JSON representation
+userSessionSchema.set("toJSON", {
+  transform(_doc, ret) {
+    delete ret.tokenHash;
+    delete ret.ipHash;
+    delete ret.userAgentHash;
+    delete ret.csrfSecret;
+    delete ret.__v;
+    return ret;
+  },
+});
+
+module.exports = mongoose.model("UserSession", userSessionSchema);
+
+
+============================================================
+FILE: models\Tenant.js
+============================================================
+[FILE DOES NOT EXIST]
+
+============================================================
+FILE: models\TenantConfig.js
+============================================================
+"use strict";
+
+const mongoose =
+  require(
+    "mongoose"
+  );
+
+
+// ============================================================================
+// API KEY
+// ============================================================================
+
+const apiKeySchema =
+  new mongoose.Schema(
+    {
+      keyId: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      keyHash: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      secretHash: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      createdAt: {
+        type:
+          Date,
+
+        default:
+          Date.now,
+      },
+
+      rotationDeadline:
+        Date,
+
+      scopes: {
+        type: [
+          String,
+        ],
+
+        default: [
+          "read:*",
+          "write:*",
+        ],
+      },
+
+      status: {
+        type:
+          String,
+
+        enum: [
+          "active",
+          "rotating",
+          "retired",
+        ],
+
+        default:
+          "active",
+      },
+
+      active: {
+        type:
+          Boolean,
+
+        default:
+          true,
+      },
+    },
+    {
+      _id:
+        false,
+    }
+  );
+
+
+// ============================================================================
+// ADMIN
+// ============================================================================
+
+const adminSchema =
+  new mongoose.Schema(
+    {
+      email: {
+        type:
+          String,
+
+        required:
+          true,
+      },
+
+      role: {
+        type:
+          String,
+
+        enum: [
+          "superadmin",
+          "policy_manager",
+          "viewer",
+        ],
+
+        default:
+          "viewer",
+      },
+
+      permissions: [
+        String,
+      ],
+
+      addedAt: {
+        type:
+          Date,
+
+        default:
+          Date.now,
+      },
+    },
+    {
+      _id:
+        false,
+    }
+  );
+
+
+// ============================================================================
+// PHASE 11.11 — RETENTION POLICY
+// ============================================================================
+
+const retentionSchema =
+  new mongoose.Schema(
+    {
+      /*
+       * Inactive learned incident-memory patterns.
+       */
+      incidentMemoryDays: {
+        type:
+          Number,
+
+        default:
+          30,
+
+        min:
+          1,
+
+        max:
+          3650,
+      },
+
+
+      /*
+       * DecisionTrace is archived before deletion.
+       */
+      decisionTraceDays: {
+        type:
+          Number,
+
+        default:
+          90,
+
+        min:
+          1,
+
+        max:
+          3650,
+      },
+
+
+      /*
+       * Completed RunbookExecution records are archived before deletion.
+       */
+      runbookExecutionDays: {
+        type:
+          Number,
+
+        default:
+          90,
+
+        min:
+          1,
+
+        max:
+          3650,
+      },
+
+
+      /*
+       * Resolved DLQ records are transient and can be deleted.
+       */
+      failedMessageDays: {
+        type:
+          Number,
+
+        default:
+          7,
+
+        min:
+          1,
+
+        max:
+          365,
+      },
+
+
+      /*
+       * Audit chains are protected.
+       *
+       * This value describes compliance retention expectations but
+       * DOES NOT directly TTL/delete AuditEvent records.
+       */
+      auditRetentionDays: {
+        type:
+          Number,
+
+        default:
+          2555,
+
+        min:
+          365,
+
+        max:
+          36500,
+      },
+
+
+      /*
+       * Maximum number of documents processed by one cleanup batch.
+       */
+      batchSize: {
+        type:
+          Number,
+
+        default:
+          500,
+
+        min:
+          10,
+
+        max:
+          5000,
+      },
+
+
+      /*
+       * Maximum records retained in hot collections.
+       */
+      incidentMemoryLimit: {
+        type:
+          Number,
+
+        default:
+          10000,
+
+        min:
+          100,
+      },
+
+
+      decisionTraceLimit: {
+        type:
+          Number,
+
+        default:
+          50000,
+
+        min:
+          100,
+      },
+
+
+      /*
+       * When enabled, records selected for archival are written to
+       * RetentionArchive before being removed from the hot collection.
+       */
+      archiveEnabled: {
+        type:
+          Boolean,
+
+        default:
+          true,
+      },
+    },
+    {
+      _id:
+        false,
+    }
+  );
+
+
+// ============================================================================
+// SETTINGS
+// ============================================================================
+
+const settingsSchema =
+  new mongoose.Schema(
+    {
+      maxEventsPerSecond: {
+        type:
+          Number,
+
+        default:
+          10000,
+      },
+
+      maxConcurrentIncidents: {
+        type:
+          Number,
+
+        default:
+          100,
+      },
+
+      maxConcurrentActions: {
+        type:
+          Number,
+
+        default:
+          5,
+      },
+
+      maxActionsPerHour: {
+        type:
+          Number,
+
+        default:
+          10,
+      },
+
+
+      /*
+       * Kept for backwards compatibility.
+       *
+       * Phase 11.11's canonical configuration lives under
+       * settings.retention.auditRetentionDays.
+       */
+      auditRetentionDays: {
+        type:
+          Number,
+
+        default:
+          2555,
+      },
+
+
+      retention: {
+        type:
+          retentionSchema,
+
+        default:
+          () => ({}),
+      },
+    },
+    {
+      _id:
+        false,
+    }
+  );
+
+
+// ============================================================================
+// TENANT CONFIG
+// ============================================================================
+
+const tenantConfigSchema =
+  new mongoose.Schema(
+    {
+      tenantId: {
+        type:
+          String,
+
+        required:
+          true,
+
+        unique:
+          true,
+
+        trim:
+          true,
+
+        lowercase:
+          true,
+
+        match:
+          /^[a-zA-Z0-9_-]+$/,
+      },
+
+      name:
+        String,
+
+      apiKeys: [
+        apiKeySchema,
+      ],
+
+      /*
+       * Existing compatibility field.
+       *
+       * Do not expose TenantConfig documents directly to clients.
+       * Phase 11.17 should certify every remaining legacy secret field.
+       */
+      secretKey:
+        String,
+
+      policyVersion: {
+        type:
+          Number,
+
+        default:
+          1,
+      },
+
+      settings:
+        settingsSchema,
+
+      admins: [
+        adminSchema,
+      ],
+
+      status: {
+        type:
+          String,
+
+        enum: [
+          "active",
+          "suspended",
+          "archived",
+        ],
+
+        default:
+          "active",
+      },
+
+      createdAt: {
+        type:
+          Date,
+
+        default:
+          Date.now,
+      },
+
+      createdBy:
+        String,
+
+      metadata:
+        mongoose.Schema.Types
+          .Mixed,
+    },
+    {
+      versionKey:
+        false,
+
+      timestamps:
+        true,
+    }
+  );
+
+
+// ============================================================================
+// INDEXES
+// ============================================================================
+
+tenantConfigSchema
+  .index({
+    status:
+      1,
+  });
+
+
+tenantConfigSchema
+  .index({
+    "apiKeys.keyId":
+      1,
+  });
+
+
+module.exports =
+  mongoose.model(
+    "TenantConfig",
+    tenantConfigSchema
+  );
+
+============================================================
+FILE: persistence\repositories\IncidentRepository.js
+============================================================
+"use strict";
+
+class IncidentRepository {
+  async findOne(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentRepository.findOne() is not implemented"
+    );
+  }
+
+  async findMany(
+    _filter,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentRepository.findMany() is not implemented"
+    );
+  }
+
+  async create(
+    _data,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentRepository.create() is not implemented"
+    );
+  }
+
+  async save(
+    _incident,
+    _transaction = null
+  ) {
+    throw new Error(
+      "IncidentRepository.save() is not implemented"
+    );
+  }
+}
+
+module.exports =
+  IncidentRepository;
+
+============================================================
+FILE: persistence\repositories\index.js
+============================================================
+"use strict";
+
+// ============================================================================
+// AIRA PERSISTENCE REPOSITORY FACTORY
+// ============================================================================
+//
+// Phase 13 — Enterprise Data Architecture
+//
+// Responsibilities:
+//
+// - expose database-neutral repository instances
+// - keep MongoDB authoritative before PostgreSQL cutover
+// - allow explicit PostgreSQL provider selection
+// - enable controlled Mongo-primary/PostgreSQL-shadow reads
+// - preserve provider-specific transaction semantics
+// - preserve provider-specific identifier policies
+//
+// IMPORTANT:
+//
+// MIGRATION_MODE=shadow does NOT make PostgreSQL authoritative.
+//
+// In shadow mode:
+//
+// MongoDB = client-visible primary
+// PostgreSQL = comparison-only secondary
+//
+// ============================================================================
+
+
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+
+const provider =
+  String(
+    process.env
+      .PERSISTENCE_PROVIDER ||
+    "mongo"
+  )
+    .trim()
+    .toLowerCase();
+
+const migrationMode =
+  String(
+    process.env
+      .MIGRATION_MODE ||
+    "disabled"
+  )
+    .trim()
+    .toLowerCase();
+
+const supportedProviders =
+  new Set([
+    "mongo",
+    "postgres",
+  ]);
+
+if (
+  !supportedProviders
+    .has(
+      provider
+    )
+) {
+  throw Object.assign(
+    new Error(
+      `Unsupported persistence provider: ${provider}`
+    ),
+    {
+      code:
+        "PERSISTENCE_PROVIDER_INVALID",
+    }
+  );
+}
+
+
+// ============================================================================
+// BUILD ACTIVE REPOSITORY SET
+// ============================================================================
+
+let repositories;
+
+if (
+  provider ===
+  "postgres"
+) {
+  repositories =
+    buildPostgresRepositories();
+} else {
+  repositories =
+    buildMongoRepositories();
+
+  /*
+   * --------------------------------------------------------------------------
+   * PHASE 13.5C — SHADOW READS
+   * --------------------------------------------------------------------------
+   *
+   * Mongo remains authoritative.
+   *
+   * We wrap only repositories that have explicitly completed shadow-read
+   * implementation and verification.
+   *
+   * PostgreSQL repository construction itself does not establish a database
+   * connection because AIRA's PostgreSQL pool is lazy.
+   * --------------------------------------------------------------------------
+   */
+  if (
+    migrationMode ===
+    "shadow"
+  ) {
+    repositories =
+      applyShadowRepositories(
+        repositories
+      );
+  }
+}
+
+
+// ============================================================================
+// PUBLIC EXPORTS
+// ============================================================================
+
+module.exports = {
+  ...repositories,
+
+  persistenceProvider:
+    provider,
+
+  migrationMode,
+};
+
+
+// ============================================================================
+// MONGO REPOSITORIES
+// ============================================================================
+
+function buildMongoRepositories() {
+  const MongoIncidentRepository =
+    require(
+      "../mongo/MongoIncidentRepository"
+    );
+
+  const MongoIncidentEventRepository =
+    require(
+      "../mongo/MongoIncidentEventRepository"
+    );
+
+  const MongoIncidentLifecycleRepository =
+    require(
+      "../mongo/MongoIncidentLifecycleRepository"
+    );
+
+  const MongoSignalRepository =
+    require(
+      "../mongo/MongoSignalRepository"
+    );
+
+  const MongoSignalCorrelationRepository =
+    require(
+      "../mongo/MongoSignalCorrelationRepository"
+    );
+
+  const MongoCorrelationTopologyRepository =
+    require(
+      "../mongo/MongoCorrelationTopologyRepository"
+    );
+
+  const MongoAgentIntelligenceRunRepository =
+    require(
+      "../mongo/MongoAgentIntelligenceRunRepository"
+    );
+
+  const MongoIncidentDiagnosisRepository =
+    require(
+      "../mongo/MongoIncidentDiagnosisRepository"
+    );
+
+  const MongoDecisionTraceRepository =
+    require(
+      "../mongo/MongoDecisionTraceRepository"
+    );
+
+  const MongoRecoveryDecisionRepository =
+    require(
+      "../mongo/MongoRecoveryDecisionRepository"
+    );
+
+  const MongoExecutionAuthorizationRepository =
+    require(
+      "../mongo/MongoExecutionAuthorizationRepository"
+    );
+
+  const MongoRuntimeRecoveryCheckpointRepository =
+    require(
+      "../mongo/MongoRuntimeRecoveryCheckpointRepository"
+    );
+
+  const MongoApprovalRepository =
+    require(
+      "../mongo/MongoApprovalRepository"
+    );
+
+  const MongoAuditRepository =
+    require(
+      "../mongo/MongoAuditRepository"
+    );
+
+  const MongoPolicyRepository =
+    require(
+      "../mongo/MongoPolicyRepository"
+    );
+
+  const MongoWorkflowOutboxRepository =
+    require(
+      "../mongo/MongoWorkflowOutboxRepository"
+    );
+
+  const MongoPersistenceTransactionManager =
+    require(
+      "../transactions/MongoPersistenceTransactionManager"
+    );
+
+  const MongoIdentifierPolicy =
+    require(
+      "../identifiers/MongoIdentifierPolicy"
+    );
+
+  return {
+    incidentRepository:
+      new MongoIncidentRepository(),
+
+    incidentEventRepository:
+      new MongoIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new MongoIncidentLifecycleRepository(),
+
+    signalRepository:
+      new MongoSignalRepository(),
+
+    signalCorrelationRepository:
+      new MongoSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new MongoCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new MongoAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new MongoIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new MongoDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new MongoRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new MongoExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new MongoRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new MongoApprovalRepository(),
+
+    auditRepository:
+      new MongoAuditRepository(),
+
+    policyRepository:
+      new MongoPolicyRepository(),
+
+    workflowOutboxRepository:
+      new MongoWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new MongoPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new MongoIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// POSTGRESQL REPOSITORIES
+// ============================================================================
+
+function buildPostgresRepositories() {
+  const PostgresIncidentRepository =
+    require(
+      "../postgres/PostgresIncidentRepository"
+    );
+
+  const PostgresIncidentEventRepository =
+    require(
+      "../postgres/PostgresIncidentEventRepository"
+    );
+
+  const PostgresIncidentLifecycleRepository =
+    require(
+      "../postgres/PostgresIncidentLifecycleRepository"
+    );
+
+  const PostgresSignalRepository =
+    require(
+      "../postgres/PostgresSignalRepository"
+    );
+
+  const PostgresSignalCorrelationRepository =
+    require(
+      "../postgres/PostgresSignalCorrelationRepository"
+    );
+
+  const PostgresCorrelationTopologyRepository =
+    require(
+      "../postgres/PostgresCorrelationTopologyRepository"
+    );
+
+  const PostgresAgentIntelligenceRunRepository =
+    require(
+      "../postgres/PostgresAgentIntelligenceRunRepository"
+    );
+
+  const PostgresIncidentDiagnosisRepository =
+    require(
+      "../postgres/PostgresIncidentDiagnosisRepository"
+    );
+
+  const PostgresDecisionTraceRepository =
+    require(
+      "../postgres/PostgresDecisionTraceRepository"
+    );
+
+  const PostgresRecoveryDecisionRepository =
+    require(
+      "../postgres/PostgresRecoveryDecisionRepository"
+    );
+
+  const PostgresExecutionAuthorizationRepository =
+    require(
+      "../postgres/PostgresExecutionAuthorizationRepository"
+    );
+
+  const PostgresRuntimeRecoveryCheckpointRepository =
+    require(
+      "../postgres/PostgresRuntimeRecoveryCheckpointRepository"
+    );
+
+  const PostgresApprovalRepository =
+    require(
+      "../postgres/PostgresApprovalRepository"
+    );
+
+  const PostgresAuditRepository =
+    require(
+      "../postgres/PostgresAuditRepository"
+    );
+
+  const PostgresPolicyRepository =
+    require(
+      "../postgres/PostgresPolicyRepository"
+    );
+
+  const PostgresWorkflowOutboxRepository =
+    require(
+      "../postgres/PostgresWorkflowOutboxRepository"
+    );
+
+  const PostgresPersistenceTransactionManager =
+    require(
+      "../transactions/PostgresPersistenceTransactionManager"
+    );
+
+  /*
+   * IMPORTANT:
+   *
+   * This concrete implementation actually exists at:
+   *
+   * persistence/postgres/PostgresIdentifierPolicy.js
+   *
+   * Do NOT instantiate PersistenceIdentifierPolicy here.
+   * PersistenceIdentifierPolicy is the database-neutral contract.
+   */
+  const PostgresIdentifierPolicy =
+    require(
+      "../postgres/PostgresIdentifierPolicy"
+    );
+
+  return {
+    incidentRepository:
+      new PostgresIncidentRepository(),
+
+    incidentEventRepository:
+      new PostgresIncidentEventRepository(),
+
+    incidentLifecycleRepository:
+      new PostgresIncidentLifecycleRepository(),
+
+    signalRepository:
+      new PostgresSignalRepository(),
+
+    signalCorrelationRepository:
+      new PostgresSignalCorrelationRepository(),
+
+    correlationTopologyRepository:
+      new PostgresCorrelationTopologyRepository(),
+
+    agentIntelligenceRunRepository:
+      new PostgresAgentIntelligenceRunRepository(),
+
+    incidentDiagnosisRepository:
+      new PostgresIncidentDiagnosisRepository(),
+
+    decisionTraceRepository:
+      new PostgresDecisionTraceRepository(),
+
+    recoveryDecisionRepository:
+      new PostgresRecoveryDecisionRepository(),
+
+    executionAuthorizationRepository:
+      new PostgresExecutionAuthorizationRepository(),
+
+    runtimeRecoveryCheckpointRepository:
+      new PostgresRuntimeRecoveryCheckpointRepository(),
+
+    approvalRepository:
+      new PostgresApprovalRepository(),
+
+    auditRepository:
+      new PostgresAuditRepository(),
+
+    policyRepository:
+      new PostgresPolicyRepository(),
+
+    workflowOutboxRepository:
+      new PostgresWorkflowOutboxRepository(),
+
+    persistenceTransactionManager:
+      new PostgresPersistenceTransactionManager(),
+
+    persistenceIdentifierPolicy:
+      new PostgresIdentifierPolicy(),
+  };
+}
+
+
+// ============================================================================
+// PHASE 13.5C SHADOW REPOSITORIES
+// ============================================================================
+
+function applyShadowRepositories(
+  primaryRepositories
+) {
+  if (
+    !primaryRepositories
+  ) {
+    throw Object.assign(
+      new Error(
+        "Primary repositories are required for shadow mode"
+      ),
+      {
+        code:
+          "SHADOW_PRIMARY_REPOSITORIES_REQUIRED",
+      }
+    );
+  }
+
+  const postgresRepositories =
+    buildPostgresRepositories();
+
+  const ShadowIncidentRepository =
+    require(
+      "../migration/ShadowIncidentRepository"
+    );
+
+  const ShadowIncidentEventRepository =
+    require(
+      "../migration/ShadowIncidentEventRepository"
+    );
+
+  const ShadowIncidentLifecycleRepository =
+    require(
+      "../migration/ShadowIncidentLifecycleRepository"
+    );
+
+  const ShadowSignalRepository =
+    require(
+      "../migration/ShadowSignalRepository"
+    );
+
+  return {
+    ...primaryRepositories,
+
+    incidentRepository:
+      new ShadowIncidentRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentRepository,
+      }),
+
+    incidentEventRepository:
+      new ShadowIncidentEventRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentEventRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentEventRepository,
+      }),
+
+    incidentLifecycleRepository:
+      new ShadowIncidentLifecycleRepository({
+        primaryRepository:
+          primaryRepositories
+            .incidentLifecycleRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .incidentLifecycleRepository,
+      }),
+
+    signalRepository:
+      new ShadowSignalRepository({
+        primaryRepository:
+          primaryRepositories
+            .signalRepository,
+
+        shadowRepository:
+          postgresRepositories
+            .signalRepository,
+      }),
+  };
+}
+
+
+// ============================================================================
+// FACTORY EXPORTS
+// ============================================================================
+//
+// These are useful for:
+//
+// - migration tests
+// - provider-specific tests
+// - shadow tests
+// - cutover validation
+//
+// ============================================================================
+
+module.exports
+  .buildMongoRepositories =
+  buildMongoRepositories;
+
+module.exports
+  .buildPostgresRepositories =
+  buildPostgresRepositories;
+
+module.exports
+  .applyShadowRepositories =
+  applyShadowRepositories;
+
+============================================================
+FILE: persistence\postgres\PostgresIncidentRepository.js
+============================================================
+"use strict";
+
+const IncidentRepository =
+  require(
+    "../repositories/IncidentRepository"
+  );
+
+const PostgresTenantScope =
+  require(
+    "./PostgresTenantScope"
+  );
+
+const {
+  normalizeId,
+  createApplicationId,
+  serializeDocument,
+  reviveDocument,
+  translatePostgresError,
+} =
+  require(
+    "./postgresDomainMapper"
+  );
+
+const FILTER_COLUMNS = {
+  serviceId:
+    "service_id",
+
+  monitorId:
+    "monitor_id",
+
+  fingerprint:
+    "fingerprint",
+
+  status:
+    "status",
+
+  correlationGroupId:
+    "correlation_group_id",
+
+  sourceEventId:
+    "source_event_id",
+
+  signalFingerprint:
+    "signal_fingerprint",
+
+  severity:
+    "severity",
+
+  source:
+    "source",
+};
+
+class PostgresIncidentRepository
+  extends IncidentRepository {
+  constructor(
+    options = {}
+  ) {
+    super();
+
+    this.scope =
+      options.scope ||
+      new PostgresTenantScope(
+        options
+      );
+  }
+
+  async findOne(
+    filter = {},
+    transaction = null
+  ) {
+    const context =
+      requireScope(
+        filter
+      );
+
+    return this.scope.run(
+      context,
+      async (
+        client,
+        resolved
+      ) => {
+        const {
+          where,
+          values,
+        } =
+          this.buildFilter(
+            filter,
+            resolved
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM incidents.incidents
+              WHERE ${where}
+              ORDER BY created_at DESC
+              LIMIT 1
+            `,
+            values
+          );
+
+        if (
+          result.rows.length ===
+          0
+        ) {
+          return null;
+        }
+
+        return mapIncident(
+          result.rows[0],
+          context
+        );
+      },
+      transaction
+    );
+  }
+
+  async findMany(
+    filter = {},
+    transaction = null
+  ) {
+    const context =
+      requireScope(
+        filter
+      );
+
+    return this.scope.run(
+      context,
+      async (
+        client,
+        resolved
+      ) => {
+        const {
+          where,
+          values,
+        } =
+          this.buildFilter(
+            filter,
+            resolved
+          );
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM incidents.incidents
+              WHERE ${where}
+              ORDER BY created_at ASC
+            `,
+            values
+          );
+
+        return result.rows.map(
+          (
+            row
+          ) =>
+            mapIncident(
+              row,
+              context
+            )
+        );
+      },
+      transaction
+    );
+  }
+
+  async create(
+    data,
+    transaction = null
+  ) {
+    const context =
+      requireScope(
+        data
+      );
+
+    return this.scope.run(
+      context,
+      async (
+        client,
+        resolved
+      ) => {
+        const publicId =
+          normalizeId(
+            data._id
+          ) ||
+          createApplicationId();
+
+        const document =
+          serializeDocument({
+            ...data,
+
+            _id:
+              publicId,
+
+            organizationId:
+              normalizeId(
+                data.organizationId
+              ),
+
+            environmentId:
+              normalizeId(
+                data.environmentId
+              ),
+
+            serviceId:
+              normalizeId(
+                data.serviceId
+              ),
+
+            monitorId:
+              normalizeId(
+                data.monitorId
+              ),
+          });
+
+        try {
+          const result =
+            await client.query(
+              `
+                INSERT INTO incidents.incidents (
+                  public_id,
+                  legacy_mongo_id,
+                  tenant_public_id,
+                  organization_id,
+                  environment_id,
+                  service_id,
+                  monitor_id,
+                  source,
+                  source_event_id,
+                  detection_method,
+                  correlation_group_id,
+                  primary_signal_id,
+                  signal_ids,
+                  signal_fingerprint,
+                  providers,
+                  provider_count,
+                  evidence_count,
+                  correlation_confidence,
+                  fingerprint,
+                  title,
+                  description,
+                  severity,
+                  status,
+                  impact,
+                  started_at,
+                  detected_at,
+                  acknowledged_at,
+                  resolved_at,
+                  closed_at,
+                  last_observed_at,
+                  last_signal_at,
+                  occurrence_count,
+                  reopen_count,
+                  last_reopened_at,
+                  assigned_to,
+                  assigned_at,
+                  resolution,
+                  resolution_type,
+                  tags,
+                  analysis_status,
+                  analysis_started_at,
+                  analysis_completed_at,
+                  metadata,
+                  document
+                )
+                VALUES (
+                  $1,  $2,  $3,  $4,  $5,
+                  $6,  $7,  $8,  $9,  $10,
+                  $11, $12, $13, $14, $15,
+                  $16, $17, $18, $19, $20,
+                  $21, $22, $23, $24, $25,
+                  $26, $27, $28, $29, $30,
+                  $31, $32, $33, $34, $35,
+                  $36, $37, $38, $39, $40,
+                  $41, $42, $43::jsonb, $44::jsonb
+                )
+                RETURNING *
+              `,
+              buildIncidentValues(
+                data,
+                document,
+                publicId,
+                resolved
+              )
+            );
+
+          return mapIncident(
+            result.rows[0],
+            context
+          );
+        } catch (
+          error
+        ) {
+          throw translatePostgresError(
+            error
+          );
+        }
+      },
+      transaction
+    );
+  }
+
+  async save(
+  incident,
+  transaction = null
+) {
+  if (
+    !incident?._id ||
+    !incident.organizationId ||
+    !incident.environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "PostgresIncidentRepository.save() requires a persisted incident with scope"
+      ),
+      {
+        code:
+          "INVALID_INCIDENT_DOCUMENT",
+      }
+    );
+  }
+
+  const context = {
+    organizationId:
+      incident.organizationId,
+
+    environmentId:
+      incident.environmentId,
+  };
+
+  return this.scope.run(
+    context,
+    async (
+      client,
+      resolved
+    ) => {
+      const document =
+        serializeDocument(
+          incident
+        );
+
+      const incidentId =
+        normalizeId(
+          incident._id
+        );
+
+      const values = [
+        incident.tenantId ||
+          null,
+
+        normalizeId(
+          incident.serviceId
+        ),
+
+        normalizeId(
+          incident.monitorId
+        ),
+
+        incident.source ||
+          null,
+
+        incident.sourceEventId ||
+          null,
+
+        incident.detectionMethod ||
+          null,
+
+        incident.correlationGroupId ||
+          null,
+
+        incident.primarySignalId ||
+          null,
+
+        (
+          incident.signalIds ||
+          []
+        ).map(
+          normalizeId
+        ),
+
+        incident.signalFingerprint ||
+          null,
+
+        incident.providers ||
+          [],
+
+        Number(
+          incident.providerCount ||
+          0
+        ),
+
+        Number(
+          incident.evidenceCount ||
+          0
+        ),
+
+        incident
+          .correlationConfidence ??
+          null,
+
+        incident.fingerprint ||
+          null,
+
+        incident.title ||
+          null,
+
+        incident.description ||
+          null,
+
+        incident.severity ||
+          "warning",
+
+        incident.status ||
+          "open",
+
+        incident.impact ||
+          null,
+
+        incident.startedAt ||
+          null,
+
+        incident.detectedAt ||
+          null,
+
+        incident.acknowledgedAt ||
+          null,
+
+        incident.resolvedAt ||
+          null,
+
+        incident.closedAt ||
+          null,
+
+        incident.lastObservedAt ||
+          null,
+
+        incident.lastSignalAt ||
+          null,
+
+        Number(
+          incident.occurrenceCount ||
+          0
+        ),
+
+        Number(
+          incident.reopenCount ||
+          0
+        ),
+
+        incident.lastReopenedAt ||
+          null,
+
+        normalizeId(
+          incident.assignedTo
+        ),
+
+        incident.assignedAt ||
+          null,
+
+        incident.resolution ||
+          null,
+
+        incident.resolutionType ||
+          null,
+
+        incident.tags ||
+          [],
+
+        incident.analysisStatus ||
+          null,
+
+        incident.analysisStartedAt ||
+          null,
+
+        incident.analysisCompletedAt ||
+          null,
+
+        JSON.stringify(
+          incident.metadata ||
+          {}
+        ),
+
+        JSON.stringify(
+          document
+        ),
+
+        resolved.organizationUuid,
+
+        resolved.environmentUuid,
+
+        incidentId,
+      ];
+
+      try {
+        const result =
+          await client.query(
+            `
+              UPDATE incidents.incidents
+              SET
+                tenant_public_id = $1,
+                service_id = $2,
+                monitor_id = $3,
+                source = $4,
+                source_event_id = $5,
+                detection_method = $6,
+                correlation_group_id = $7,
+                primary_signal_id = $8,
+                signal_ids = $9,
+                signal_fingerprint = $10,
+                providers = $11,
+                provider_count = $12,
+                evidence_count = $13,
+                correlation_confidence = $14,
+                fingerprint = $15,
+                title = $16,
+                description = $17,
+                severity = $18,
+                status = $19,
+                impact = $20,
+                started_at = $21,
+                detected_at = $22,
+                acknowledged_at = $23,
+                resolved_at = $24,
+                closed_at = $25,
+                last_observed_at = $26,
+                last_signal_at = $27,
+                occurrence_count = $28,
+                reopen_count = $29,
+                last_reopened_at = $30,
+                assigned_to = $31,
+                assigned_at = $32,
+                resolution = $33,
+                resolution_type = $34,
+                tags = $35,
+                analysis_status = $36,
+                analysis_started_at = $37,
+                analysis_completed_at = $38,
+                metadata = $39::jsonb,
+                document = $40::jsonb
+              WHERE
+                organization_id = $41
+                AND environment_id = $42
+                AND (
+                  public_id = $43
+                  OR legacy_mongo_id = $43
+                  OR id::text = $43
+                )
+              RETURNING *
+            `,
+            values
+          );
+
+        if (
+          result.rows.length ===
+          0
+        ) {
+          return null;
+        }
+
+        return mapIncident(
+          result.rows[0],
+          context
+        );
+      } catch (
+        error
+      ) {
+        throw translatePostgresError(
+          error
+        );
+      }
+    },
+    transaction
+  );
+}
+
+  buildFilter(
+    filter,
+    resolved
+  ) {
+    const clauses = [
+      "organization_id = $1",
+      "environment_id = $2",
+    ];
+
+    const values = [
+      resolved.organizationUuid,
+      resolved.environmentUuid,
+    ];
+
+    for (
+      const [
+        key,
+        value,
+      ]
+      of Object.entries(
+        filter
+      )
+    ) {
+      if (
+        key ===
+          "organizationId" ||
+        key ===
+          "environmentId"
+      ) {
+        continue;
+      }
+
+      if (
+        key ===
+        "_id"
+      ) {
+        const index =
+          values.push(
+            normalizeId(
+              value
+            )
+          );
+
+        clauses.push(
+          `(
+            public_id = $${index}
+            OR legacy_mongo_id = $${index}
+            OR id::text = $${index}
+          )`
+        );
+
+        continue;
+      }
+
+      const column =
+        FILTER_COLUMNS[
+          key
+        ];
+
+      if (!column) {
+        throw Object.assign(
+          new Error(
+            `Unsupported PostgreSQL incident filter: ${key}`
+          ),
+          {
+            code:
+              "POSTGRES_INCIDENT_FILTER_UNSUPPORTED",
+
+            field:
+              key,
+          }
+        );
+      }
+
+      if (
+        value &&
+        typeof value ===
+          "object" &&
+        !Array.isArray(
+          value
+        )
+      ) {
+        if (
+          Array.isArray(
+            value.$in
+          )
+        ) {
+          const index =
+            values.push(
+              value.$in.map(
+                normalizeId
+              )
+            );
+
+          clauses.push(
+            `${column} = ANY($${index}::text[])`
+          );
+
+          continue;
+        }
+
+        throw Object.assign(
+          new Error(
+            `Unsupported PostgreSQL incident operator for ${key}`
+          ),
+          {
+            code:
+              "POSTGRES_INCIDENT_OPERATOR_UNSUPPORTED",
+
+            field:
+              key,
+          }
+        );
+      }
+
+      const index =
+        values.push(
+          normalizeId(
+            value
+          )
+        );
+
+      clauses.push(
+        `${column} = $${index}`
+      );
+    }
+
+    return {
+      where:
+        clauses.join(
+          "\nAND "
+        ),
+
+      values,
+    };
+  }
+}
+
+function requireScope(
+  value = {}
+) {
+  if (
+    !value.organizationId ||
+    !value.environmentId
+  ) {
+    throw Object.assign(
+      new Error(
+        "PostgreSQL incident operations require organizationId and environmentId"
+      ),
+      {
+        code:
+          "POSTGRES_INCIDENT_SCOPE_REQUIRED",
+      }
+    );
+  }
+
+  return {
+    organizationId:
+      value.organizationId,
+
+    environmentId:
+      value.environmentId,
+  };
+}
+
+function buildIncidentValues(
+  incident,
+  document,
+  publicId,
+  resolved
+) {
+  return [
+    publicId,
+
+    incident
+      .legacyMongoId ||
+      null,
+
+    incident.tenantId ||
+      null,
+
+    resolved
+      .organizationUuid,
+
+    resolved
+      .environmentUuid,
+
+    normalizeId(
+      incident.serviceId
+    ),
+
+    normalizeId(
+      incident.monitorId
+    ),
+
+    incident.source ||
+      null,
+
+    incident.sourceEventId ||
+      null,
+
+    incident.detectionMethod ||
+      null,
+
+    incident.correlationGroupId ||
+      null,
+
+    incident.primarySignalId ||
+      null,
+
+    (
+      incident.signalIds ||
+      []
+    ).map(
+      normalizeId
+    ),
+
+    incident.signalFingerprint ||
+      null,
+
+    incident.providers ||
+      [],
+
+    Number(
+      incident.providerCount ||
+      0
+    ),
+
+    Number(
+      incident.evidenceCount ||
+      0
+    ),
+
+    incident
+      .correlationConfidence ??
+      null,
+
+    incident.fingerprint ||
+      null,
+
+    incident.title ||
+      null,
+
+    incident.description ||
+      null,
+
+    incident.severity ||
+      "warning",
+
+    incident.status ||
+      "open",
+
+    incident.impact ||
+      null,
+
+    incident.startedAt ||
+      null,
+
+    incident.detectedAt ||
+      null,
+
+    incident.acknowledgedAt ||
+      null,
+
+    incident.resolvedAt ||
+      null,
+
+    incident.closedAt ||
+      null,
+
+    incident.lastObservedAt ||
+      null,
+
+    incident.lastSignalAt ||
+      null,
+
+    Number(
+      incident.occurrenceCount ||
+      0
+    ),
+
+    Number(
+      incident.reopenCount ||
+      0
+    ),
+
+    incident.lastReopenedAt ||
+      null,
+
+    normalizeId(
+      incident.assignedTo
+    ),
+
+    incident.assignedAt ||
+      null,
+
+    incident.resolution ||
+      null,
+
+    incident.resolutionType ||
+      null,
+
+    incident.tags ||
+      [],
+
+    incident.analysisStatus ||
+      null,
+
+    incident.analysisStartedAt ||
+      null,
+
+    incident.analysisCompletedAt ||
+      null,
+
+    JSON.stringify(
+      incident.metadata ||
+      {}
+    ),
+
+    JSON.stringify(
+      document
+    ),
+  ];
+}
+
+function mapIncident(
+  row,
+  context
+) {
+  const document =
+    reviveDocument(
+      row.document ||
+      {}
+    );
+
+  return {
+    ...document,
+
+    _id:
+      row.public_id,
+
+    organizationId:
+      document.organizationId ||
+      normalizeId(
+        context.organizationId
+      ),
+
+    environmentId:
+      document.environmentId ||
+      normalizeId(
+        context.environmentId
+      ),
+
+    tenantId:
+      row.tenant_public_id ??
+      document.tenantId ??
+      null,
+
+    serviceId:
+      row.service_id ??
+      document.serviceId ??
+      null,
+
+    monitorId:
+      row.monitor_id ??
+      document.monitorId ??
+      null,
+
+    fingerprint:
+      row.fingerprint,
+
+    status:
+      row.status,
+
+    severity:
+      row.severity,
+
+    occurrenceCount:
+      row.occurrence_count,
+
+    createdAt:
+      row.created_at,
+
+    updatedAt:
+      row.updated_at,
+  };
+}
+
+module.exports =
+  PostgresIncidentRepository;
+
+============================================================
+FILE: persistence\mongo\MongoIncidentRepository.js
+============================================================
+"use strict";
+
+const IncidentRepository =
+  require(
+    "../repositories/IncidentRepository"
+  );
+
+const {
+  Incident,
+} =
+  require(
+    "../../models/Incident"
+  );
+
+function sessionFrom(
+  transaction
+) {
+  return transaction
+    ?.kind ===
+    "mongo"
+    ? transaction.session
+    : null;
+}
+
+class MongoIncidentRepository
+  extends IncidentRepository {
+  async findOne(
+    filter,
+    transaction = null
+  ) {
+    let query =
+      Incident.findOne(
+        filter
+      );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async findMany(
+    filter,
+    transaction = null
+  ) {
+    let query =
+      Incident.find(
+        filter
+      );
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (
+      session &&
+      typeof query.session ===
+        "function"
+    ) {
+      query =
+        query.session(
+          session
+        );
+    }
+
+    return query;
+  }
+
+  async create(
+    data,
+    transaction = null
+  ) {
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    if (!session) {
+      return Incident.create(
+        data
+      );
+    }
+
+    const [
+      created,
+    ] =
+      await Incident.create(
+        [
+          data,
+        ],
+        {
+          session,
+        }
+      );
+
+    return created;
+  }
+
+  async save(
+    incident,
+    transaction = null
+  ) {
+    if (
+      !incident ||
+      typeof incident.save !==
+        "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "MongoIncidentRepository.save() requires a Mongoose Incident document"
+        ),
+        {
+          code:
+            "INVALID_INCIDENT_DOCUMENT",
+        }
+      );
+    }
+
+    const session =
+      sessionFrom(
+        transaction
+      );
+
+    return incident.save(
+      session
+        ? {
+            session,
+          }
+        : undefined
+    );
+  }
+}
+
+module.exports =
+  MongoIncidentRepository;
+
+============================================================
+FILE: persistence\postgres\PostgresIdentityResolver.js
+============================================================
+"use strict";
+
+class PostgresIdentityResolver {
+  normalizeIdentifier(
+    value
+  ) {
+    if (
+      value === null ||
+      value === undefined
+    ) {
+      return null;
+    }
+
+    if (
+      typeof value.toHexString ===
+      "function"
+    ) {
+      return value.toHexString();
+    }
+
+    return String(
+      value
+    );
+  }
+
+  async resolveOrganization(
+    client,
+    identifier
+  ) {
+    const normalized =
+      this.normalizeIdentifier(
+        identifier
+      );
+
+    if (!normalized) {
+      throw createError(
+        "organizationId is required",
+        "POSTGRES_ORGANIZATION_REQUIRED"
+      );
+    }
+
+    const result =
+      await client.query(
+        `
+          SELECT
+            id,
+            public_id,
+            legacy_mongo_id,
+            tenant_id
+          FROM tenancy.organizations
+          WHERE
+            public_id = $1
+            OR legacy_mongo_id = $1
+            OR id::text = $1
+          LIMIT 1
+        `,
+        [
+          normalized,
+        ]
+      );
+
+    if (
+      result.rows.length ===
+      0
+    ) {
+      throw createError(
+        `PostgreSQL organization not found: ${normalized}`,
+        "POSTGRES_ORGANIZATION_NOT_FOUND"
+      );
+    }
+
+    return result.rows[0];
+  }
+
+  async resolveEnvironment(
+    client,
+    organizationUuid,
+    identifier
+  ) {
+    const normalized =
+      this.normalizeIdentifier(
+        identifier
+      );
+
+    if (!normalized) {
+      throw createError(
+        "environmentId is required",
+        "POSTGRES_ENVIRONMENT_REQUIRED"
+      );
+    }
+
+    const result =
+      await client.query(
+        `
+          SELECT
+            id,
+            public_id,
+            legacy_mongo_id,
+            tenant_id,
+            organization_id
+          FROM tenancy.environments
+          WHERE
+            organization_id = $1
+            AND (
+              public_id = $2
+              OR legacy_mongo_id = $2
+              OR id::text = $2
+            )
+          LIMIT 1
+        `,
+        [
+          organizationUuid,
+          normalized,
+        ]
+      );
+
+    if (
+      result.rows.length ===
+      0
+    ) {
+      throw createError(
+        `PostgreSQL environment not found: ${normalized}`,
+        "POSTGRES_ENVIRONMENT_NOT_FOUND"
+      );
+    }
+
+    return result.rows[0];
+  }
+
+  async resolveIncident(
+    client,
+    {
+      organizationUuid,
+      environmentUuid,
+    },
+    identifier
+  ) {
+    const normalized =
+      this.normalizeIdentifier(
+        identifier
+      );
+
+    if (!normalized) {
+      throw createError(
+        "incidentId is required",
+        "POSTGRES_INCIDENT_REQUIRED"
+      );
+    }
+
+    const result =
+      await client.query(
+        `
+          SELECT
+            id,
+            public_id,
+            legacy_mongo_id
+          FROM incidents.incidents
+          WHERE
+            organization_id = $1
+            AND environment_id = $2
+            AND (
+              public_id = $3
+              OR legacy_mongo_id = $3
+              OR id::text = $3
+            )
+          LIMIT 1
+        `,
+        [
+          organizationUuid,
+          environmentUuid,
+          normalized,
+        ]
+      );
+
+    if (
+      result.rows.length ===
+      0
+    ) {
+      return null;
+    }
+
+    return result.rows[0];
+  }
+
+  async resolveScope(
+    client,
+    {
+      organizationId,
+      environmentId,
+    }
+  ) {
+    const organization =
+      await this.resolveOrganization(
+        client,
+        organizationId
+      );
+
+    const environment =
+      await this.resolveEnvironment(
+        client,
+        organization.id,
+        environmentId
+      );
+
+    return {
+      organization,
+
+      environment,
+
+      organizationUuid:
+        organization.id,
+
+      environmentUuid:
+        environment.id,
+
+      applicationOrganizationId:
+        this.normalizeIdentifier(
+          organizationId
+        ),
+
+      applicationEnvironmentId:
+        this.normalizeIdentifier(
+          environmentId
+        ),
+    };
+  }
+}
+
+function createError(
+  message,
+  code
+) {
+  return Object.assign(
+    new Error(
+      message
+    ),
+    {
+      code,
+    }
+  );
+}
+
+module.exports =
+  PostgresIdentityResolver;
+
+============================================================
+FILE: persistence\postgres\PostgresTenantScope.js
+============================================================
+"use strict";
+
+const {
+  getPostgresPool,
+} =
+  require(
+    "./postgresPool"
+  );
+
+const PostgresIdentityResolver =
+  require(
+    "./PostgresIdentityResolver"
+  );
+
+class PostgresTenantScope {
+  constructor(
+    options = {}
+  ) {
+    this.pool =
+      options.pool ||
+      null;
+
+    this.identityResolver =
+      options.identityResolver ||
+      new PostgresIdentityResolver();
+  }
+
+  async run(
+    scope,
+    work,
+    transaction = null
+  ) {
+    if (
+      typeof work !==
+      "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "PostgreSQL scoped work function is required"
+        ),
+        {
+          code:
+            "POSTGRES_SCOPE_WORK_REQUIRED",
+        }
+      );
+    }
+
+    if (
+      transaction
+        ?.kind ===
+      "postgres"
+    ) {
+      return this.runOnClient(
+        transaction.client,
+        scope,
+        work,
+        false
+      );
+    }
+
+    const pool =
+      this.pool ||
+      getPostgresPool();
+
+    const client =
+      await pool.connect();
+
+    try {
+      await client.query(
+        "BEGIN"
+      );
+
+      const result =
+        await this.runOnClient(
+          client,
+          scope,
+          work,
+          true
+        );
+
+      await client.query(
+        "COMMIT"
+      );
+
+      return result;
+    } catch (
+      error
+    ) {
+      try {
+        await client.query(
+          "ROLLBACK"
+        );
+      } catch (
+        rollbackError
+      ) {
+        error.rollbackError =
+          rollbackError;
+      }
+
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async runOnClient(
+    client,
+    scope,
+    work,
+    _ownsTransaction
+  ) {
+    const resolved =
+      await this.identityResolver
+        .resolveScope(
+          client,
+          scope
+        );
+
+    await client.query(
+      `
+        SELECT
+          set_config(
+            'aira.organization_id',
+            $1,
+            true
+          ),
+          set_config(
+            'aira.environment_id',
+            $2,
+            true
+          )
+      `,
+      [
+        String(
+          resolved
+            .organizationUuid
+        ),
+
+        String(
+          resolved
+            .environmentUuid
+        ),
+      ]
+    );
+
+    return work(
+      client,
+      resolved
+    );
+  }
+}
+
+module.exports =
+  PostgresTenantScope;
