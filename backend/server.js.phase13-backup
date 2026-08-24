@@ -2,7 +2,7 @@
 
 // CRITICAL: Validate required environment variables before anything else loads.
 // This exits the process immediately with a descriptive message if a required
-// secret or connection string is missing - preventing silent misconfiguration.
+// secret or connection string is missing â€” preventing silent misconfiguration.
 const {
   validateEnvironment,
   inspectEnvironment,
@@ -29,7 +29,7 @@ const http =
   );
 
 // ============================================================================
-// PHASE 12.1 - AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
+// PHASE 12.1 â€” AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
 // ============================================================================
 
 const {
@@ -401,7 +401,7 @@ const {
   );
 
 // ============================================================================
-// PHASE 11.4 - WORKFLOW REPLAY / RECOVERY
+// PHASE 11.4 â€” WORKFLOW REPLAY / RECOVERY
 // ============================================================================
 
 const replayRuntimeIntegration =
@@ -531,7 +531,7 @@ const allowedOrigins =
       DEFAULT_ORIGINS
   );
 
-// Safe startup log - no secrets
+// Safe startup log â€” no secrets
 console.log(
   `[server] CORS: ${allowedOrigins.length} allowed origin(s) | env=${process.env.NODE_ENV || "development"} | credentials=true`
 );
@@ -556,7 +556,7 @@ if (
     missing.length
   ) {
     console.warn(
-      `[server] [WARN]  CORS: missing production origin(s): ${missing.join(", ")}`
+      `[server] âš ï¸  CORS: missing production origin(s): ${missing.join(", ")}`
     );
   }
 }
@@ -594,7 +594,7 @@ const corsOptions = {
       );
     }
 
-    // Return controlled false - do NOT throw, which would produce a 500
+    // Return controlled false â€” do NOT throw, which would produce a 500
     console.warn(
       `[cors] Rejected origin: ${origin}`
     );
@@ -650,7 +650,7 @@ app.use(
   )
 );
 
-// 2. Respond 204 to all OPTIONS requests immediately - before any auth middleware
+// 2. Respond 204 to all OPTIONS requests immediately â€” before any auth middleware
 app.use(
   (
     req,
@@ -686,7 +686,7 @@ app.use(
 );
 
 // ============================================================================
-// PHASE 11.10 - STARTUP / SHUTDOWN ADMISSION GATE
+// PHASE 11.10 â€” STARTUP / SHUTDOWN ADMISSION GATE
 // ============================================================================
 
 app.use(
@@ -885,7 +885,7 @@ app.get(
   }
 );
 
-// Lightweight liveness probe - always 200 once Express is up
+// Lightweight liveness probe â€” always 200 once Express is up
 app.get(
   "/health/live",
   (
@@ -907,7 +907,7 @@ app.get(
 );
 
 // ============================================================================
-// PHASE 11.10 - READINESS PROBE
+// PHASE 11.10 â€” READINESS PROBE
 // ============================================================================
 
 app.get(
@@ -1148,7 +1148,7 @@ app.get(
 
 /**
  * Internal-endpoint token guard.
- *  */
+ */
 function internalTokenGuard(
   req,
   res,
@@ -1425,7 +1425,7 @@ app.get(
 
 
       // ======================================================================
-      // PHASE 11.5 - DEPENDENCY ISOLATION HEALTH
+      // PHASE 11.5 â€” DEPENDENCY ISOLATION HEALTH
       // ======================================================================
 
       const dependencyIsolationSummary =
@@ -1439,7 +1439,7 @@ app.get(
 
 
       // ======================================================================
-      // PHASE 11.6 - ADMISSION / LOAD PROTECTION
+      // PHASE 11.6 â€” ADMISSION / LOAD PROTECTION
       // ======================================================================
 
       /*
@@ -1674,7 +1674,7 @@ app.get(
           );
 
                // ======================================================================
-      // PHASE 11.16 - PRODUCTION READINESS
+      // PHASE 11.16 â€” PRODUCTION READINESS
       // ======================================================================
 
       /*
@@ -1994,7 +1994,7 @@ app.get(
             .safeMode,
    
                     // ====================================================================
-        // PHASE 11.16 - PRODUCTION READINESS
+        // PHASE 11.16 â€” PRODUCTION READINESS
         // ====================================================================
 
         productionReadiness: {
@@ -2042,7 +2042,7 @@ app.get(
         },
 
         // ====================================================================
-        // PHASE 11.5 - DEPENDENCY ISOLATION
+        // PHASE 11.5 â€” DEPENDENCY ISOLATION
         // ====================================================================
 
         dependencyIsolation: {
@@ -2058,7 +2058,7 @@ app.get(
 
 
         // ====================================================================
-        // PHASE 11.6 - LOAD PROTECTION
+        // PHASE 11.6 â€” LOAD PROTECTION
         // ====================================================================
 
         loadProtection,
@@ -2297,7 +2297,8 @@ app.get(
           false,
       };
 
-        // ======================================================================
+
+      // ======================================================================
       // RESPONSE
       // ======================================================================
 
@@ -2711,7 +2712,7 @@ let serverInstance =
     null,
 };
 // ============================================================================
-// PHASE 11.4 - REPLAY RECOVERY STATE
+// PHASE 11.4 â€” REPLAY RECOVERY STATE
 // ============================================================================
 
 const replayRecoveryStatus = {
@@ -2738,7 +2739,7 @@ const replayRecoveryStatus = {
 };
 
 // ============================================================================
-// PHASE 11.10 - APPLICATION LIFECYCLE
+// PHASE 11.10 â€” APPLICATION LIFECYCLE
 // ============================================================================
 
 const APPLICATION_STATE =
@@ -3285,101 +3286,176 @@ async function startHttpServer() {
 // ============================================================================
 
 async function startServer() {
-  const startupStartedAt = Date.now();
-
   transitionApplicationState(
-    APPLICATION_STATE.STARTING,
+    APPLICATION_STATE
+      .STARTING,
     "initializing_services"
   );
 
-  console.log(
-    `[startup] AIRA starting env=${process.env.NODE_ENV || "development"} persistence=${process.env.PERSISTENCE_PROVIDER || "postgres"}`
-  );
-
   try {
-    const httpStartedAt = Date.now();
+    /*
+     * Start HTTP first.
+     *
+     * This allows orchestration platforms to observe /health/live
+     * while the application is still initializing.
+     *
+     * Operational writes remain blocked by the lifecycle admission
+     * gate until AIRA reaches READY.
+     */
     await startHttpServer();
-    console.log(
-      `[startup] [OK] HTTP listener ready port=${PORT} ${elapsedMs(httpStartedAt)}ms`
-    );
 
+
+    // ========================================================================
+    // CORE INFRASTRUCTURE
+    // ========================================================================
+
+    /*
+     * initializeServices() owns normal infrastructure initialization,
+     * including the authoritative database lifecycle through dbService.
+     */
     await initializeServices();
 
-    const postgresStartedAt = Date.now();
-    await initializePostgresFoundation();
-    console.log(
-      `[startup] [OK] PostgreSQL readiness verified ${elapsedMs(postgresStartedAt)}ms`
-    );
 
-    const agentStartedAt = Date.now();
+    // ========================================================================
+    // PHASE 13 — AUTHORITATIVE POSTGRESQL
+    // ========================================================================
+
+    /*
+     * PostgreSQL is now mandatory.
+     *
+     * We deliberately do not execute migrations automatically here.
+     * Schema migration remains an explicit deployment operation.
+     */
+    await initializePostgresFoundation();
+
+
+    // ========================================================================
+    // PHASE 12 — AUTHORITATIVE AGENT INTELLIGENCE
+    // ========================================================================
+
     initializeAgentOrchestrator(
-      { incidentPlaybookService, memoryService },
+      {
+        incidentPlaybookService,
+        memoryService,
+      },
       {
         dryRun:
-          String(process.env.AGENT_DRY_RUN || "false")
+          String(
+            process.env
+              .AGENT_DRY_RUN ||
+            "false"
+          )
             .trim()
-            .toLowerCase() === "true",
+            .toLowerCase() ===
+          "true",
       }
     );
+
     console.log(
-      `[startup] [OK] Agent intelligence runtime initialized ${elapsedMs(agentStartedAt)}ms`
+      "[server] ✓ Authoritative agent intelligence runtime initialized"
     );
 
+
+    // ========================================================================
+    // DURABLE STARTUP RECOVERY
+    // ========================================================================
+
+    /*
+     * Startup recovery is the final readiness gate.
+     *
+     * AIRA cannot enter READY until:
+     *
+     *   PostgreSQL is connected and healthy
+     *   core infrastructure initialized
+     *   agent intelligence initialized
+     *   durable workflow recovery completed
+     */
     await runStartupRecovery();
 
-    if (!isApplicationReady()) {
+
+    if (
+      !isApplicationReady()
+    ) {
       throw Object.assign(
         new Error(
           "Startup completed but application readiness conditions were not satisfied"
         ),
-        { code: "APPLICATION_STARTUP_NOT_READY" }
+        {
+          code:
+            "APPLICATION_STARTUP_NOT_READY",
+        }
       );
     }
 
-    const totalMs = elapsedMs(startupStartedAt);
     console.log(
-      `[startup] [READY] AIRA operationally ready port=${PORT} startup=${totalMs}ms`
+      `[server] ✓ AIRA operationally ready on port ${PORT}`
     );
 
     return {
-      started: true,
-      ready: true,
-      port: PORT,
-      startupDurationMs: totalMs,
-      lifecycle: getApplicationLifecycleStatus(),
-      executionAuthorized: false,
+      started:
+        true,
+
+      ready:
+        true,
+
+      port:
+        PORT,
+
+      lifecycle:
+        getApplicationLifecycleStatus(),
+
+      executionAuthorized:
+        false,
     };
-  } catch (error) {
+  } catch (
+    error
+  ) {
     transitionApplicationState(
-      APPLICATION_STATE.FAILED,
+      APPLICATION_STATE
+        .FAILED,
       "startup_failed",
       error
     );
 
     console.error(
-      `[startup] [FAIL] AIRA startup failed after ${elapsedMs(startupStartedAt)}ms:`,
+      "[server] Startup failed:",
       error
     );
 
+    /*
+     * Startup failure must clean up every resource that was
+     * successfully initialized before the failure occurred.
+     */
     try {
       await shutdown(
         "STARTUP_FAILURE",
-        { exitProcess: false, exitCode: 1 }
+        {
+          exitProcess:
+            false,
+
+          exitCode:
+            1,
+        }
       );
-    } catch (shutdownError) {
+    } catch (
+      shutdownError
+    ) {
       console.error(
-        "[startup] [WARN] Startup cleanup failed:",
-        shutdownError.message
+        "[server] Startup cleanup failed:",
+        shutdownError
+          .message
       );
     }
 
-    process.exitCode = 1;
+    process.exitCode =
+      1;
+
     throw error;
   }
 }
 
 // ============================================================================
-// PHASE 11.10 - SHUTDOWN HELPERS
+// PHASE 11.10 â€” SHUTDOWN HELPERS
 // ============================================================================
 
 function sleep(
@@ -3447,7 +3523,7 @@ async function withTimeout(
             timer
               .unref();
           }
-             }
+        }
       ),
     ]);
   } finally {
@@ -3480,7 +3556,7 @@ async function safeShutdownStep(
     );
 
     console.log(
-      `[shutdown] [OK] ${name}`
+      `[server] âœ“ ${name}`
     );
 
     return {
@@ -3491,7 +3567,7 @@ async function safeShutdownStep(
     error
   ) {
     console.warn(
-      `[shutdown] [WARN] ${name}:`,
+      `[server] ${name} shutdown warning:`,
       error.message
     );
 
@@ -3513,422 +3589,947 @@ async function safeShutdownStep(
 // INITIALIZE SERVICES
 // ============================================================================
 
-function isPostgresPersistence() {
-  return String(
-    process.env.PERSISTENCE_PROVIDER ||
-    "postgres"
-  )
-    .trim()
-    .toLowerCase() === "postgres";
-}
-
-function elapsedMs(startedAt) {
-  return Date.now() - startedAt;
-}
-
 async function initializeServices() {
-  const servicesStartedAt = Date.now();
+  console.log(
+    "[server] Starting backend services..."
+  );
 
-  console.log("[startup] Initializing backend services...");
+  // ==========================================================================
+  // DATABASE
+  // ==========================================================================
 
-  {
-    const startedAt = Date.now();
-    await connectDatabase();
-    console.log(
-      `[startup] [OK] PostgreSQL database connected ${elapsedMs(startedAt)}ms`
+  await connectDatabase();
+
+  console.log(
+    "[server] âœ“ Database connected"
+  );
+
+  // ==========================================================================
+  // SYSTEM HEALTH / INFRASTRUCTURE
+  // ==========================================================================
+
+  try {
+    if (
+      typeof systemHealthService
+        .initialize ===
+      "function"
+    ) {
+      await systemHealthService
+        .initialize();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] System health initialization warning:",
+      error.message
     );
   }
 
-  {
-    const startedAt = Date.now();
-    try {
-      if (typeof systemHealthService.initialize === "function") {
-        await systemHealthService.initialize();
-      }
-      console.log(
-        `[startup] [OK] System health initialized ${elapsedMs(startedAt)}ms`
-      );
-    } catch (error) {
-      console.warn(
-        `[startup] [WARN] System health initialization failed ${elapsedMs(startedAt)}ms:`,
-        error.message
-      );
-    }
+  // ==========================================================================
+  // QUEUE
+  // ==========================================================================
+
+  try {
+    queueService =
+      await getQueueService();
+
+    console.log(
+      queueService
+        ?.connected
+        ? "[server] âœ“ Queue service connected"
+        : "[server] âš  Queue service unavailable"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Queue service initialization warning:",
+      error.message
+    );
+
+    queueService =
+      null;
   }
 
-  await Promise.all([
-    (async () => {
-      const startedAt = Date.now();
-      try {
-        queueService = await getQueueService();
-        if (queueService?.connected) {
-          console.log(
-            `[startup] [OK] RabbitMQ queue connected ${elapsedMs(startedAt)}ms`
-          );
-        } else {
-          console.warn(
-            `[startup] [WARN] RabbitMQ queue unavailable ${elapsedMs(startedAt)}ms`
-          );
-        }
-      } catch (error) {
-        queueService = null;
-        console.warn(
-          `[startup] [WARN] RabbitMQ initialization failed ${elapsedMs(startedAt)}ms:`,
-          error.message
-        );
-      }
-    })(),
+  // ==========================================================================
+  // IDEMPOTENCY
+  // ==========================================================================
 
-    (async () => {
-      const startedAt = Date.now();
-      try {
-        idempotencyService = await getIdempotencyService();
-        if (idempotencyService?.connected) {
-          console.log(
-            `[startup] [OK] Idempotency Redis connected ${elapsedMs(startedAt)}ms`
-          );
-        } else {
-          console.warn(
-            `[startup] [WARN] Idempotency Redis unavailable ${elapsedMs(startedAt)}ms`
-          );
-        }
-      } catch (error) {
-        idempotencyService = null;
-        console.warn(
-          `[startup] [WARN] Idempotency Redis initialization failed ${elapsedMs(startedAt)}ms:`,
-          error.message
-        );
-      }
-    })(),
+  try {
+    idempotencyService =
+      await getIdempotencyService();
 
-    (async () => {
-      const startedAt = Date.now();
-      try {
-        if (
-          distributedLockService &&
-          typeof distributedLockService.connect === "function" &&
-          !distributedLockService.connected
-        ) {
-          await distributedLockService.connect();
-        }
-        if (distributedLockService?.connected) {
-          console.log(
-            `[startup] [OK] Distributed-lock Redis connected ${elapsedMs(startedAt)}ms`
-          );
-        } else {
-          console.warn(
-            `[startup] [WARN] Distributed-lock Redis unavailable ${elapsedMs(startedAt)}ms`
-          );
-        }
-      } catch (error) {
-        console.warn(
-          `[startup] [WARN] Distributed-lock Redis initialization failed ${elapsedMs(startedAt)}ms:`,
-          error.message
-        );
-      }
-    })(),
-  ]);
+    console.log(
+      idempotencyService
+        ?.connected
+        ? "[server] âœ“ Idempotency service connected"
+        : "[server] âš  Idempotency service unavailable"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Idempotency initialization warning:",
+      error.message
+    );
 
-  {
-    const startedAt = Date.now();
-    try {
-      workflowOutboxComposition = createWorkflowOutboxComposition({
+    idempotencyService =
+      null;
+  }
+
+  // ==========================================================================
+  // DISTRIBUTED LOCK REDIS
+  // ==========================================================================
+
+  try {
+    if (
+      distributedLockService &&
+      typeof distributedLockService
+        .connect ===
+      "function" &&
+      !distributedLockService
+        .connected
+    ) {
+      await distributedLockService
+        .connect();
+    }
+
+    console.log(
+      distributedLockService
+        ?.connected
+        ? "[server] âœ“ Distributed lock Redis connected"
+        : "[server] âš  Distributed lock Redis unavailable"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Distributed lock Redis initialization warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // PHASE 11.3 â€” DURABLE WORKFLOW OUTBOX
+  // ==========================================================================
+
+  try {
+    workflowOutboxComposition =
+      createWorkflowOutboxComposition({
         queueService,
         idempotencyService,
         dependencyIsolationService,
       });
 
-      workflowOutboxConsumers = new WorkflowOutboxConsumerRegistry({
+    workflowOutboxConsumers =
+      new WorkflowOutboxConsumerRegistry({
         queueService,
-        composition: workflowOutboxComposition,
+        composition:
+          workflowOutboxComposition,
       });
 
-      workflowOutboxRuntime = new WorkflowOutboxRuntimeController({
-        worker: workflowOutboxComposition.worker,
+    /*
+     * WorkflowOutboxRuntimeController does NOT consume a composition object
+     * directly.
+     *
+     * Its contract requires:
+     *
+     *   worker
+     *   queueService
+     *
+     * createWorkflowOutboxComposition() already builds the canonical
+     * WorkflowOutboxWorker and exposes it as composition.worker.
+     */
+    workflowOutboxRuntime =
+      new WorkflowOutboxRuntimeController({
+        worker:
+          workflowOutboxComposition
+            .worker,
+
         queueService,
       });
 
-      if (typeof workflowOutboxConsumers.start === "function") {
-        await workflowOutboxConsumers.start();
-      }
-      console.log("[workflow-outbox] [OK] Durable outbox consumers started");
-
-      if (isPostgresPersistence()) {
-        console.log(
-          "[workflow-outbox] [SKIP] Global dispatcher disabled for PostgreSQL; scoped/privileged worker required"
-        );
-      } else if (typeof workflowOutboxRuntime.start === "function") {
-        await workflowOutboxRuntime.start();
-        console.log("[workflow-outbox] [OK] Global dispatcher started");
-      }
-
-      console.log(
-        `[startup] [OK] Workflow outbox initialized ${elapsedMs(startedAt)}ms`
-      );
-    } catch (error) {
-      console.warn(
-        `[workflow-outbox] [WARN] Initialization failed ${elapsedMs(startedAt)}ms:`,
-        error.message
-      );
+    if (
+      typeof workflowOutboxConsumers
+        .start ===
+      "function"
+    ) {
+      await workflowOutboxConsumers
+        .start();
     }
+
+    if (
+      typeof workflowOutboxRuntime
+        .start ===
+      "function"
+    ) {
+      await workflowOutboxRuntime
+        .start();
+    }
+
+    console.log(
+      "[workflow-outbox] âœ“ Durable workflow outbox initialized"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[workflow-outbox] Initialization warning:",
+      error.message
+    );
   }
 
-  {
-    const startedAt = Date.now();
-    try {
-      if (workflowOutboxComposition) {
-        if (typeof recoveryDecisionOutboxHandoffService.initialize === "function") {
-          await recoveryDecisionOutboxHandoffService.initialize({
-            composition: workflowOutboxComposition,
-          });
-        }
-        if (typeof executionVerificationOutboxHandoffService.initialize === "function") {
-          await executionVerificationOutboxHandoffService.initialize({
-            composition: workflowOutboxComposition,
-          });
-        }
-        if (typeof verificationLifecycleOutboxHandoffService.initialize === "function") {
-          await verificationLifecycleOutboxHandoffService.initialize({
-            composition: workflowOutboxComposition,
-          });
-        }
-      }
-      console.log(
-        `[startup] [OK] Outbox handoffs registered ${elapsedMs(startedAt)}ms`
-      );
-    } catch (error) {
-      console.warn(
-        `[workflow-outbox] [WARN] Handoff initialization failed ${elapsedMs(startedAt)}ms:`,
-        error.message
-      );
-    }
-  }
+  // ==========================================================================
+  // REGISTER OUTBOX HANDOFFS
+  // ==========================================================================
 
-  await Promise.all([
-    (async () => {
-      const startedAt = Date.now();
-      try {
-        if (typeof diagnosisQueueConsumer.start === "function") {
-          await diagnosisQueueConsumer.start();
-        }
-        console.log(
-          `[startup] [OK] Diagnosis consumer started ${elapsedMs(startedAt)}ms`
-        );
-      } catch (error) {
-        console.warn(
-          `[diagnosis] [WARN] Consumer startup failed ${elapsedMs(startedAt)}ms:`,
-          error.message
-        );
-      }
-    })(),
-    (async () => {
-      const startedAt = Date.now();
-      try {
-        if (typeof recoveryDecisionQueueConsumer.start === "function") {
-          await recoveryDecisionQueueConsumer.start();
-        }
-        console.log(
-          `[startup] [OK] Recovery-decision consumer started ${elapsedMs(startedAt)}ms`
-        );
-      } catch (error) {
-        console.warn(
-          `[recovery] [WARN] Consumer startup failed ${elapsedMs(startedAt)}ms:`,
-          error.message
-        );
-      }
-    })(),
-  ]);
-
-  {
-    const startedAt = Date.now();
-    try {
-      const k8sClient = getK8sClient();
+  try {
+    if (
+      workflowOutboxComposition
+    ) {
       if (
-        k8sClient &&
-        runbookExecutionService &&
-        typeof runbookExecutionService.registerHandler === "function"
+        typeof recoveryDecisionOutboxHandoffService
+          .initialize ===
+        "function"
       ) {
-        runbookExecutionService.registerHandler("kubernetes", k8sClient);
-        console.log(
-          `[startup] [OK] Kubernetes execution handler registered ${elapsedMs(startedAt)}ms`
+        await recoveryDecisionOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
+
+      if (
+        typeof executionVerificationOutboxHandoffService
+          .initialize ===
+        "function"
+      ) {
+        await executionVerificationOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
+
+      if (
+        typeof verificationLifecycleOutboxHandoffService
+          .initialize ===
+        "function"
+      ) {
+        await verificationLifecycleOutboxHandoffService
+          .initialize({
+            composition:
+              workflowOutboxComposition,
+          });
+      }
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[workflow-outbox] Handoff initialization warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // QUEUE CONSUMERS
+  // ==========================================================================
+
+  try {
+    if (
+      typeof diagnosisQueueConsumer
+        .start ===
+      "function"
+    ) {
+      await diagnosisQueueConsumer
+        .start();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[diagnosis] Consumer startup warning:",
+      error.message
+    );
+  }
+
+  try {
+    if (
+      typeof recoveryDecisionQueueConsumer
+        .start ===
+      "function"
+    ) {
+      await recoveryDecisionQueueConsumer
+        .start();
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[recovery] Consumer startup warning:",
+      error.message
+    );
+  }
+
+  // ==========================================================================
+  // KUBERNETES EXECUTION
+  // ==========================================================================
+
+  try {
+    const k8sClient =
+      getK8sClient();
+
+    if (
+      k8sClient &&
+      runbookExecutionService &&
+      typeof runbookExecutionService
+        .registerHandler ===
+      "function"
+    ) {
+      runbookExecutionService
+        .registerHandler(
+          "kubernetes",
+          k8sClient
         );
-      } else {
-        console.log(
-          `[startup] [SKIP] Kubernetes execution handler unavailable ${elapsedMs(startedAt)}ms`
+    }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Kubernetes initialization warning:",
+      error.message
+    );
+
+    console.warn(
+      "[server]    K8s operations will fail if attempted"
+    );
+  }
+
+  // ==========================================================================
+  // MULTI-INSTANCE COORDINATION
+  // ==========================================================================
+
+  try {
+    /*
+     * NODE_INSTANCE_ID is the systemHealthService contract that marks the
+     * deployment as genuinely multi-instance.
+     *
+     * Do not run Redis heartbeat/leader coordination in SINGLE_INSTANCE mode.
+     */
+    if (
+      systemHealthService
+        .isMultiInstance
+    ) {
+      /*
+       * MultiInstanceCoordinator expects a raw node-redis client exposing
+       * hSet(), hGetAll(), hDel(), expire(), etc.
+       *
+       * distributedLockService already owns exactly such a client, so use
+       * that canonical Redis connection instead of creating another client
+       * or constructing the coordinator with undefined.
+       */
+      const coordinatorRedisClient =
+        distributedLockService
+          ?.getRedisClient?.();
+
+      if (
+        !coordinatorRedisClient ||
+        !distributedLockService
+          ?.connected
+      ) {
+        throw Object.assign(
+          new Error(
+            "Multi-instance coordination requires a connected Redis client"
+          ),
+          {
+            code:
+              "MULTI_INSTANCE_REDIS_REQUIRED",
+          }
         );
       }
-    } catch (error) {
-      console.warn(
-        `[startup] [WARN] Kubernetes initialization failed ${elapsedMs(startedAt)}ms:`,
-        error.message
+
+      global
+        .multiInstanceCoordinator =
+        new MultiInstanceCoordinator(
+          coordinatorRedisClient
+        );
+
+      if (
+        typeof global
+          .multiInstanceCoordinator
+          .start ===
+        "function"
+      ) {
+        await global
+          .multiInstanceCoordinator
+          .start();
+      }
+
+      console.log(
+        "[server] âœ“ Multi-instance coordinator started"
+      );
+    } else {
+      /*
+       * Local development / one-replica deployments do not need heartbeat,
+       * leader election or a Redis instance registry.
+       */
+      global
+        .multiInstanceCoordinator =
+        null;
+
+      console.log(
+        "[server] Multi-instance coordinator skipped (SINGLE_INSTANCE mode)"
       );
     }
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Multi-instance coordinator warning:",
+      error.message
+    );
   }
 
-  {
-    const startedAt = Date.now();
-    try {
-      if (systemHealthService.isMultiInstance) {
-        const coordinatorRedisClient = distributedLockService?.getRedisClient?.();
-        if (!coordinatorRedisClient || !distributedLockService?.connected) {
-          throw Object.assign(
-            new Error("Multi-instance coordination requires a connected Redis client"),
-            { code: "MULTI_INSTANCE_REDIS_REQUIRED" }
-          );
-        }
-        global.multiInstanceCoordinator =
-          new MultiInstanceCoordinator(coordinatorRedisClient);
-        if (typeof global.multiInstanceCoordinator.start === "function") {
-          await global.multiInstanceCoordinator.start();
-        }
-        console.log(
-          `[startup] [OK] Multi-instance coordinator started ${elapsedMs(startedAt)}ms`
-        );
-      } else {
-        global.multiInstanceCoordinator = null;
-        console.log(
-          `[startup] [SKIP] Multi-instance coordinator (SINGLE_INSTANCE) ${elapsedMs(startedAt)}ms`
-        );
-      }
-    } catch (error) {
-      console.warn(
-        `[startup] [WARN] Multi-instance coordinator failed ${elapsedMs(startedAt)}ms:`,
-        error.message
-      );
+  // ==========================================================================
+  // MONITOR SCHEDULER
+  // ==========================================================================
+
+  try {
+    global
+      .monitorScheduler =
+      new MonitorScheduler();
+
+    if (
+      typeof global
+        .monitorScheduler
+        .start ===
+      "function"
+    ) {
+      await global
+        .monitorScheduler
+        .start();
     }
+
+    console.log(
+      "[server] âœ“ Monitor scheduler started"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Monitor scheduler warning:",
+      error.message
+    );
   }
 
-  if (isPostgresPersistence()) {
-    global.monitorScheduler = null;
-    console.log(
-      "[monitor-scheduler] [SKIP] Global PostgreSQL monitor scanner disabled; scoped scheduler required"
-    );
-    console.log(
-      "[memory-cleanup] [SKIP] Global PostgreSQL retention scanner disabled; scoped cleanup worker required"
-    );
-    console.log(
-      "[retry-processor] [SKIP] Global PostgreSQL retry scanner disabled; scoped retry worker required"
-    );
-  } else {
-    try {
-      global.monitorScheduler = new MonitorScheduler();
-      if (typeof global.monitorScheduler.start === "function") {
-        await global.monitorScheduler.start();
-      }
-      console.log("[monitor-scheduler] [OK] Monitor scheduler started");
-    } catch (error) {
-      console.warn("[monitor-scheduler] [WARN] Startup failed:", error.message);
+  // ==========================================================================
+  // BACKGROUND JOBS
+  // ==========================================================================
+
+  try {
+    if (
+      typeof memoryCleanupJob
+        .start ===
+      "function"
+    ) {
+      memoryCleanupJob
+        .start();
     }
 
-    try {
-      if (typeof memoryCleanupJob.start === "function") {
-        memoryCleanupJob.start();
-      }
-      console.log("[memory-cleanup] [OK] Memory cleanup job started");
-    } catch (error) {
-      console.warn("[memory-cleanup] [WARN] Startup failed:", error.message);
-    }
-
-    try {
-      if (typeof retryProcessorJob.start === "function") {
-        retryProcessorJob.start();
-      }
-      console.log("[retry-processor] [OK] Retry processor started");
-    } catch (error) {
-      console.warn("[retry-processor] [WARN] Startup failed:", error.message);
-    }
+    console.log(
+      "[server] âœ“ Memory cleanup job started"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Memory cleanup startup warning:",
+      error.message
+    );
   }
 
-  console.log(
-    `[startup] [OK] Backend service initialization complete ${elapsedMs(servicesStartedAt)}ms`
-  );
+  try {
+    if (
+      typeof retryProcessorJob
+        .start ===
+      "function"
+    ) {
+      retryProcessorJob
+        .start();
+    }
+
+    console.log(
+      "[server] âœ“ Retry processor job started"
+    );
+  } catch (
+    error
+  ) {
+    console.warn(
+      "[server] Retry processor startup warning:",
+      error.message
+    );
+  }
 }
 
 // ============================================================================
-// PHASE 11.4 / 11.10 - STARTUP REPLAY RECOVERY
+// PHASE 11.4 / 11.10 â€” STARTUP REPLAY RECOVERY
 // ============================================================================
 
 async function runStartupRecovery() {
-  const startedAt = Date.now();
-
   transitionApplicationState(
-    APPLICATION_STATE.RECOVERING,
+    APPLICATION_STATE
+      .RECOVERING,
     "startup_replay_recovery"
   );
 
-  replayRecoveryStatus.initialized = true;
-  replayRecoveryStatus.startupRecoveryCompleted = false;
-  replayRecoveryStatus.lastRunAt = new Date();
-  replayRecoveryStatus.lastError = null;
-  applicationLifecycle.startupRecoveryCompleted = false;
-  applicationLifecycle.startupRecoveryFailed = false;
+  replayRecoveryStatus
+    .initialized =
+    true;
+
+  replayRecoveryStatus
+    .startupRecoveryCompleted =
+    false;
+
+  replayRecoveryStatus
+    .lastRunAt =
+    new Date();
+
+  replayRecoveryStatus
+    .lastError =
+    null;
+
+  applicationLifecycle
+    .startupRecoveryCompleted =
+    false;
+
+  applicationLifecycle
+    .startupRecoveryFailed =
+    false;
 
   try {
-    if (typeof replayRuntimeIntegration.recoverInterrupted !== "function") {
-      throw Object.assign(
-        new Error("Replay runtime integration does not expose recoverInterrupted()"),
-        { code: "STARTUP_RECOVERY_METHOD_MISSING" }
+    let result =
+      null;
+
+    /*
+     * Support the canonical integration service without assuming
+     * one particular method name. This keeps server.js compatible
+     * with the existing Phase 11.4 implementation while allowing
+     * the replay runtime to evolve independently.
+     */
+    if (
+      typeof replayRuntimeIntegration
+        .recoverStartup ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .recoverStartup();
+    } else if (
+      typeof replayRuntimeIntegration
+        .recover ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .recover();
+    } else if (
+      typeof replayRuntimeIntegration
+        .runStartupRecovery ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .runStartupRecovery();
+    } else if (
+      typeof replayRuntimeIntegration
+        .start ===
+      "function"
+    ) {
+      result =
+        await replayRuntimeIntegration
+          .start();
+    } else {
+      /*
+       * If the Phase 11.4 integration exposes no startup recovery
+       * method, do NOT claim readiness in production.
+       */
+      if (
+        process.env.NODE_ENV ===
+        "production"
+      ) {
+        throw Object.assign(
+          new Error(
+            "Replay runtime integration does not expose a startup recovery method"
+          ),
+          {
+            code:
+              "STARTUP_RECOVERY_METHOD_MISSING",
+          }
+        );
+      }
+
+      console.warn(
+        "[replay-recovery] No startup recovery method exposed; development startup will continue"
       );
+
+      result = {
+        discovered:
+          0,
+
+        recovered:
+          0,
+
+        failed:
+          0,
+      };
     }
 
-    const result = await replayRuntimeIntegration.recoverInterrupted();
+    replayRecoveryStatus
+      .discovered =
+      Number(
+        result
+          ?.discovered ??
+        result
+          ?.discoveredCount ??
+        result
+          ?.total ??
+        0
+      );
 
-    replayRecoveryStatus.discovered = Number(
-      result?.discovered ?? result?.discoveredCount ?? result?.total ?? 0
-    );
-    replayRecoveryStatus.recovered = Number(
-      result?.recovered ?? result?.recoveredCount ?? result?.successful ?? 0
-    );
-    replayRecoveryStatus.failed = Number(
-      result?.failed ?? result?.failedCount ?? 0
-    );
+    replayRecoveryStatus
+      .recovered =
+      Number(
+        result
+          ?.recovered ??
+        result
+          ?.recoveredCount ??
+        result
+          ?.successful ??
+        0
+      );
 
-    if (replayRecoveryStatus.failed > 0) {
+    replayRecoveryStatus
+      .failed =
+      Number(
+        result
+          ?.failed ??
+        result
+          ?.failedCount ??
+        0
+      );
+
+    /*
+     * A startup recovery run that explicitly reports failed
+     * workflows is not considered fully healthy.
+     *
+     * Production fails readiness closed.
+     * Development/test can continue so engineers can inspect state.
+     */
+    if (
+      replayRecoveryStatus
+        .failed >
+      0 &&
+      process.env.NODE_ENV ===
+        "production"
+    ) {
       throw Object.assign(
         new Error(
           `Startup replay recovery completed with ${replayRecoveryStatus.failed} failed workflow(s)`
         ),
-        { code: "STARTUP_RECOVERY_INCOMPLETE" }
+        {
+          code:
+            "STARTUP_RECOVERY_INCOMPLETE",
+        }
       );
     }
 
-    replayRecoveryStatus.startupRecoveryCompleted = true;
-    applicationLifecycle.startupRecoveryCompleted = true;
-    applicationLifecycle.startupRecoveryFailed = false;
+    replayRecoveryStatus
+      .startupRecoveryCompleted =
+      true;
+
+    applicationLifecycle
+      .startupRecoveryCompleted =
+      true;
+
+    applicationLifecycle
+      .startupRecoveryFailed =
+      false;
 
     transitionApplicationState(
-      APPLICATION_STATE.READY,
+      APPLICATION_STATE
+        .READY,
       "startup_recovery_completed"
     );
 
     console.log(
-      `[replay-recovery] [OK] Startup recovery completed discovered=${replayRecoveryStatus.discovered} recovered=${replayRecoveryStatus.recovered} failed=${replayRecoveryStatus.failed} ${elapsedMs(startedAt)}ms`
+      `[replay-recovery] âœ“ Startup recovery completed discovered=${replayRecoveryStatus.discovered} recovered=${replayRecoveryStatus.recovered} failed=${replayRecoveryStatus.failed}`
     );
 
     return result;
-  } catch (error) {
-    replayRecoveryStatus.startupRecoveryCompleted = false;
-    replayRecoveryStatus.lastError = error.message;
-    applicationLifecycle.startupRecoveryCompleted = false;
-    applicationLifecycle.startupRecoveryFailed = true;
+  } catch (
+    error
+  ) {
+    replayRecoveryStatus
+      .startupRecoveryCompleted =
+      false;
+
+    replayRecoveryStatus
+      .lastError =
+      error.message;
+
+    applicationLifecycle
+      .startupRecoveryCompleted =
+      false;
+
+    applicationLifecycle
+      .startupRecoveryFailed =
+      true;
 
     transitionApplicationState(
-      APPLICATION_STATE.FAILED,
+      APPLICATION_STATE
+        .FAILED,
       "startup_recovery_failed",
       error
     );
 
     console.error(
-      `[replay-recovery] [FAIL] Startup recovery failed ${elapsedMs(startedAt)}ms:`,
+      "[replay-recovery] Startup recovery failed:",
       error.message
     );
 
-    throw error;
+    /*
+     * Production must fail closed.
+     *
+     * We keep the HTTP listener alive long enough for readiness
+     * and diagnostics to expose the failure, but operational
+     * admission remains closed.
+     */
+    if (
+      process.env.NODE_ENV ===
+      "production"
+    ) {
+      return {
+        failed:
+          true,
+
+        error:
+          error.message,
+
+        code:
+          error.code ||
+          "STARTUP_RECOVERY_FAILED",
+
+        executionAuthorized:
+          false,
+      };
+    }
+
+    /*
+     * Development/test may continue for debugging, but it is
+     * intentionally NOT marked READY when recovery itself failed.
+     */
+    return {
+      failed:
+        true,
+
+      error:
+        error.message,
+
+      code:
+        error.code ||
+        "STARTUP_RECOVERY_FAILED",
+
+      executionAuthorized:
+        false,
+    };
   }
 }
 
 // ============================================================================
-// PHASE 11.10 - GRACEFUL SHUTDOWN
+// START HTTP SERVER
+// ============================================================================
+
+async function startHttpServer() {
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+      const httpServer =
+        http.createServer(
+          app
+        );
+
+      httpServer
+        .once(
+          "error",
+          reject
+        );
+
+      httpServer
+        .listen(
+          PORT,
+          () => {
+            httpServer
+              .removeListener(
+                "error",
+                reject
+              );
+
+            serverInstance =
+              httpServer;
+
+            console.log(
+              `[server] HTTP listener active on port ${PORT}`
+            );
+
+            console.log(
+              "[server] Process is live; operational readiness depends on startup recovery"
+            );
+
+            resolve(
+              httpServer
+            );
+          }
+        );
+    }
+  );
+}
+
+// ============================================================================
+// MAIN STARTUP
+// ============================================================================
+
+async function startServer() {
+  transitionApplicationState(
+    APPLICATION_STATE
+      .STARTING,
+    "initializing_services"
+  );
+
+  try {
+    /*
+     * Start listener first so orchestration platforms can observe
+     * liveness/readiness while dependency initialization proceeds.
+     */
+    await startHttpServer();
+
+    /*
+     * Existing Phase 1-12 infrastructure.
+     *
+     * PostgreSQL is the authoritative transactional store.
+     */
+    await initializeServices();
+
+    // =========================================================================
+    // PHASE 13.2 â€” POSTGRESQL FOUNDATION
+    // =========================================================================
+
+    /*
+     * PostgreSQL is optional until explicitly enabled.
+     *
+     * If enabled, startup fails closed when PostgreSQL is unavailable.
+     *
+     * We intentionally do NOT run schema migrations automatically here.
+     * Production migrations remain an explicit deployment operation.
+     */
+    await initializePostgresFoundation();
+
+    // =========================================================================
+    // PHASE 12.1 â€” AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
+    // =========================================================================
+
+    initializeAgentOrchestrator(
+      {
+        incidentPlaybookService,
+        memoryService,
+      },
+      {
+        dryRun:
+          String(
+            process.env
+              .AGENT_DRY_RUN ||
+            "false"
+          )
+            .trim()
+            .toLowerCase() ===
+          "true",
+      }
+    );
+
+    console.log(
+      "[server] âœ“ Authoritative agent intelligence runtime initialized"
+    );
+
+    /*
+     * Startup recovery remains the final operational-readiness gate.
+     *
+     * AIRA cannot become READY unless:
+     *
+     * - core infrastructure initialized
+     * - PostgreSQL is healthy when enabled
+     * - authoritative agent runtime initialized
+     * - durable recovery completed
+     */
+    await runStartupRecovery();
+
+    if (
+      isApplicationReady()
+    ) {
+      console.log(
+        `[server] âœ“ AIRA operationally ready on port ${PORT}`
+      );
+    } else {
+      console.warn(
+        `[server] AIRA is live but not operationally ready state=${applicationLifecycle.state}`
+      );
+    }
+  } catch (
+    error
+  ) {
+    transitionApplicationState(
+      APPLICATION_STATE
+        .FAILED,
+      "startup_failed",
+      error
+    );
+
+    console.error(
+      "[server] Startup failed:",
+      error
+    );
+
+    /*
+     * Best-effort cleanup.
+     */
+    try {
+      await shutdown(
+        "STARTUP_FAILURE",
+        {
+          exitProcess:
+            false,
+
+          exitCode:
+            1,
+        }
+      );
+    } catch (
+      shutdownError
+    ) {
+      console.error(
+        "[server] Startup cleanup failed:",
+        shutdownError.message
+      );
+    }
+
+    process.exitCode =
+      1;
+  }
+}
+// ============================================================================
+// PHASE 11.10 â€” GRACEFUL SHUTDOWN
 // ============================================================================
 
 async function shutdown(
@@ -3944,9 +4545,6 @@ async function shutdown(
 
   shutdown.inProgress =
     true;
-
-  const shutdownStartedAt =
-    Date.now();
 
   const exitProcess =
     options.exitProcess !==
@@ -3976,7 +4574,7 @@ async function shutdown(
   shutdown.promise =
     (async () => {
       console.log(
-        `\n[shutdown] AIRA graceful shutdown started signal=${signal}`
+        `\n[server] Shutting down signal=${signal}...`
       );
 
       transitionApplicationState(
@@ -4364,7 +4962,7 @@ async function shutdown(
       );
 
       console.log(
-        `[shutdown] [STOPPED] Graceful shutdown complete duration=${elapsedMs(shutdownStartedAt)}ms`
+        "[server] âœ“ Shutdown complete"
       );
 
       if (

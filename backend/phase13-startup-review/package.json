@@ -49,7 +49,7 @@
     "postgres:verify": "node scripts/postgres-verify.js",
     "postgres:backfill:dry-run": "node scripts/postgres-backfill.js --dry-run",
     "simulate:clean": "rm -rf simulation/results/* && npm run simulate",
-    "deps:up": "docker compose -f ../docker-compose.yml up -d --wait postgres redis rabbitmq",
+    "deps:up": "docker compose -f ../docker-compose.yml up -d postgres redis rabbitmq",
     "deps:down": "docker compose -f ../docker-compose.yml stop postgres redis rabbitmq",
     "deps:status": "docker compose -f ../docker-compose.yml ps postgres redis rabbitmq",
     "deps:logs": "docker compose -f ../docker-compose.yml logs --tail=30 postgres redis rabbitmq",

@@ -9,13 +9,49 @@ const {
   getPostgresPool,
 } =
   require(
-    "../postgres/postgresClient"
+    "../postgres/postgresPool"
   );
 
 class PostgresKubernetesClusterSnapshot {
   static async create(
-    data
+    data = {}
   ) {
+    if (!data.tenantId) {
+      throw Object.assign(
+        new Error(
+          "Kubernetes cluster snapshot requires tenantId"
+        ),
+        {
+          code:
+            "KUBERNETES_SNAPSHOT_TENANT_REQUIRED",
+        }
+      );
+    }
+
+    if (!data.organizationId) {
+      throw Object.assign(
+        new Error(
+          "Kubernetes cluster snapshot requires organizationId"
+        ),
+        {
+          code:
+            "KUBERNETES_SNAPSHOT_ORGANIZATION_REQUIRED",
+        }
+      );
+    }
+
+    if (!data.integrationId) {
+      throw Object.assign(
+        new Error(
+          "Kubernetes cluster snapshot requires integrationId"
+        ),
+        {
+          code:
+            "KUBERNETES_SNAPSHOT_INTEGRATION_REQUIRED",
+        }
+      );
+    }
+
     const pool =
       getPostgresPool();
 
@@ -28,28 +64,52 @@ class PostgresKubernetesClusterSnapshot {
 
     const summary = {
       namespaces:
-        data.summary?.namespaces || 0,
+        Number(
+          data.summary?.namespaces ||
+          0
+        ),
 
       deployments:
-        data.summary?.deployments || 0,
+        Number(
+          data.summary?.deployments ||
+          0
+        ),
 
       pods:
-        data.summary?.pods || 0,
+        Number(
+          data.summary?.pods ||
+          0
+        ),
 
       services:
-        data.summary?.services || 0,
+        Number(
+          data.summary?.services ||
+          0
+        ),
 
       replicaSets:
-        data.summary?.replicaSets || 0,
+        Number(
+          data.summary?.replicaSets ||
+          0
+        ),
 
       nodes:
-        data.summary?.nodes || 0,
+        Number(
+          data.summary?.nodes ||
+          0
+        ),
 
       unhealthyPods:
-        data.summary?.unhealthyPods || 0,
+        Number(
+          data.summary?.unhealthyPods ||
+          0
+        ),
 
       unhealthyNodes:
-        data.summary?.unhealthyNodes || 0,
+        Number(
+          data.summary?.unhealthyNodes ||
+          0
+        ),
     };
 
     const result =
@@ -70,21 +130,25 @@ class PostgresKubernetesClusterSnapshot {
             updated_at
           )
           VALUES (
-            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-            NOW(),NOW()
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7::jsonb,
+            $8,
+            $9,
+            $10,
+            NOW(),
+            NOW()
           )
           RETURNING *
         `,
         [
           id,
-
-          String(
-            data.tenantId
-          ),
-
-          String(
-            data.organizationId
-          ),
+          String(data.tenantId),
+          String(data.organizationId),
 
           data.environmentId
             ? String(
@@ -92,13 +156,13 @@ class PostgresKubernetesClusterSnapshot {
               )
             : null,
 
-          String(
-            data.integrationId
-          ),
+          String(data.integrationId),
 
           discoveredAt,
 
-          summary,
+          JSON.stringify(
+            summary
+          ),
 
           data.durationMs ??
             null,
@@ -137,7 +201,8 @@ class PostgresKubernetesClusterSnapshot {
         row.discovered_at,
 
       summary:
-        row.summary,
+        row.summary ||
+        summary,
 
       durationMs:
         row.duration_ms,
@@ -159,4 +224,3 @@ class PostgresKubernetesClusterSnapshot {
 
 module.exports =
   PostgresKubernetesClusterSnapshot;
-
