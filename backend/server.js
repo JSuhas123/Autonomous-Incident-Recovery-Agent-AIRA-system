@@ -556,6 +556,11 @@ const retentionService =
   require(
     "./services/infrastructure/retentionService"
   );
+const paymentWebhookRoutes =
+  require(
+    "./routes/paymentWebhookRoutes"
+  );
+
 
 const {
   getKillSwitchManager,
@@ -749,6 +754,48 @@ const corsOptions = {
     86400,
 };
 
+// ============================================================================
+// PHASE 15.18 — PAYMENT WEBHOOKS
+// ============================================================================
+//
+// IMPORTANT:
+//
+// Payment-provider webhooks MUST be mounted before express.json().
+//
+// Razorpay and Stripe signatures are verified against the original raw HTTP
+// request body. paymentWebhookRoutes uses express.raw({ type:
+// "application/json" }) internally.
+//
+// Never move this route below express.json().
+// ============================================================================
+
+app.use(
+  "/api/billing/webhooks",
+  paymentWebhookRoutes
+);
+// ============================================================================
+// GLOBAL JSON BODY PARSER
+// ============================================================================
+//
+// IMPORTANT:
+//
+// Payment-provider webhooks are intentionally mounted ABOVE this parser.
+//
+// Razorpay and Stripe webhook signature verification requires the original
+// raw HTTP request body. paymentWebhookRoutes owns its own express.raw()
+// parser, while all normal AIRA JSON APIs use this global parser.
+//
+// Never move this middleware above /api/billing/webhooks.
+// ============================================================================
+
+app.use(
+  express.json()
+);
+
+// ============================================================================
+// GLOBAL HTTP MIDDLEWARE
+// ============================================================================
+
 // 1. CORS headers on every response (including preflight)
 app.use(
   cors(
@@ -756,7 +803,8 @@ app.use(
   )
 );
 
-// 2. Respond 204 to all OPTIONS requests immediately - before any auth middleware
+
+// 2. Respond 204 to all OPTIONS requests immediately — before auth middleware
 app.use(
   (
     req,
@@ -774,14 +822,14 @@ app.use(
         .end();
     }
 
-    next();
+    return next();
   }
 );
 
-app.use(
-  express.json()
-);
 
+
+
+// 4. Parse cookies.
 app.use(
   cookieParser()
 );

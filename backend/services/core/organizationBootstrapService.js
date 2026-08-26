@@ -8,7 +8,12 @@ const {
   require(
     "../../persistence/repositories"
   );
-
+const {
+  PLAN_CODES,
+} =
+  require(
+    "../../constants/plans"
+  );
 
 class OrganizationBootstrapService {
   static async bootstrapOrganization(
@@ -103,7 +108,8 @@ class OrganizationBootstrapService {
               organization._id,
 
             plan:
-              "developer",
+  PLAN_CODES
+    .DEVELOPER,
 
             status:
               "active",

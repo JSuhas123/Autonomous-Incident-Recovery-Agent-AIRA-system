@@ -18,7 +18,8 @@ const {
   );
 
 const {
-  PLAN_VALUES,
+  ACCEPTED_PLAN_VALUES,
+  normalizePlanCode,
 } =
   require(
     "../constants/plans"
@@ -65,8 +66,8 @@ const changePlanSchema =
     plan:
       Joi.string()
         .valid(
-          ...PLAN_VALUES
-        )
+  ...ACCEPTED_PLAN_VALUES
+)
         .required(),
   });
 
@@ -278,10 +279,31 @@ router.post(
     next
   ) => {
     try {
-      const {
-        plan,
-      } =
-        req.validatedBody;
+    const requestedPlan =
+  req.validatedBody
+    .plan;
+
+const plan =
+  normalizePlanCode(
+    requestedPlan
+  );
+
+if (
+  !plan
+) {
+  throw Object.assign(
+    new Error(
+      "Unsupported commercial plan"
+    ),
+    {
+      code:
+        "PLAN_INVALID",
+
+      status:
+        422,
+    }
+  );
+}
 
       const organizationId =
         String(

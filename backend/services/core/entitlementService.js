@@ -6,16 +6,29 @@ const {
   require(
     "../../persistence/repositories"
   );
-
 const {
-  PLAN_ENTITLEMENTS,
+  billingRuntimeCacheService,
 } =
   require(
-    "../../constants/entitlements"
+    "../billing/billingRuntimeCacheService"
+  );
+
+const PostgresBillingCatalogueRepository =
+  require(
+    "../../persistence/postgres/PostgresBillingCatalogueRepository"
+  );
+
+const {
+  PLAN_CODES,
+  normalizePlanCode,
+} =
+  require(
+    "../../constants/plans"
   );
 
 
 class EntitlementService {
+
   static createError(
     message,
     code,
@@ -42,6 +55,34 @@ class EntitlementService {
   }
 
 
+  static getBillingRepository() {
+    if (
+      !this
+        .billingRepository
+    ) {
+      this.billingRepository =
+        new PostgresBillingCatalogueRepository();
+    }
+
+    return this
+      .billingRepository;
+  }
+
+
+  static normalizeSubscriptionPlan(
+    subscription
+  ) {
+    return (
+      normalizePlanCode(
+        subscription
+          ?.plan
+      ) ||
+      PLAN_CODES
+        .DEVELOPER
+    );
+  }
+
+
   static async getSubscription(
     organizationId
   ) {
@@ -50,6 +91,7 @@ class EntitlementService {
         .findOne({
           organizationId,
         });
+
 
     if (
       !subscription
@@ -60,10 +102,17 @@ class EntitlementService {
             organizationId,
 
             plan:
-              "developer",
+              PLAN_CODES
+                .DEVELOPER,
 
             status:
               "active",
+
+            billingInterval:
+              "monthly",
+
+            currency:
+              "USD",
 
             startedAt:
               new Date(),
@@ -72,6 +121,7 @@ class EntitlementService {
               {},
           });
     }
+
 
     return subscription;
   }
@@ -90,11 +140,14 @@ class EntitlementService {
       );
     }
 
+
     if (
-      subscription.status ===
-        "suspended" ||
-      subscription.status ===
-        "cancelled"
+      [
+        "suspended",
+        "cancelled",
+      ].includes(
+        subscription.status
+      )
     ) {
       throw this.createError(
         "Subscription is not active",
@@ -107,8 +160,161 @@ class EntitlementService {
       );
     }
 
+
     return true;
   }
+
+
+  static deserializeEntitlement(
+    row
+  ) {
+    switch (
+      row.value_type
+    ) {
+
+      case "BOOLEAN":
+        return row
+          .boolean_value;
+
+
+      case "INTEGER":
+        return Number(
+          row.integer_value
+        );
+
+
+      case "STRING":
+        return row
+          .text_value;
+
+
+      case "JSON":
+        return row
+          .json_value;
+
+
+      case "UNLIMITED":
+        return null;
+
+
+      default:
+        throw this.createError(
+          "Unsupported entitlement value type",
+          "INVALID_ENTITLEMENT_CONFIGURATION",
+          500,
+          {
+            entitlement:
+              row.entitlement_key,
+
+            valueType:
+              row.value_type,
+          }
+        );
+    }
+  }
+
+
+  static async resolveDatabaseEntitlements(
+  organizationId
+) {
+  /**
+   * Redis is only an acceleration layer.
+   *
+   * Cache failure or cache miss always falls back to PostgreSQL.
+   */
+  const cached =
+    await billingRuntimeCacheService
+      .getEntitlements(
+        organizationId
+      );
+
+
+  if (
+    cached &&
+    cached.entitlements &&
+    typeof cached.entitlements ===
+      "object"
+  ) {
+    return {
+      entitlements:
+        cached.entitlements,
+
+      overrides:
+        cached.overrides ||
+        {},
+
+      source:
+        "redis",
+    };
+  }
+
+
+  const rows =
+    await this
+      .getBillingRepository()
+      .getEffectiveEntitlements(
+        organizationId
+      );
+
+
+  const entitlements =
+    {};
+
+
+  const overrides =
+    {};
+
+
+  for (
+    const row
+    of rows
+  ) {
+    entitlements[
+      row.entitlement_key
+    ] =
+      this
+        .deserializeEntitlement(
+          row
+        );
+
+
+    if (
+      row.overridden
+    ) {
+      overrides[
+        row.entitlement_key
+      ] =
+        true;
+    }
+  }
+
+
+  const snapshot = {
+    entitlements,
+    overrides,
+  };
+
+
+  /**
+   * Best effort only.
+   *
+   * A Redis write failure MUST NOT turn a valid PostgreSQL entitlement
+   * decision into an application failure.
+   */
+  await billingRuntimeCacheService
+    .setEntitlements(
+      organizationId,
+      snapshot
+    );
+
+
+  return {
+    ...snapshot,
+
+    source:
+      "postgres",
+  };
+}
 
 
   static async getPlan(
@@ -120,13 +326,17 @@ class EntitlementService {
           organizationId
         );
 
+
     this
       .assertSubscriptionUsable(
         subscription
       );
 
-    return subscription
-      .plan;
+
+    return this
+      .normalizeSubscriptionPlan(
+        subscription
+      );
   }
 
 
@@ -139,18 +349,46 @@ class EntitlementService {
           organizationId
         );
 
+
     this
       .assertSubscriptionUsable(
         subscription
       );
 
-    return (
-      PLAN_ENTITLEMENTS[
-        subscription.plan
-      ] ||
-      PLAN_ENTITLEMENTS
-        .developer
-    );
+
+    const {
+      entitlements,
+    } =
+      await this
+        .resolveDatabaseEntitlements(
+          organizationId
+        );
+
+
+    if (
+      Object.keys(
+        entitlements
+      ).length ===
+      0
+    ) {
+      throw this.createError(
+        "No database-backed entitlements resolved for subscription",
+        "ENTITLEMENT_CONFIGURATION_MISSING",
+        500,
+        {
+          organizationId,
+
+          plan:
+            this
+              .normalizeSubscriptionPlan(
+                subscription
+              ),
+        }
+      );
+    }
+
+
+    return entitlements;
   }
 
 
@@ -163,6 +401,7 @@ class EntitlementService {
         .getEntitlements(
           organizationId
         );
+
 
     return entitlements[
       entitlementKey
@@ -181,6 +420,7 @@ class EntitlementService {
           entitlementKey
         );
 
+
     return value ===
       true;
   }
@@ -196,23 +436,20 @@ class EntitlementService {
           organizationId
         );
 
+
     this
       .assertSubscriptionUsable(
         subscription
       );
 
-    const entitlements =
-      PLAN_ENTITLEMENTS[
-        subscription.plan
-      ] ||
-      PLAN_ENTITLEMENTS
-        .developer;
 
     const enabled =
-      entitlements[
-        entitlementKey
-      ] ===
-      true;
+      await this
+        .isEnabled(
+          organizationId,
+          entitlementKey
+        );
+
 
     if (
       !enabled
@@ -226,10 +463,14 @@ class EntitlementService {
             entitlementKey,
 
           plan:
-            subscription.plan,
+            this
+              .normalizeSubscriptionPlan(
+                subscription
+              ),
         }
       );
     }
+
 
     return true;
   }
@@ -247,31 +488,28 @@ class EntitlementService {
           organizationId
         );
 
+
     this
       .assertSubscriptionUsable(
         subscription
       );
 
-    const entitlements =
-      PLAN_ENTITLEMENTS[
-        subscription.plan
-      ] ||
-      PLAN_ENTITLEMENTS
-        .developer;
 
     const limit =
-      entitlements[
-        entitlementKey
-      ];
+      await this
+        .getEntitlement(
+          organizationId,
+          entitlementKey
+        );
+
 
     if (
       limit ===
-        null ||
-      limit ===
-        undefined
+        null
     ) {
       return true;
     }
+
 
     if (
       typeof limit !==
@@ -286,20 +524,26 @@ class EntitlementService {
             entitlementKey,
 
           plan:
-            subscription.plan,
+            this
+              .normalizeSubscriptionPlan(
+                subscription
+              ),
         }
       );
     }
+
 
     const normalizedCurrentUsage =
       Number(
         currentUsage
       );
 
+
     const normalizedRequestedIncrease =
       Number(
         requestedIncrease
       );
+
 
     if (
       !Number.isFinite(
@@ -319,6 +563,7 @@ class EntitlementService {
       );
     }
 
+
     if (
       !Number.isFinite(
         normalizedRequestedIncrease
@@ -337,13 +582,15 @@ class EntitlementService {
       );
     }
 
+
     const projectedUsage =
       normalizedCurrentUsage +
       normalizedRequestedIncrease;
 
+
     if (
       projectedUsage >
-      limit
+        limit
     ) {
       throw this.createError(
         "Plan limit reached",
@@ -354,7 +601,10 @@ class EntitlementService {
             entitlementKey,
 
           plan:
-            subscription.plan,
+            this
+              .normalizeSubscriptionPlan(
+                subscription
+              ),
 
           limit,
 
@@ -369,6 +619,7 @@ class EntitlementService {
       );
     }
 
+
     return true;
   }
 
@@ -382,28 +633,59 @@ class EntitlementService {
           organizationId
         );
 
+
     this
       .assertSubscriptionUsable(
         subscription
       );
 
-    const entitlements =
-      PLAN_ENTITLEMENTS[
-        subscription.plan
-      ] ||
-      PLAN_ENTITLEMENTS
-        .developer;
+
+    const {
+      entitlements,
+      overrides,
+    } =
+      await this
+        .resolveDatabaseEntitlements(
+          organizationId
+        );
+
 
     return {
       plan:
+        this
+          .normalizeSubscriptionPlan(
+            subscription
+          ),
+
+      storedPlan:
         subscription.plan,
+
+      planVersionId:
+        subscription
+          .planVersionId ||
+        null,
+
+      priceId:
+        subscription
+          .priceId ||
+        null,
 
       status:
         subscription.status,
 
-      entitlements: {
-        ...entitlements,
-      },
+      billingInterval:
+        subscription
+          .billingInterval ||
+        null,
+
+      currency:
+        subscription
+          .currency ||
+        null,
+
+      entitlements,
+
+      overrides,
 
       startedAt:
         subscription
@@ -412,6 +694,36 @@ class EntitlementService {
       endsAt:
         subscription
           .endsAt,
+
+      trialStartedAt:
+        subscription
+          .trialStartedAt ||
+        null,
+
+      trialEndsAt:
+        subscription
+          .trialEndsAt ||
+        null,
+
+      currentPeriodStartedAt:
+        subscription
+          .currentPeriodStartedAt ||
+        null,
+
+      currentPeriodEndsAt:
+        subscription
+          .currentPeriodEndsAt ||
+        null,
+
+      cancelAtPeriodEnd:
+        subscription
+          .cancelAtPeriodEnd ===
+        true,
+
+      cancelledAt:
+        subscription
+          .cancelledAt ||
+        null,
     };
   }
 }

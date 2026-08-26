@@ -1,0 +1,160 @@
+"use strict";
+
+
+const RECONCILIATION_RUN_TYPES =
+  Object.freeze({
+
+    PAYMENT:
+      "PAYMENT",
+
+    WEBHOOK:
+      "WEBHOOK",
+
+    SUBSCRIPTION:
+      "SUBSCRIPTION",
+
+    FULL:
+      "FULL",
+  });
+
+
+const RECONCILIATION_RUN_STATUS =
+  Object.freeze({
+
+    RUNNING:
+      "RUNNING",
+
+    COMPLETED:
+      "COMPLETED",
+
+    PARTIAL:
+      "PARTIAL",
+
+    FAILED:
+      "FAILED",
+  });
+
+
+const RECONCILIATION_CLASSIFICATION =
+  Object.freeze({
+
+    MATCH:
+      "MATCH",
+
+    REPAIRABLE_DRIFT:
+      "REPAIRABLE_DRIFT",
+
+    SUSPICIOUS_DRIFT:
+      "SUSPICIOUS_DRIFT",
+
+    ORPHAN_PROVIDER_OBJECT:
+      "ORPHAN_PROVIDER_OBJECT",
+
+    STALE_PROCESSING:
+      "STALE_PROCESSING",
+
+    FAILED_WEBHOOK:
+      "FAILED_WEBHOOK",
+
+    SUBSCRIPTION_DRIFT:
+      "SUBSCRIPTION_DRIFT",
+  });
+
+
+const RECONCILIATION_REPAIR_STATUS =
+  Object.freeze({
+
+    NOT_REQUIRED:
+      "NOT_REQUIRED",
+
+    PENDING:
+      "PENDING",
+
+    REPAIRED:
+      "REPAIRED",
+
+    FAILED:
+      "FAILED",
+
+    MANUAL_REVIEW:
+      "MANUAL_REVIEW",
+  });
+
+
+const RECONCILIATION_SEVERITY =
+  Object.freeze({
+
+    INFO:
+      "INFO",
+
+    WARNING:
+      "WARNING",
+
+    CRITICAL:
+      "CRITICAL",
+  });
+
+
+const SUBSCRIPTION_CHANGE_TYPES =
+  Object.freeze({
+
+    CREATED:
+      "CREATED",
+
+    ACTIVATED:
+      "ACTIVATED",
+
+    PLAN_CHANGED:
+      "PLAN_CHANGED",
+
+    PRICE_CHANGED:
+      "PRICE_CHANGED",
+
+    PERIOD_CHANGED:
+      "PERIOD_CHANGED",
+
+    CANCEL_AT_PERIOD_END:
+      "CANCEL_AT_PERIOD_END",
+
+    CANCELLED:
+      "CANCELLED",
+
+    PAST_DUE:
+      "PAST_DUE",
+
+    PAUSED:
+      "PAUSED",
+
+    RESUMED:
+      "RESUMED",
+
+    RECONCILED:
+      "RECONCILED",
+  });
+
+
+const STALE_PAYMENT_PROCESSING_MS =
+  Number(
+    process.env
+      .BILLING_STALE_PAYMENT_PROCESSING_MS ||
+    15 *
+    60 *
+    1000
+  );
+
+
+module.exports = {
+  RECONCILIATION_RUN_TYPES,
+
+  RECONCILIATION_RUN_STATUS,
+
+  RECONCILIATION_CLASSIFICATION,
+
+  RECONCILIATION_REPAIR_STATUS,
+
+  RECONCILIATION_SEVERITY,
+
+  SUBSCRIPTION_CHANGE_TYPES,
+
+  STALE_PAYMENT_PROCESSING_MS,
+};
