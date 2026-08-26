@@ -41,6 +41,69 @@ const AUTH_EVENT_TYPES = {
   INTEGRATION_DELETED:        "integration_deleted",
   INTEGRATION_SECRET_ROTATED: "integration_secret_rotated",
   INTEGRATION_TEST_RUN:       "integration_test_run",
+
+  // Phase 14.10 — Notification routing
+NOTIFICATION_CHANNEL_CREATED:
+  "notification_channel_created",
+
+NOTIFICATION_CHANNEL_UPDATED:
+  "notification_channel_updated",
+
+NOTIFICATION_RULE_CREATED:
+  "notification_rule_created",
+
+NOTIFICATION_RULE_UPDATED:
+  "notification_rule_updated",
+
+NOTIFICATION_DELIVERED:
+  "notification_delivered",
+
+NOTIFICATION_DELIVERY_FAILED:
+  "notification_delivery_failed",
+
+
+// Phase 14.11 — Human operations
+HUMAN_TASK_CREATED:
+  "human_task_created",
+
+HUMAN_TASK_ASSIGNED:
+  "human_task_assigned",
+
+HUMAN_TASK_ACKNOWLEDGED:
+  "human_task_acknowledged",
+
+HUMAN_TASK_RESOLVED:
+  "human_task_resolved",
+
+HUMAN_TASK_CANCELLED:
+  "human_task_cancelled",
+
+HUMAN_TASK_ESCALATED:
+  "human_task_escalated",
+  // Phase 14.12 — SaaS onboarding
+ONBOARDING_STARTED:
+  "onboarding_started",
+
+ONBOARDING_STEP_COMPLETED:
+  "onboarding_step_completed",
+
+ONBOARDING_STEP_SKIPPED:
+  "onboarding_step_skipped",
+
+ONBOARDING_COMPLETED:
+  "onboarding_completed",
+  // Phase 14.13 — Audit completeness
+AUDIT_INTEGRITY_VERIFIED:
+  "audit_integrity_verified",
+
+AUDIT_INTEGRITY_FAILED:
+  "audit_integrity_failed",
+
+AUDIT_CERTIFICATION_RUN:
+  "audit_certification_run",
+
+AUDIT_EXPORT_CREATED:
+  "audit_export_created",
 };
 
 const AUTH_EVENT_TYPE_VALUES = Object.values(AUTH_EVENT_TYPES);

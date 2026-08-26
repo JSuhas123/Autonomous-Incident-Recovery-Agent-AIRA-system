@@ -296,12 +296,41 @@ class PostgresMigrationRunner {
           filename
         );
 
-      const sql =
-        await fs
-          .readFile(
-            fullPath,
-            "utf8"
-          );
+      const rawSql =
+  await fs
+    .readFile(
+      fullPath,
+      "utf8"
+    );
+
+/**
+ * Migration files may accidentally be saved as UTF-8 with BOM,
+ * particularly when edited on Windows.
+ *
+ * PostgreSQL's wire protocol receives U+FEFF as part of the SQL text,
+ * which can produce:
+ *
+ *   syntax error at or near "CREATE"
+ *   position: 1
+ *
+ * Some command-line tools transparently strip the BOM, which makes
+ * the same migration appear valid through psql while failing through
+ * node-postgres.
+ *
+ * Normalize the migration before:
+ *
+ * - emptiness validation
+ * - checksum generation
+ * - SQL execution
+ *
+ * Only an actual leading BOM is removed. The SQL body is otherwise
+ * byte-for-byte logically unchanged.
+ */
+const sql =
+  rawSql.charCodeAt(0) ===
+  0xfeff
+    ? rawSql.slice(1)
+    : rawSql;
 
       if (
         sql.trim() ===
@@ -341,90 +370,161 @@ class PostgresMigrationRunner {
     return migrations;
   }
 
-  async applyMigration(
-    client,
-    migration
+ async applyMigration(
+  client,
+  migration
+) {
+  const startedAt =
+    Date.now();
+
+  await client.query(
+    "BEGIN"
+  );
+
+  try {
+    /**
+     * Repository migrations contain trusted SQL and can contain multiple
+     * statements.
+     *
+     * A plain text-only node-postgres query uses the appropriate PostgreSQL
+     * text-query path. Do not attach values, a prepared-statement name, or
+     * queryMode here.
+     */
+    await client.query(
+      migration.sql
+    );
+
+    const executionMs =
+      Date.now() -
+      startedAt;
+
+    await client.query(
+      `
+        INSERT INTO aira_schema_migrations (
+          version,
+          filename,
+          checksum,
+          execution_ms
+        )
+        VALUES ($1, $2, $3, $4)
+      `,
+      [
+        migration.version,
+        migration.filename,
+        migration.checksum,
+        executionMs,
+      ]
+    );
+
+    await client.query(
+      "COMMIT"
+    );
+
+    console.log(
+      `[postgres-migration] ✓ ${migration.filename}`
+    );
+
+    return {
+      version:
+        migration.version,
+
+      filename:
+        migration.filename,
+
+      status:
+        "applied",
+
+      executionMs,
+    };
+  } catch (
+    error
   ) {
-    const startedAt =
-      Date.now();
-
-    await client
-      .query(
-        "BEGIN"
-      );
-
     try {
-      await client
-        .query(
-          migration.sql
-        );
-
-      const executionMs =
-        Date.now() -
-        startedAt;
-
-      await client
-        .query(
-          `
-            INSERT INTO aira_schema_migrations (
-              version,
-              filename,
-              checksum,
-              execution_ms
-            )
-            VALUES ($1, $2, $3, $4)
-          `,
-          [
-            migration.version,
-            migration.filename,
-            migration.checksum,
-            executionMs,
-          ]
-        );
-
-      await client
-        .query(
-          "COMMIT"
-        );
-
-      console.log(
-        `[postgres-migration] ✓ ${migration.filename}`
+      await client.query(
+        "ROLLBACK"
       );
+    } catch (
+      rollbackError
+    ) {
+      error.rollbackError =
+        rollbackError;
+    }
 
-      return {
+    error.migration =
+      migration.filename;
+
+    console.error(
+      "[postgres-migration] SQL execution failed:",
+      {
+        migration:
+          migration.filename,
+
         version:
           migration.version,
 
-        filename:
-          migration.filename,
+        code:
+          error.code,
 
-        status:
-          "applied",
+        message:
+          error.message,
 
-        executionMs,
-      };
-    } catch (
-      error
-    ) {
-      try {
-        await client
-          .query(
-            "ROLLBACK"
-          );
-      } catch (
-        rollbackError
-      ) {
-        error
-          .rollbackError =
-          rollbackError;
+        position:
+          error.position ||
+          null,
+
+        detail:
+          error.detail ||
+          null,
+
+        hint:
+          error.hint ||
+          null,
+
+        where:
+          error.where ||
+          null,
+
+        routine:
+          error.routine ||
+          null,
       }
+    );
 
-      error.migration =
-        migration.filename;
+    if (
+      error.position
+    ) {
+      const position =
+        Math.max(
+          Number(
+            error.position
+          ) - 1,
+          0
+        );
 
-      throw error;
+      const start =
+        Math.max(
+          0,
+          position - 250
+        );
+
+      const end =
+        Math.min(
+          migration.sql.length,
+          position + 250
+        );
+
+      console.error(
+        "[postgres-migration] SQL around failure:\n" +
+        migration.sql.slice(
+          start,
+          end
+        )
+      );
     }
+
+    throw error;
   }
+}
 }
 
 function parseMigrationFilename(

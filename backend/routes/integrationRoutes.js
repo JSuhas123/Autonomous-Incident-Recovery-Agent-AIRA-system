@@ -36,8 +36,23 @@ const {
 } = require("../constants/authEvents");
 
 const {
+  browserOrganizationContext,
   browserEnvironmentContext,
-} = require("../middleware/contextMiddleware");
+} = require(
+  "../middleware/contextMiddleware"
+);
+
+const {
+  PERMISSIONS,
+} = require(
+  "../constants/permissions"
+);
+
+const {
+  requirePermission,
+} = require(
+  "../middleware/authorizationMiddleware"
+);
 
 const kubernetesDiscoveryService =
   require("../services/discovery/kubernetesDiscoveryService");
@@ -198,14 +213,23 @@ async function loadConnection(
   } =
     req.params;
 
+  /**
+   * Phase 14:
+   *
+   * Use the persistence-neutral identifier validator already used elsewhere
+   * in this route.
+   *
+   * Do NOT depend directly on mongoose.Types.ObjectId here.
+   */
   if (
-    !mongoose.Types.ObjectId
-      .isValid(
-        integrationId
-      )
+    !isDatabaseIdentifier(
+      integrationId
+    )
   ) {
     res
-      .status(404)
+      .status(
+        404
+      )
       .json({
         error:
           "Integration not found",
@@ -220,19 +244,26 @@ async function loadConnection(
   const organizationId =
     req.context
       ?.organizationId ||
-    req.auth
-      ?.organizationId;
+    null;
 
   const environmentId =
     req.context
-      ?.environmentId;
+      ?.environmentId ||
+    null;
 
+  /**
+   * IntegrationConnection is an environment-owned operational resource.
+   *
+   * Never perform an unscoped integration lookup.
+   */
   if (
     !organizationId ||
     !environmentId
   ) {
     res
-      .status(400)
+      .status(
+        400
+      )
       .json({
         error:
           "Environment context is required",
@@ -255,10 +286,11 @@ async function loadConnection(
         environmentId,
       });
 
-  /*
-   * Credential access is opt-in.
+  /**
+   * Credential ciphertext is opt-in.
    *
-   * Ordinary GET/PATCH requests cannot accidentally read ciphertext.
+   * Normal reads and updates must never accidentally load encrypted
+   * credential material.
    */
   if (
     includeSecret
@@ -272,9 +304,19 @@ async function loadConnection(
   const connection =
     await query;
 
-  if (!connection) {
+  /**
+   * Returning 404 instead of 403 is intentional.
+   *
+   * If the ID exists in another organization/environment, we do not reveal
+   * that fact.
+   */
+  if (
+    !connection
+  ) {
     res
-      .status(404)
+      .status(
+        404
+      )
       .json({
         error:
           "Integration not found",
@@ -327,11 +369,14 @@ async function validateScopedServiceIds(
   }
 
   const organizationId =
-    req.context?.organizationId ||
-    req.auth?.organizationId;
+  req.context
+    ?.organizationId ||
+  null;
 
-  const environmentId =
-    req.context?.environmentId;
+const environmentId =
+  req.context
+    ?.environmentId ||
+  null;
 
   if (
     !organizationId ||
@@ -500,11 +545,31 @@ const rotateSecretSchema =
 
 router.get(
   "/definitions",
-  async (_req, res) => {
-    return res.json({
-      definitions:
-        CATALOGUE,
-    });
+
+  ...browserOrganizationContext,
+
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_READ
+  ),
+
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      return res.json({
+        definitions:
+          CATALOGUE,
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
   }
 );
 
@@ -535,31 +600,51 @@ router.use(
 
 router.get(
   "/connections",
-  async (req, res) => {
-    const connections =
-      await IntegrationConnection
-        .find({
-          organizationId:
-            req.context.organizationId,
 
-          environmentId:
-            req.context.environmentId,
-        })
-        .sort({
-          createdAt:
-            -1,
-        })
-        .lean();
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_READ
+  ),
 
-    return res.json({
-      integrations:
-        connections.map(
-          safeConnection
-        ),
+  async (
+    req,
+    res,
+    next
+  ) => {
+    try {
+      const connections =
+        await IntegrationConnection
+          .find({
+            organizationId:
+              req.context
+                .organizationId,
 
-      count:
-        connections.length,
-    });
+            environmentId:
+              req.context
+                .environmentId,
+          })
+          .sort({
+            createdAt:
+              -1,
+          })
+          .lean();
+
+      return res.json({
+        integrations:
+          connections.map(
+            safeConnection
+          ),
+
+        count:
+          connections.length,
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    }
   }
 );
 
@@ -569,7 +654,18 @@ router.get(
 
 router.post(
   "/connections",
-  async (req, res) => {
+
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_MANAGE
+  ),
+
+  requireCredentialPermissionWhenSecretPresent,
+
+  async (
+    req,
+    res
+  ) => {
     const {
       error,
       value,
@@ -677,8 +773,7 @@ router.post(
             req.context.environmentId,
 
           tenantId:
-            req.context.tenantId ||
-            req.auth.tenantId,
+            req.context.tenantId,
 
           provider:
             value.provider,
@@ -706,7 +801,7 @@ router.post(
             "connected",
 
           createdBy:
-            req.auth.userId,
+            req.context.userId,
         });
 
     auditRecord(
@@ -717,16 +812,14 @@ router.post(
         .SUCCESS,
 
       {
-        userId:
-          req.auth.userId,
+       userId:
+  req.context.userId,
 
-        organizationId:
-          req.context
-            .organizationId,
+organizationId:
+  req.context.organizationId,
 
-        tenantId:
-          req.context.tenantId ||
-          req.auth.tenantId,
+tenantId:
+  req.context.tenantId,
 
         metadata: {
           integrationId:
@@ -761,32 +854,41 @@ router.post(
 
 router.get(
   "/connections/:integrationId",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res
-      );
 
-    if (!connection) {
-      return;
+  requirePermission(
+    PERMISSIONS.INTEGRATION_READ
+  ),
+
+  async (req, res, next) => {
+    try {
+      const connection =
+        await loadConnection(
+          req,
+          res
+        );
+
+      if (!connection) {
+        return;
+      }
+
+      const def =
+        findDefinition(
+          connection.provider
+        );
+
+      return res.json({
+        integration: {
+          ...safeConnection(
+            connection
+          ),
+
+          definition:
+            def ?? null,
+        },
+      });
+    } catch (error) {
+      return next(error);
     }
-
-    const def =
-      findDefinition(
-        connection.provider
-      );
-
-    return res.json({
-      integration: {
-        ...safeConnection(
-          connection
-        ),
-
-        definition:
-          def ?? null,
-      },
-    });
   }
 );
 
@@ -796,132 +898,143 @@ router.get(
 
 router.patch(
   "/connections/:integrationId",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS.INTEGRATION_MANAGE
+  ),
 
-    const {
-      error,
-      value,
-    } =
-      updateSchema.validate(
-        req.body
-      );
-
-    if (error) {
-      return res
-        .status(422)
-        .json({
-          error:
-            error.details[0]
-              .message,
-
-          code:
-            "VALIDATION_ERROR",
-        });
-    }
-
-    if (
-      value.name != null
-    ) {
-      connection.name =
-        value.name;
-    }
-
-    if (
-      value.serviceIds != null
-    ) {
-      const scopedServiceIds =
-        await validateScopedServiceIds(
+  async (req, res, next) => {
+    try {
+      const connection =
+        await loadConnection(
           req,
-          res,
-          value.serviceIds
+          res
         );
 
-      if (!scopedServiceIds) {
+      if (!connection) {
         return;
       }
 
-      connection.serviceIds =
-        scopedServiceIds;
-    }
-
-    if (
-      value.nonSecretConfig !=
-      null
-    ) {
-      const adapter =
-        getAdapter(
-          connection.provider
+      const {
+        error,
+        value,
+      } =
+        updateSchema.validate(
+          req.body
         );
 
-      const validation =
-        await adapter
-          .validateConfiguration(
-            value.nonSecretConfig
-          );
-
-      if (!validation.valid) {
+      if (error) {
         return res
           .status(422)
           .json({
             error:
-              "Configuration invalid",
-
-            details:
-              validation.errors,
+              error.details[0]
+                .message,
 
             code:
-              "INVALID_CONFIGURATION",
+              "VALIDATION_ERROR",
           });
       }
 
-      connection.nonSecretConfig =
-        value.nonSecretConfig;
-    }
-
-    await connection.save();
-
-    auditRecord(
-      AUTH_EVENT_TYPES
-        .INTEGRATION_UPDATED,
-
-      AUTH_EVENT_OUTCOMES
-        .SUCCESS,
-
-      {
-        userId:
-          req.auth.userId,
-
-        organizationId:
-          connection.organizationId,
-
-        tenantId:
-          connection.tenantId,
-
-        metadata: {
-          integrationId:
-            connection._id,
-
-          environmentId:
-            connection.environmentId,
-        },
+      if (
+        value.name != null
+      ) {
+        connection.name =
+          value.name;
       }
-    ).catch(() => {});
 
-    return res.json({
-      integration:
-        safeConnection(
-          connection
-        ),
-    });
+      if (
+        value.serviceIds != null
+      ) {
+        const scopedServiceIds =
+          await validateScopedServiceIds(
+            req,
+            res,
+            value.serviceIds
+          );
+
+        if (!scopedServiceIds) {
+          return;
+        }
+
+        connection.serviceIds =
+          scopedServiceIds;
+      }
+
+      if (
+        value.nonSecretConfig !=
+        null
+      ) {
+        const adapter =
+          getAdapter(
+            connection.provider
+          );
+
+        const validation =
+          await adapter
+            .validateConfiguration(
+              value.nonSecretConfig
+            );
+
+        if (!validation.valid) {
+          return res
+            .status(422)
+            .json({
+              error:
+                "Configuration invalid",
+
+              details:
+                validation.errors,
+
+              code:
+                "INVALID_CONFIGURATION",
+            });
+        }
+
+        connection.nonSecretConfig =
+          value.nonSecretConfig;
+      }
+
+      await connection.save();
+
+      auditRecord(
+        AUTH_EVENT_TYPES
+          .INTEGRATION_UPDATED,
+
+        AUTH_EVENT_OUTCOMES
+          .SUCCESS,
+
+        {
+          userId:
+            req.context.userId,
+
+          organizationId:
+            req.context
+              .organizationId,
+
+          tenantId:
+            req.context
+              .tenantId,
+
+          metadata: {
+            integrationId:
+              connection._id,
+
+            environmentId:
+              connection.environmentId,
+          },
+        }
+      ).catch(() => {});
+
+      return res.json({
+        integration:
+          safeConnection(
+            connection
+          ),
+      });
+    } catch (error) {
+      return next(error);
+    }
   }
 );
 
@@ -931,60 +1044,104 @@ router.patch(
 
 router.post(
   "/connections/:integrationId/test",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res,
-        {
-          includeSecret:
-            true,
-        }
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_MANAGE
+  ),
 
-    if (
-      connection.status ===
-      "disabled"
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            "Integration is disabled",
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_CREDENTIALS_MANAGE
+  ),
 
-          code:
-            "INTEGRATION_DISABLED",
-        });
-    }
-
-    let adapter;
+  async (
+    req,
+    res,
+    next
+  ) => {
+    let connection =
+      null;
 
     try {
-      adapter =
-        getAdapter(
-          connection.provider
+      connection =
+        await loadConnection(
+          req,
+          res,
+          {
+            includeSecret:
+              true,
+          }
         );
-    } catch (error) {
-      return res
-        .status(
-          error.status ??
-          501
-        )
-        .json({
-          error:
-            error.message,
 
-          code:
-            error.code ||
-            "ADAPTER_NOT_AVAILABLE",
-        });
-    }
+      if (
+        !connection
+      ) {
+        return;
+      }
 
-    try {
+      if (
+        connection.status ===
+          "disabled"
+      ) {
+        return res
+          .status(
+            409
+          )
+          .json({
+            error:
+              "Integration is disabled",
+
+            code:
+              "INTEGRATION_DISABLED",
+          });
+      }
+
+      let adapter;
+
+      try {
+        adapter =
+          getAdapter(
+            connection.provider
+          );
+      } catch (
+        error
+      ) {
+        return res
+          .status(
+            error.status ??
+              501
+          )
+          .json({
+            error:
+              error.message,
+
+            code:
+              error.code ||
+              "ADAPTER_NOT_AVAILABLE",
+          });
+      }
+function requireCredentialPermissionWhenSecretPresent(
+  req,
+  res,
+  next
+) {
+  if (
+    !req.body
+      ?.secret
+  ) {
+    return next();
+  }
+
+  return requirePermission(
+    PERMISSIONS
+      .INTEGRATION_CREDENTIALS_MANAGE
+  )(
+    req,
+    res,
+    next
+  );
+}
       const runtimeConnection =
         withDecryptedSecret(
           connection
@@ -1009,11 +1166,11 @@ router.post(
                 connection._id,
 
               organizationId:
-                connection
+                req.context
                   .organizationId,
 
               environmentId:
-                connection
+                req.context
                   .environmentId,
             },
             {
@@ -1059,11 +1216,11 @@ router.post(
                 connection._id,
 
               organizationId:
-                connection
+                req.context
                   .organizationId,
 
               environmentId:
-                connection
+                req.context
                   .environmentId,
             },
             {
@@ -1126,20 +1283,34 @@ router.post(
           result.metadata ||
           null,
       });
-    } catch (error) {
-      return res
-        .status(500)
-        .json({
-          success:
-            false,
+    } catch (
+      error
+    ) {
+      if (
+        error.status ||
+        error.statusCode
+      ) {
+        return res
+          .status(
+            error.status ||
+              error.statusCode
+          )
+          .json({
+            success:
+              false,
 
-          error:
-            error.message,
+            error:
+              error.message,
 
-          code:
-            error.code ||
-            "INTEGRATION_TEST_FAILED",
-        });
+            code:
+              error.code ||
+              "INTEGRATION_TEST_FAILED",
+          });
+      }
+
+      return next(
+        error
+      );
     } finally {
       clearRuntimeSecret(
         connection
@@ -1154,72 +1325,98 @@ router.post(
 
 router.post(
   "/connections/:integrationId/disable",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS.INTEGRATION_MANAGE
+  ),
 
-    if (
-      connection.status ===
-      "disabled"
-    ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Already disabled",
-          code:
-            "INTEGRATION_ALREADY_DISABLED",
-        });
-    }
+  async (req, res, next) => {
+    try {
+      const connection =
+        await loadConnection(
+          req,
+          res
+        );
 
-    connection.status =
-      "disabled";
-
-    connection.disabledAt =
-      new Date();
-
-    await connection.save();
-
-    auditRecord(
-      AUTH_EVENT_TYPES
-        .INTEGRATION_DISABLED,
-
-      AUTH_EVENT_OUTCOMES
-        .SUCCESS,
-
-      {
-        userId:
-          req.auth.userId,
-
-        organizationId:
-          connection.organizationId,
-
-        tenantId:
-          connection.tenantId,
-
-        metadata: {
-          integrationId:
-            connection._id,
-
-          environmentId:
-            connection.environmentId,
-        },
+      if (!connection) {
+        return;
       }
-    ).catch(() => {});
 
-    return res.json({
-      integration:
-        safeConnection(
-          connection
-        ),
-    });
+      if (
+        connection.status ===
+        "disabled"
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Already disabled",
+
+            code:
+              "INTEGRATION_ALREADY_DISABLED",
+          });
+      }
+
+      connection.status =
+        "disabled";
+
+      connection.disabledAt =
+        new Date();
+
+      connection.disabledReason =
+        typeof req.body
+          ?.reason === "string"
+          ? req.body.reason
+              .trim()
+              .slice(0, 512) ||
+            null
+          : null;
+
+      await connection.save();
+
+      auditRecord(
+        AUTH_EVENT_TYPES
+          .INTEGRATION_DISABLED,
+
+        AUTH_EVENT_OUTCOMES
+          .SUCCESS,
+
+        {
+          userId:
+            req.context.userId,
+
+          organizationId:
+            req.context
+              .organizationId,
+
+          tenantId:
+            req.context
+              .tenantId,
+
+          metadata: {
+            integrationId:
+              connection._id,
+
+            environmentId:
+              connection.environmentId,
+
+            reason:
+              connection
+                .disabledReason ||
+              null,
+          },
+        }
+      ).catch(() => {});
+
+      return res.json({
+        integration:
+          safeConnection(
+            connection
+          ),
+      });
+    } catch (error) {
+      return next(error);
+    }
   }
 );
 
@@ -1229,132 +1426,170 @@ router.post(
 
 router.post(
   "/connections/:integrationId/rotate-secret",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res,
-        {
-          includeSecret:
-            true,
-        }
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_MANAGE
+  ),
 
-    const {
-      error,
-      value,
-    } =
-      rotateSecretSchema
-        .validate(
-          req.body
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_CREDENTIALS_MANAGE
+  ),
+
+  async (
+    req,
+    res,
+    next
+  ) => {
+    let connection =
+      null;
+
+    try {
+      connection =
+        await loadConnection(
+          req,
+          res,
+          {
+            includeSecret:
+              true,
+          }
         );
 
-    if (error) {
-      return res
-        .status(422)
-        .json({
-          error:
-            error.details[0]
-              .message,
+      if (
+        !connection
+      ) {
+        return;
+      }
 
-          code:
-            "VALIDATION_ERROR",
-        });
-    }
+      const {
+        error,
+        value,
+      } =
+        rotateSecretSchema
+          .validate(
+            req.body
+          );
 
-    const secretStorage =
-      getSecretStorage();
+      if (
+        error
+      ) {
+        return res
+          .status(
+            422
+          )
+          .json({
+            error:
+              error.details[0]
+                .message,
 
-    await secretStorage
-      .rotateSecret(
-        connection,
-        value.secret
+            code:
+              "VALIDATION_ERROR",
+          });
+      }
+
+      const secretStorage =
+        getSecretStorage();
+
+      await secretStorage
+        .rotateSecret(
+          connection,
+          value.secret
+        );
+
+      /**
+       * Credentials changed.
+       *
+       * Previous health state is no longer authoritative until the
+       * newly-stored credentials are tested successfully.
+       */
+      connection.status =
+        "disconnected";
+
+      connection.healthStatus =
+        "unknown";
+
+      connection.disconnectedAt =
+        new Date();
+
+      connection.errorSummary =
+        null;
+
+      connection.lastErrorAt =
+        null;
+
+      connection.consecutiveFailures =
+        0;
+
+      await connection.save();
+
+      auditRecord(
+        AUTH_EVENT_TYPES
+          .INTEGRATION_SECRET_ROTATED,
+
+        AUTH_EVENT_OUTCOMES
+          .SUCCESS,
+
+        {
+          userId:
+            req.context
+              .userId,
+
+          organizationId:
+            req.context
+              .organizationId,
+
+          tenantId:
+            req.context
+              .tenantId,
+
+          metadata: {
+            integrationId:
+              connection._id,
+
+            environmentId:
+              connection
+                .environmentId,
+
+            secretVersion:
+              connection
+                .secretVersion,
+          },
+        }
+      ).catch(
+        () => {}
       );
 
-    /*
-     * Credentials changed.
-     *
-     * We cannot trust the old health/connection state
-     * until the new credential is tested.
-     */
-    connection.status =
-      "disconnected";
+      return res.json({
+        success:
+          true,
 
-    connection.healthStatus =
-      "unknown";
+        status:
+          connection.status,
 
-    connection.disconnectedAt =
-      new Date();
-
-    connection.errorSummary =
-      null;
-
-    connection.lastErrorAt =
-      null;
-
-    connection.consecutiveFailures =
-      0;
-
-    await connection.save();
-
-    auditRecord(
-      AUTH_EVENT_TYPES
-        .INTEGRATION_SECRET_ROTATED,
-
-      AUTH_EVENT_OUTCOMES
-        .SUCCESS,
-
-      {
-        userId:
-          req.auth.userId,
-
-        organizationId:
+        healthStatus:
           connection
-            .organizationId,
+            .healthStatus,
 
-        tenantId:
-          connection.tenantId,
+        secretVersion:
+          connection
+            .secretVersion,
 
-        metadata: {
-          integrationId:
-            connection._id,
-
-          environmentId:
-            connection
-              .environmentId,
-
-          secretVersion:
-            connection
-              .secretVersion,
-        },
-      }
-    ).catch(
-      () => {}
-    );
-
-    return res.json({
-      success:
-        true,
-
-      status:
-        connection.status,
-
-      healthStatus:
+        secretUpdatedAt:
+          connection
+            .secretUpdatedAt,
+      });
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    } finally {
+      clearRuntimeSecret(
         connection
-          .healthStatus,
-
-      secretVersion:
-        connection
-          .secretVersion,
-
-      secretUpdatedAt:
-        connection
-          .secretUpdatedAt,
-    });
+      );
+    }
   }
 );
 
@@ -1366,52 +1601,76 @@ router.post(
 
 router.get(
   "/connections/:integrationId/discovery",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res,
-        {
-          includeSecret:
-            true,
-        }
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_MANAGE
+  ),
 
-    if (
-      connection.provider !==
-      "kubernetes"
-    ) {
-      return res
-        .status(422)
-        .json({
-          error:
-            "Discovery is currently supported only for Kubernetes integrations",
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_CREDENTIALS_MANAGE
+  ),
 
-          code:
-            "DISCOVERY_NOT_SUPPORTED",
-        });
-    }
-
-    if (
-      connection.status ===
-      "disabled"
-    ) {
-      return res
-        .status(409)
-        .json({
-          error:
-            "Integration is disabled",
-
-          code:
-            "INTEGRATION_DISABLED",
-        });
-    }
+  async (
+    req,
+    res,
+    next
+  ) => {
+    let connection =
+      null;
 
     try {
+      connection =
+        await loadConnection(
+          req,
+          res,
+          {
+            includeSecret:
+              true,
+          }
+        );
+
+      if (
+        !connection
+      ) {
+        return;
+      }
+
+      if (
+        connection.provider !==
+          "kubernetes"
+      ) {
+        return res
+          .status(
+            422
+          )
+          .json({
+            error:
+              "Discovery is currently supported only for Kubernetes integrations",
+
+            code:
+              "DISCOVERY_NOT_SUPPORTED",
+          });
+      }
+
+      if (
+        connection.status ===
+          "disabled"
+      ) {
+        return res
+          .status(
+            409
+          )
+          .json({
+            error:
+              "Integration is disabled",
+
+            code:
+              "INTEGRATION_DISABLED",
+          });
+      }
+
       const runtimeConnection =
         withDecryptedSecret(
           connection
@@ -1426,7 +1685,9 @@ router.get(
           "in_cluster"
       ) {
         return res
-          .status(422)
+          .status(
+            422
+          )
           .json({
             error:
               "Kubernetes credentials are unavailable",
@@ -1446,9 +1707,8 @@ router.get(
           );
 
       const tenantId =
-        connection.tenantId ||
-        req.context?.tenantId ||
-        req.auth.tenantId;
+        req.context
+          .tenantId;
 
       const persisted =
         await kubernetesInventoryService
@@ -1456,11 +1716,11 @@ router.get(
             tenantId,
 
             organizationId:
-              connection
+              req.context
                 .organizationId,
 
             environmentId:
-              connection
+              req.context
                 .environmentId,
 
             integrationId:
@@ -1479,11 +1739,11 @@ router.get(
             tenantId,
 
             organizationId:
-              connection
+              req.context
                 .organizationId,
 
             environmentId:
-              connection
+              req.context
                 .environmentId,
 
             integrationId:
@@ -1503,11 +1763,11 @@ router.get(
               connection._id,
 
             organizationId:
-              connection
+              req.context
                 .organizationId,
 
             environmentId:
-              connection
+              req.context
                 .environmentId,
           },
           {
@@ -1549,9 +1809,15 @@ router.get(
         integrationId:
           connection._id,
 
+        organizationId:
+          req.context
+            .organizationId,
+
         environmentId:
-          connection
+          req.context
             .environmentId,
+
+        tenantId,
 
         provider:
           connection.provider,
@@ -1572,82 +1838,91 @@ router.get(
 
         ...discovery,
       });
-    } catch (error) {
+    } catch (
+      error
+    ) {
       console.error(
         "[integrationRoutes] Kubernetes discovery failed:",
         {
           integrationId:
-            connection._id
+            connection
+              ?._id
               ?.toString(),
 
           organizationId:
-            connection
-              .organizationId
-              ?.toString(),
+            req.context
+              ?.organizationId
+              ?.toString?.(),
 
           environmentId:
-            connection
-              .environmentId
-              ?.toString(),
+            req.context
+              ?.environmentId
+              ?.toString?.(),
 
           error:
             error.message,
         }
       );
 
-      const failedAt =
-        new Date();
+      if (
+        connection
+      ) {
+        const failedAt =
+          new Date();
 
-      await IntegrationConnection
-        .findOneAndUpdate(
-          {
-            _id:
-              connection._id,
+        await IntegrationConnection
+          .findOneAndUpdate(
+            {
+              _id:
+                connection._id,
 
-            organizationId:
-              connection
-                .organizationId,
+              organizationId:
+                req.context
+                  .organizationId,
 
-            environmentId:
-              connection
-                .environmentId,
-          },
-          {
-            $set: {
-              status:
-                "degraded",
-
-              healthStatus:
-                "unhealthy",
-
-              lastHealthCheckAt:
-                failedAt,
-
-              lastErrorAt:
-                failedAt,
-
-              errorSummary:
-                String(
-                  error.message ||
-                  "Discovery failed"
-                ).slice(
-                  0,
-                  512
-                ),
+              environmentId:
+                req.context
+                  .environmentId,
             },
+            {
+              $set: {
+                status:
+                  "degraded",
 
-            $inc: {
-              consecutiveFailures:
-                1,
-            },
-          }
-        )
-        .catch(
-          () => {}
-        );
+                healthStatus:
+                  "unhealthy",
+
+                lastHealthCheckAt:
+                  failedAt,
+
+                lastErrorAt:
+                  failedAt,
+
+                errorSummary:
+                  String(
+                    error.message ||
+                    "Discovery failed"
+                  ).slice(
+                    0,
+                    512
+                  ),
+              },
+
+              $inc: {
+                consecutiveFailures:
+                  1,
+              },
+            }
+          )
+          .catch(
+            () => {}
+          );
+      }
 
       return res
-        .status(502)
+        .status(
+          502
+        )
         .json({
           error:
             "Kubernetes discovery failed",
@@ -1672,126 +1947,165 @@ router.get(
 
 router.delete(
   "/connections/:integrationId",
-  async (req, res) => {
-    const connection =
-      await loadConnection(
-        req,
-        res,
-        {
-          includeSecret:
-            true,
-        }
-      );
 
-    if (!connection) {
-      return;
-    }
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_MANAGE
+  ),
 
-    let adapter =
+  requirePermission(
+    PERMISSIONS
+      .INTEGRATION_CREDENTIALS_MANAGE
+  ),
+
+  async (
+    req,
+    res,
+    next
+  ) => {
+    let connection =
       null;
 
     try {
-      adapter =
-        getAdapter(
-          connection.provider
+      connection =
+        await loadConnection(
+          req,
+          res,
+          {
+            includeSecret:
+              true,
+          }
         );
-    } catch {
-      adapter =
-        null;
-    }
 
-    if (
-      adapter &&
-      typeof adapter.revoke ===
-        "function"
-    ) {
+      if (
+        !connection
+      ) {
+        return;
+      }
+
+      let adapter =
+        null;
+
       try {
-        const runtimeConnection =
-          withDecryptedSecret(
+        adapter =
+          getAdapter(
+            connection.provider
+          );
+      } catch {
+        adapter =
+          null;
+      }
+
+      if (
+        adapter &&
+        typeof adapter.revoke ===
+          "function"
+      ) {
+        try {
+          const runtimeConnection =
+            withDecryptedSecret(
+              connection
+            );
+
+          await adapter.revoke(
+            runtimeConnection
+          );
+        } catch (
+          error
+        ) {
+          console.warn(
+            "[integrationRoutes] Integration revoke failed:",
+            {
+              integrationId:
+                connection
+                  ._id
+                  ?.toString(),
+
+              environmentId:
+                connection
+                  .environmentId
+                  ?.toString(),
+
+              provider:
+                connection.provider,
+
+              error:
+                error.message,
+            }
+          );
+        } finally {
+          clearRuntimeSecret(
             connection
           );
+        }
+      }
 
-        await adapter.revoke(
-          runtimeConnection
-        );
-      } catch (error) {
-        console.warn(
-          "[integrationRoutes] Integration revoke failed:",
-          {
+      await IntegrationConnection
+        .deleteOne({
+          _id:
+            connection._id,
+
+          organizationId:
+            req.context
+              .organizationId,
+
+          environmentId:
+            req.context
+              .environmentId,
+        });
+
+      auditRecord(
+        AUTH_EVENT_TYPES
+          .INTEGRATION_DELETED,
+
+        AUTH_EVENT_OUTCOMES
+          .SUCCESS,
+
+        {
+          userId:
+            req.context
+              .userId,
+
+          organizationId:
+            req.context
+              .organizationId,
+
+          tenantId:
+            req.context
+              .tenantId,
+
+          metadata: {
             integrationId:
-              connection._id
-                ?.toString(),
+              connection._id,
 
             environmentId:
               connection
-                .environmentId
-                ?.toString(),
+                .environmentId,
 
             provider:
               connection.provider,
+          },
+        }
+      ).catch(
+        () => {}
+      );
 
-            error:
-              error.message,
-          }
-        );
-      } finally {
-        clearRuntimeSecret(
-          connection
-        );
-      }
+      return res
+        .status(
+          204
+        )
+        .end();
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
+    } finally {
+      clearRuntimeSecret(
+        connection
+      );
     }
-
-    await IntegrationConnection
-      .deleteOne({
-        _id:
-          connection._id,
-
-        organizationId:
-          connection
-            .organizationId,
-
-        environmentId:
-          connection
-            .environmentId,
-      });
-
-    auditRecord(
-      AUTH_EVENT_TYPES
-        .INTEGRATION_DELETED,
-
-      AUTH_EVENT_OUTCOMES
-        .SUCCESS,
-
-      {
-        userId:
-          req.auth.userId,
-
-        organizationId:
-          connection
-            .organizationId,
-
-        tenantId:
-          connection.tenantId,
-
-        metadata: {
-          integrationId:
-            connection._id,
-
-          environmentId:
-            connection
-              .environmentId,
-
-          provider:
-            connection.provider,
-        },
-      }
-    ).catch(
-      () => {}
-    );
-
-    return res
-      .status(204)
-      .end();
   }
 );
 
@@ -1799,30 +2113,43 @@ router.delete(
 // WEBHOOK INGESTION ROUTES
 //
 // Browser management routes:
-//   session -> organization -> environment
+//   authenticated user
+//      ↓
+//   organization
+//      ↓
+//   environment
 //
-// External ingestion route:
+// External ingestion:
 //   sourceId + webhook API key
-//       -> registered source
-//       -> organization/environment resolved internally
+//      ↓
+//   registered source
+//      ↓
+//   organization/environment resolved internally
 //
-// IMPORTANT:
-// External senders are never allowed to choose organizationId,
-// tenantId, or environmentId in the payload.
+// SECURITY INVARIANT:
+//
+// External senders MUST NOT be allowed to choose:
+//
+//   organizationId
+//   tenantId
+//   environmentId
+//
+// Ownership is resolved by AIRA.
 // ═════════════════════════════════════════════════════════════════════════════
 
 function webhookEnvironmentContext(req) {
   return {
     organizationId:
-      req.context?.organizationId ||
-      req.auth?.organizationId,
+      req.context
+        ?.organizationId,
 
     environmentId:
-      req.context?.environmentId,
+      req.context
+        ?.environmentId,
 
     tenantId:
-      req.context?.tenantId ||
-      req.auth?.tenantId,
+      req.context
+        ?.tenantId,
   };
 }
 
@@ -1834,8 +2161,7 @@ function webhookEnvironmentContext(req) {
  * X-AIRA-Webhook-Source: whsrc_...
  * X-AIRA-Webhook-Key: aira_wh_...
  *
- * Credentials are intentionally not taken from query params
- * because URLs are commonly logged by proxies/load balancers.
+ * Never accept these credentials through query parameters.
  */
 function extractWebhookCredentials(req) {
   const sourceId =
@@ -1899,13 +2225,18 @@ function webhookErrorResponse(
 //
 // Browser-authenticated registration.
 //
-// The selected AIRA environment becomes the permanent ownership
-// environment for this webhook source.
+// The active AIRA environment permanently owns the source.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post(
   "/webhooks/register",
+
   ...browserEnvironmentContext,
+
+  requirePermission(
+    PERMISSIONS.INTEGRATION_MANAGE
+  ),
+
   async (
     req,
     res,
@@ -1920,7 +2251,10 @@ router.post(
       if (
         !sourceConfig ||
         typeof sourceConfig !==
-          "object"
+          "object" ||
+        Array.isArray(
+          sourceConfig
+        )
       ) {
         return res
           .status(400)
@@ -1970,19 +2304,39 @@ router.post(
           });
       }
 
+      /*
+       * Do not permit ownership fields supplied by the browser
+       * to override server-established scope.
+       */
+
+      const sanitizedSourceConfig = {
+        ...sourceConfig,
+      };
+
+      delete sanitizedSourceConfig
+        .organizationId;
+
+      delete sanitizedSourceConfig
+        .environmentId;
+
+      delete sanitizedSourceConfig
+        .tenantId;
+
       const result =
         await webhookIngestionService
           .registerWebhookSource(
             webhookEnvironmentContext(
               req
             ),
-            sourceConfig
+
+            sanitizedSourceConfig
           );
 
-      /**
-       * apiKey is intentionally returned only by registration.
-       * The service persists only its hash.
+      /*
+       * apiKey is intentionally returned only during registration.
+       * The persistence layer should retain only its hash.
        */
+
       return res
         .status(201)
         .json({
@@ -2016,15 +2370,18 @@ router.post(
 //
 // PUBLIC MACHINE ENDPOINT.
 //
-// Authentication is performed using the registered webhook source:
+// Authentication:
 //   X-AIRA-Webhook-Source
 //   X-AIRA-Webhook-Key
 //
-// No browser session/environment is required.
+// No browser session or browser environment is required.
+//
+// Tenant ownership MUST be resolved from the registered source.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post(
   "/webhooks/ingest",
+
   async (
     req,
     res,
@@ -2080,19 +2437,17 @@ router.post(
           });
       }
 
-      /**
-       * Critical enterprise invariant:
+      /*
+       * Enterprise isolation invariant:
        *
-       * We do NOT pass:
+       * Do NOT forward organizationId,
+       * environmentId or tenantId from
+       * the external request.
        *
-       * organizationId
-       * environmentId
-       * tenantId
-       *
-       * from the request.
-       *
-       * ingestEvent() derives them from sourceId + API key.
+       * ingestEvent() resolves ownership
+       * from sourceId + API key.
        */
+
       const event =
         await webhookIngestionService
           .ingestEvent(
@@ -2138,15 +2493,21 @@ router.post(
 // ─────────────────────────────────────────────────────────────────────────────
 // POST /webhooks/:eventId/decision
 //
-// Environment-scoped authenticated operation.
+// Human / AIRA control-plane operation.
 //
-// This currently represents the legacy path for associating an AIRA
-// decision with an ingested webhook event.
+// Requires incident management permission because this changes the
+// operational handling of an incident-derived signal.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.post(
   "/webhooks/:eventId/decision",
+
   ...browserEnvironmentContext,
+
+  requirePermission(
+    PERMISSIONS.INCIDENT_MANAGE
+  ),
+
   async (
     req,
     res,
@@ -2161,7 +2522,8 @@ router.post(
       if (
         !decision ||
         typeof decision !==
-          "object"
+          "object" ||
+        Array.isArray(decision)
       ) {
         return res
           .status(400)
@@ -2240,12 +2602,19 @@ router.post(
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /webhooks/history
 //
-// Browser authenticated and environment scoped.
+// Browser authenticated.
+// Organization + environment scoped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
   "/webhooks/history",
+
   ...browserEnvironmentContext,
+
+  requirePermission(
+    PERMISSIONS.INTEGRATION_READ
+  ),
+
   async (
     req,
     res,
@@ -2287,8 +2656,6 @@ router.get(
 
         tenantId:
           req.context
-            .tenantId ||
-          req.auth
             .tenantId,
 
         eventsCount:
@@ -2318,12 +2685,19 @@ router.get(
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /webhooks/stats
 //
-// Browser authenticated and environment scoped.
+// Browser authenticated.
+// Organization + environment scoped.
 // ─────────────────────────────────────────────────────────────────────────────
 
 router.get(
   "/webhooks/stats",
+
   ...browserEnvironmentContext,
+
+  requirePermission(
+    PERMISSIONS.INTEGRATION_READ
+  ),
+
   async (
     req,
     res,
@@ -2394,8 +2768,6 @@ router.get(
 
         tenantId:
           req.context
-            .tenantId ||
-          req.auth
             .tenantId,
 
         summary: {

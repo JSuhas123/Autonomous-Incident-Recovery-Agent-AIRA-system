@@ -8,166 +8,241 @@ const EnvironmentService = require(
 );
 
 const {
-  ORGANIZATION_ROLES,
-} = require("../constants/roles");
+  PERMISSIONS,
+} = require(
+  "../constants/permissions"
+);
 
 const {
   sessionAuthMiddleware,
-} = require("../middleware/sessionAuthMiddleware");
+} = require(
+  "../middleware/sessionAuthMiddleware"
+);
 
 const {
   requestContextMiddleware,
-} = require("../middleware/requestContextMiddleware");
+} = require(
+  "../middleware/requestContextMiddleware"
+);
 
-const router = express.Router();
+const {
+  requirePermission,
+} = require(
+  "../middleware/authorizationMiddleware"
+);
+
+const router =
+  express.Router();
 
 /**
- * ---------------------------------------------------------------
- * ROLE GROUPS
- * ---------------------------------------------------------------
+ * ============================================================================
+ * PHASE 14 — ENVIRONMENT CONTROL-PLANE ROUTES
+ * ============================================================================
+ *
+ * Environment authorization is now permission-based.
+ *
+ * OLD:
+ *
+ * route
+ *   ↓
+ * hardcoded role array
+ *   ↓
+ * owner/admin/platform_engineer
+ *
+ * NEW:
+ *
+ * route
+ *   ↓
+ * canonical permission
+ *   ↓
+ * authorization middleware
+ *   ↓
+ * role permission bundle / future custom role / service account
+ *
+ * This removes role-specific authorization logic from the route layer.
+ *
+ * IMPORTANT:
+ *
+ * Environment APIs are organization-scoped because they manage environments
+ * themselves.
+ *
+ * environmentContextMiddleware is therefore intentionally NOT used here.
  */
 
-const ENVIRONMENT_MANAGERS = [
-  ORGANIZATION_ROLES.OWNER,
-  ORGANIZATION_ROLES.ADMIN,
-  ORGANIZATION_ROLES.PLATFORM_ENGINEER,
-];
-
-const ENVIRONMENT_ARCHIVERS = [
-  ORGANIZATION_ROLES.OWNER,
-  ORGANIZATION_ROLES.ADMIN,
-];
-
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * VALIDATION
- * ---------------------------------------------------------------
+ * ============================================================================
  */
 
-const createEnvironmentSchema = Joi.object({
-  name: Joi.string()
-    .trim()
+const createEnvironmentSchema =
+  Joi.object({
+    name:
+      Joi.string()
+        .trim()
+        .min(1)
+        .max(100)
+        .required(),
+
+    slug:
+      Joi.string()
+        .trim()
+        .lowercase()
+        .max(80)
+        .pattern(
+          /^[a-z0-9_-]+$/
+        )
+        .optional(),
+
+    type:
+      Joi.string()
+        .valid(
+          "development",
+          "testing",
+          "staging",
+          "production",
+          "custom"
+        )
+        .default(
+          "custom"
+        ),
+
+    criticality:
+      Joi.string()
+        .valid(
+          "low",
+          "medium",
+          "high",
+          "critical"
+        )
+        .default(
+          "medium"
+        ),
+
+    description:
+      Joi.string()
+        .trim()
+        .max(500)
+        .allow("")
+        .default(""),
+
+    settings:
+      Joi.object({
+        allowAutonomousExecution:
+          Joi.boolean(),
+
+        requireApprovalForDestructiveActions:
+          Joi.boolean(),
+
+        timezone:
+          Joi.string()
+            .trim()
+            .max(100)
+            .allow(
+              null,
+              ""
+            ),
+      })
+        .optional(),
+  });
+
+const updateEnvironmentSchema =
+  Joi.object({
+    name:
+      Joi.string()
+        .trim()
+        .min(1)
+        .max(100),
+
+    description:
+      Joi.string()
+        .trim()
+        .max(500)
+        .allow(""),
+
+    criticality:
+      Joi.string()
+        .valid(
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ),
+
+    settings:
+      Joi.object({
+        allowAutonomousExecution:
+          Joi.boolean(),
+
+        requireApprovalForDestructiveActions:
+          Joi.boolean(),
+
+        timezone:
+          Joi.string()
+            .trim()
+            .max(100)
+            .allow(
+              null,
+              ""
+            ),
+      }),
+  })
     .min(1)
-    .max(100)
-    .required(),
+    .unknown(false);
 
-  slug: Joi.string()
-    .trim()
-    .lowercase()
-    .max(80)
-    .pattern(/^[a-z0-9_-]+$/)
-    .optional(),
+const maintenanceSchema =
+  Joi.object({
+    reason:
+      Joi.string()
+        .trim()
+        .min(1)
+        .max(500)
+        .required(),
+  });
 
-  type: Joi.string()
-    .valid(
-      "development",
-      "testing",
-      "staging",
-      "production",
-      "custom"
-    )
-    .default("custom"),
-
-  criticality: Joi.string()
-    .valid(
-      "low",
-      "medium",
-      "high",
-      "critical"
-    )
-    .default("medium"),
-
-  description: Joi.string()
-    .trim()
-    .max(500)
-    .allow("")
-    .default(""),
-
-  settings: Joi.object({
-    allowAutonomousExecution:
-      Joi.boolean(),
-
-    requireApprovalForDestructiveActions:
-      Joi.boolean(),
-
-    timezone: Joi.string()
-      .trim()
-      .max(100)
-      .allow(null, ""),
-  }).optional(),
-});
-
-const updateEnvironmentSchema = Joi.object({
-  name: Joi.string()
-    .trim()
-    .min(1)
-    .max(100),
-
-  description: Joi.string()
-    .trim()
-    .max(500)
-    .allow(""),
-
-  criticality: Joi.string()
-    .valid(
-      "low",
-      "medium",
-      "high",
-      "critical"
-    ),
-
-  settings: Joi.object({
-    allowAutonomousExecution:
-      Joi.boolean(),
-
-    requireApprovalForDestructiveActions:
-      Joi.boolean(),
-
-    timezone: Joi.string()
-      .trim()
-      .max(100)
-      .allow(null, ""),
-  }),
-})
-  .min(1)
-  .unknown(false);
-
-const maintenanceSchema = Joi.object({
-  reason: Joi.string()
-    .trim()
-    .min(1)
-    .max(500)
-    .required(),
-});
-
-const archiveSchema = Joi.object({
-  reason: Joi.string()
-    .trim()
-    .max(500)
-    .allow("")
-    .default(""),
-});
+const archiveSchema =
+  Joi.object({
+    reason:
+      Joi.string()
+        .trim()
+        .max(500)
+        .allow("")
+        .default(""),
+  });
 
 /**
- * ---------------------------------------------------------------
- * HELPERS
- * ---------------------------------------------------------------
+ * ============================================================================
+ * VALIDATION MIDDLEWARE
+ * ============================================================================
  */
 
-function validateBody(schema) {
-  return (req, res, next) => {
+function validateBody(
+  schema
+) {
+  return (
+    req,
+    res,
+    next
+  ) => {
     const {
       error,
       value,
-    } = schema.validate(
-      req.body || {},
-      {
-        abortEarly: false,
-        stripUnknown: true,
-      }
-    );
+    } =
+      schema.validate(
+        req.body ||
+          {},
+        {
+          abortEarly:
+            false,
 
-    if (error) {
+          stripUnknown:
+            true,
+        }
+      );
+
+    if (
+      error
+    ) {
       const validationError =
         new Error(
           "Validation failed"
@@ -180,9 +255,12 @@ function validateBody(schema) {
         "VALIDATION_ERROR";
 
       validationError.field =
-        error.details[0]
+        error
+          .details[0]
           ?.path
-          ?.join(".") ||
+          ?.join(
+            "."
+          ) ||
         null;
 
       return next(
@@ -197,68 +275,50 @@ function validateBody(schema) {
   };
 }
 
-function requireRoles(
-  allowedRoles
-) {
-  return (
-    req,
-    res,
-    next
-  ) => {
-    const role =
-      req.context?.role;
-
-    if (
-      !role ||
-      !allowedRoles.includes(
-        role
-      )
-    ) {
-      const error =
-        new Error(
-          "Insufficient permissions"
-        );
-
-      error.status =
-        403;
-
-      error.code =
-        "INSUFFICIENT_ROLE";
-
-      return next(error);
-    }
-
-    return next();
-  };
-}
-
 /**
- * Every route in this router requires:
+ * ============================================================================
+ * ROUTER AUTHENTICATION / TENANT CONTEXT
+ * ============================================================================
+ *
+ * Every route requires:
  *
  * - valid browser session
+ * - active user
  * - active organization
  * - active membership
- * - canonical organization context
+ * - canonical request context
+ * - Phase 14 permission resolution
  *
- * IMPORTANT:
- * We deliberately do NOT use environmentContextMiddleware here.
+ * requestContextMiddleware now produces:
  *
- * This API manages environments themselves, so it is
- * organization-scoped rather than environment-scoped.
+ * req.context.permissions
+ *
+ * which authorizationMiddleware consumes.
  */
+
 router.use(
   sessionAuthMiddleware,
   requestContextMiddleware
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * GET /api/v1/environments/summary
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Permission:
+ *
+ * environment.read
  */
 
 router.get(
   "/summary",
+
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_READ
+  ),
+
   async (
     req,
     res,
@@ -275,20 +335,34 @@ router.get(
       return res.json({
         summary,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * GET /api/v1/environments
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Permission:
+ *
+ * environment.read
  */
 
 router.get(
   "/",
+
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_READ
+  ),
+
   async (
     req,
     res,
@@ -316,7 +390,9 @@ router.get(
       return res.json({
         environments:
           environments.map(
-            (environment) => ({
+            (
+              environment
+            ) => ({
               ...EnvironmentService
                 .safeEnvironment(
                   environment
@@ -324,25 +400,40 @@ router.get(
 
               isDefault:
                 defaultId ===
-                environment._id
+                environment
+                  ._id
                   .toString(),
             })
           ),
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * GET /api/v1/environments/:environmentId
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Permission:
+ *
+ * environment.read
  */
 
 router.get(
   "/:environmentId",
+
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_READ
+  ),
+
   async (
     req,
     res,
@@ -376,27 +467,37 @@ router.get(
 
           isDefault:
             defaultId ===
-            environment._id
+            environment
+              ._id
               .toString(),
         },
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * POST /api/v1/environments
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Permission:
+ *
+ * environment.manage
  */
 
 router.post(
   "/",
 
-  requireRoles(
-    ENVIRONMENT_MANAGERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_MANAGE
   ),
 
   validateBody(
@@ -422,7 +523,9 @@ router.post(
           );
 
       return res
-        .status(201)
+        .status(
+          201
+        )
         .json({
           environment:
             EnvironmentService
@@ -430,23 +533,32 @@ router.post(
                 environment
               ),
         });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * PATCH /api/v1/environments/:environmentId
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Permission:
+ *
+ * environment.manage
  */
 
 router.patch(
   "/:environmentId",
 
-  requireRoles(
-    ENVIRONMENT_MANAGERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_MANAGE
   ),
 
   validateBody(
@@ -478,23 +590,35 @@ router.patch(
               environment
             ),
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * POST /api/v1/environments/:environmentId/default
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Setting an organization's default environment modifies environment
+ * control-plane configuration.
+ *
+ * Permission:
+ *
+ * environment.manage
  */
 
 router.post(
   "/:environmentId/default",
 
-  requireRoles(
-    ENVIRONMENT_MANAGERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_MANAGE
   ),
 
   async (
@@ -523,23 +647,35 @@ router.post(
         isDefault:
           true,
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * POST /api/v1/environments/:environmentId/maintenance
- * ---------------------------------------------------------------
+ * ============================================================================
+ *
+ * Maintenance mode alters execution availability but does not archive the
+ * environment.
+ *
+ * Permission:
+ *
+ * environment.manage
  */
 
 router.post(
   "/:environmentId/maintenance",
 
-  requireRoles(
-    ENVIRONMENT_MANAGERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_MANAGE
   ),
 
   validateBody(
@@ -572,25 +708,34 @@ router.post(
               environment
             ),
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * POST /api/v1/environments/:environmentId/activate
+ * ============================================================================
  *
  * Used to leave maintenance mode.
- * ---------------------------------------------------------------
+ *
+ * Permission:
+ *
+ * environment.manage
  */
 
 router.post(
   "/:environmentId/activate",
 
-  requireRoles(
-    ENVIRONMENT_MANAGERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_MANAGE
   ),
 
   async (
@@ -616,27 +761,48 @@ router.post(
               environment
             ),
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
 /**
- * ---------------------------------------------------------------
+ * ============================================================================
  * DELETE /api/v1/environments/:environmentId
+ * ============================================================================
  *
  * This performs a SOFT DELETE / ARCHIVE.
  *
- * Operational environments are never physically deleted.
- * ---------------------------------------------------------------
+ * Operational environments are never physically deleted by this endpoint.
+ *
+ * Archival is deliberately separated from ordinary environment management.
+ *
+ * Platform engineers may manage active environment configuration, but only
+ * roles granted the stronger environment.archive permission may archive an
+ * environment.
+ *
+ * Current default bundle:
+ *
+ * owner  → allowed
+ * admin  → allowed
+ * platform_engineer → denied
+ *
+ * Permission:
+ *
+ * environment.archive
  */
 
 router.delete(
   "/:environmentId",
 
-  requireRoles(
-    ENVIRONMENT_ARCHIVERS
+  requirePermission(
+    PERMISSIONS
+      .ENVIRONMENT_ARCHIVE
   ),
 
   validateBody(
@@ -676,10 +842,15 @@ router.delete(
               environment
             ),
       });
-    } catch (error) {
-      return next(error);
+    } catch (
+      error
+    ) {
+      return next(
+        error
+      );
     }
   }
 );
 
-module.exports = router;
+module.exports =
+  router;

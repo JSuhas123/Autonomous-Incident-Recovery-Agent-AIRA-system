@@ -1,15 +1,69 @@
 ﻿require("dotenv").config();
 
-// CRITICAL: Validate required environment variables before anything else loads.
-// This exits the process immediately with a descriptive message if a required
-// secret or connection string is missing - preventing silent misconfiguration.
+/**
+ * ============================================================================
+ * AIRA STARTUP ENVIRONMENT NORMALIZATION
+ * ============================================================================
+ *
+ * PostgreSQL is the authoritative persistence provider for the current AIRA
+ * runtime.
+ *
+ * Railway and other production platforms inject environment variables directly
+ * rather than loading backend/.env.example. Because of that, POSTGRES_ENABLED
+ * may legitimately be absent even though PERSISTENCE_PROVIDER=postgres.
+ *
+ * When PostgreSQL is explicitly selected and POSTGRES_ENABLED is NOT supplied,
+ * default it to true.
+ *
+ * IMPORTANT:
+ * - We only default an absent value.
+ * - We DO NOT override POSTGRES_ENABLED=false.
+ * - startupValidator remains authoritative and will still reject contradictory
+ *   or unsafe configurations.
+ */
+
+const persistenceProvider =
+  String(
+    process.env.PERSISTENCE_PROVIDER ||
+      "postgres"
+  )
+    .trim()
+    .toLowerCase();
+
+const postgresEnabledWasProvided =
+  typeof process.env.POSTGRES_ENABLED ===
+    "string" &&
+  process.env.POSTGRES_ENABLED.trim() !==
+    "";
+
+if (
+  persistenceProvider === "postgres" &&
+  !postgresEnabledWasProvided
+) {
+  process.env.POSTGRES_ENABLED =
+    "true";
+
+  console.info(
+    "[startup] POSTGRES_ENABLED was not provided; defaulting to true because PERSISTENCE_PROVIDER=postgres"
+  );
+}
+
+/**
+ * ============================================================================
+ * STARTUP CONFIGURATION VALIDATION
+ * ============================================================================
+ *
+ * Validation intentionally runs before the rest of the application is loaded.
+ * This prevents AIRA from partially booting with invalid persistence, security,
+ * queue, cache, CORS, or execution configuration.
+ */
+
 const {
   validateEnvironment,
   inspectEnvironment,
-} =
-  require(
-    "./config/startupValidator"
-  );
+} = require(
+  "./config/startupValidator"
+);
 
 validateEnvironment();
 
@@ -95,6 +149,11 @@ const integrationRoutes =
 const executionModesRoutes =
   require(
     "./routes/executionModesRoutes"
+  );
+
+const organizationRoutes =
+  require(
+    "./routes/organizationRoutes"
   );
 
 const reportingRoutes =
@@ -272,6 +331,15 @@ const authRoutes =
   require(
     "./routes/authRoutes"
   );
+const enterpriseIdentityRoutes =
+  require(
+    "./routes/enterpriseIdentityRoutes"
+  );
+
+const enterpriseAuthRoutes =
+  require(
+    "./routes/enterpriseAuthRoutes"
+  );
 
 const {
   csrfProtection,
@@ -378,7 +446,16 @@ const diagnosisQueueConsumer =
   require(
     "./services/diagnosis/diagnosisQueueConsumer"
   );
+const onboardingRoutes =
+  require(
+    "./routes/onboardingRoutes"
+  );
 
+const auditCompletenessRoutes =
+  require(
+    "./routes/auditCompletenessRoutes"
+  );
+  
 const {
   createWorkflowOutboxComposition,
 } =
@@ -446,6 +523,35 @@ const sloService =
     "./services/reliability/sloService"
   );
 
+  const serviceAccountRoutes =
+  require(
+    "./routes/serviceAccountRoutes"
+  );
+
+  const tenantSettingsRoutes =
+  require(
+    "./routes/tenantSettingsRoutes"
+  );
+
+const integrationGovernanceRoutes =
+  require(
+    "./routes/integrationGovernanceRoutes"
+  );
+
+  const notificationRoutingRoutes =
+  require(
+    "./routes/notificationRoutingRoutes"
+  );
+
+const humanTaskRoutes =
+  require(
+    "./routes/humanTaskRoutes"
+  );
+
+  const organizationInvitationRoutes =
+  require(
+    "./routes/organizationInvitationRoutes"
+  );
 const retentionService =
   require(
     "./services/infrastructure/retentionService"
@@ -799,10 +905,85 @@ app.use(
   recoveryDecisionRoutes
 );
 
+app.use(
+  "/api/v1/tenant-settings",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  tenantSettingsRoutes
+);
+app.use(
+  "/api/v1/integration-governance",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  browserEnvironmentContext,
+
+  integrationGovernanceRoutes
+);
+app.use(
+  "/api/v1/notification-routing",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  notificationRoutingRoutes
+);
+
+app.use(
+  "/api/v1/human-tasks",
+
+  sessionAuthMiddleware,
+
+  browserEnvironmentContext,
+
+  humanTaskRoutes
+);
+
+app.use(
+  "/api/v1/onboarding",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  onboardingRoutes
+);
+app.use(
+  "/api/v1/audit-control",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  auditCompletenessRoutes
+);
 // Human auth routes mount before sanitization so passwords are not XSS-stripped
 app.use(
   "/api/v1/auth",
   authRoutes
+);
+app.use(
+  "/api/v1/enterprise-auth",
+  enterpriseAuthRoutes
+);
+app.use(
+  "/api/v1/organizations",
+  organizationRoutes
+);
+app.use(
+  "/api/v1/enterprise-identity",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  enterpriseIdentityRoutes
 );
 
 app.use(
@@ -810,6 +991,10 @@ app.use(
   environmentRoutes
 );
 
+app.use(
+  "/api/v1/organization-invitations",
+  organizationInvitationRoutes
+);
 /*
  * LOCAL/DEVELOPMENT tooling.
  *
@@ -819,6 +1004,16 @@ app.use(
 app.use(
   "/api/v1/dev",
   developmentRoutes
+);
+
+app.use(
+  "/api/v1/service-accounts",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  serviceAccountRoutes
 );
 
 app.use(
@@ -2473,7 +2668,17 @@ app.use(
 
 app.use(
   "/api/v1/policy",
+
   sessionAuthMiddleware,
+
+  requestContextMiddleware,
+
+  environmentContextMiddleware,
+
+  rateLimitingMiddleware(
+    "api"
+  ),
+
   policyManagementRoutes
 );
 
@@ -3871,17 +4076,167 @@ async function runStartupRecovery() {
       );
     }
 
-    const result = await replayRuntimeIntegration.recoverInterrupted();
+    let result;
 
-    replayRecoveryStatus.discovered = Number(
-      result?.discovered ?? result?.discoveredCount ?? result?.total ?? 0
+if (
+  isPostgresPersistence()
+) {
+  /*
+   * PostgreSQL operational persistence is strictly
+   * organization/environment scoped.
+   *
+   * Startup recovery therefore cannot perform the old
+   * Mongo-style global operational scan.
+   *
+   * Identity/tenancy repositories are allowed to enumerate
+   * environments globally. Recovery is then executed once
+   * for each concrete tenant/environment scope.
+   */
+  const PostgresEnvironmentRepository =
+    require(
+      "./persistence/postgres/PostgresEnvironmentRepository"
     );
-    replayRecoveryStatus.recovered = Number(
-      result?.recovered ?? result?.recoveredCount ?? result?.successful ?? 0
-    );
-    replayRecoveryStatus.failed = Number(
-      result?.failed ?? result?.failedCount ?? 0
-    );
+
+  const environmentRepository =
+    new PostgresEnvironmentRepository();
+
+  const environments =
+    await environmentRepository
+      .findMany({});
+
+  const totals = {
+    discovered:
+      0,
+
+    recovered:
+      0,
+
+    failed:
+      0,
+
+    results:
+      [],
+  };
+
+  for (
+    const environment
+    of environments
+  ) {
+    const organizationId =
+      environment
+        .organizationId;
+
+    const environmentId =
+      environment._id ||
+      environment.publicId ||
+      environment.id;
+
+    /*
+     * Identity data with incomplete canonical scope
+     * must never be allowed to trigger an operational
+     * global read.
+     */
+    if (
+      !organizationId ||
+      !environmentId
+    ) {
+      console.warn(
+        "[replay-recovery] [WARN] Skipping environment with incomplete tenant scope"
+      );
+
+      continue;
+    }
+
+    const scopedResult =
+      await replayRuntimeIntegration
+        .recoverInterrupted(
+          {},
+          {
+            organizationId,
+            environmentId,
+          }
+        );
+
+    totals.discovered +=
+      Number(
+        scopedResult
+          ?.discovered ??
+        scopedResult
+          ?.discoveredCount ??
+        scopedResult
+          ?.total ??
+        0
+      );
+
+    totals.recovered +=
+      Number(
+        scopedResult
+          ?.recovered ??
+        scopedResult
+          ?.recoveredCount ??
+        scopedResult
+          ?.successful ??
+        0
+      );
+
+    totals.failed +=
+      Number(
+        scopedResult
+          ?.failed ??
+        scopedResult
+          ?.failedCount ??
+        0
+      );
+
+    if (
+      Array.isArray(
+        scopedResult
+          ?.results
+      )
+    ) {
+      totals
+        .results
+        .push(
+          ...scopedResult
+            .results
+        );
+    }
+  }
+
+  result =
+    totals;
+} else {
+  /*
+   * Legacy Mongo runtime can retain its existing
+   * global startup-recovery behaviour.
+   */
+  result =
+    await replayRuntimeIntegration
+      .recoverInterrupted();
+}
+
+replayRecoveryStatus.discovered =
+  Number(
+    result?.discovered ??
+    result?.discoveredCount ??
+    result?.total ??
+    0
+  );
+
+replayRecoveryStatus.recovered =
+  Number(
+    result?.recovered ??
+    result?.recoveredCount ??
+    result?.successful ??
+    0
+  );
+
+replayRecoveryStatus.failed =
+  Number(
+    result?.failed ??
+    result?.failedCount ??
+    0
+  );
 
     if (replayRecoveryStatus.failed > 0) {
       throw Object.assign(

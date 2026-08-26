@@ -240,6 +240,21 @@ class EscalationService {
         true;
     }
 
+    let humanTask =
+  null;
+
+if (
+  typeof dependencies
+    .createHumanTask ===
+  "function"
+) {
+  humanTask =
+    await dependencies
+      .createHumanTask(
+        escalation
+      );
+}
+
     return {
       status:
         queued
@@ -256,6 +271,8 @@ class EscalationService {
       transition,
 
       escalation,
+      
+humanTask,
 
       requiresOperator:
         true,

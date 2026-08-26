@@ -89,10 +89,28 @@ class ReplayRuntimeIntegration {
   // ==========================================================================
 
   async recoverInterrupted(
-    dependencies = {}
-  ) {
-    const now =
-      this.now();
+  dependencies = {},
+  scope = null
+) {
+  const now =
+    this.now();
+
+  const scopedFilter =
+    scope &&
+    scope.organizationId &&
+    scope.environmentId
+      ? {
+          organizationId:
+            String(
+              scope.organizationId
+            ),
+
+          environmentId:
+            String(
+              scope.environmentId
+            ),
+        }
+      : {};
 
     /*
      * Recover:
@@ -111,10 +129,12 @@ class ReplayRuntimeIntegration {
      * Those represent intentional durable states.
      */
     const records =
-      await this
-        .WorkflowReplayRecord
-        .find({
-          $or: [
+  await this
+    .WorkflowReplayRecord
+    .find({
+      ...scopedFilter,
+
+      $or: [
             {
               status:
                 "FAILED",

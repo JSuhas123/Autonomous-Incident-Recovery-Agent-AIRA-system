@@ -736,6 +736,15 @@ async function verifyIntegrity() {
   }
 }
 
+function isSensitiveAuditKey(
+  key
+) {
+  return FORBIDDEN_KEYS.has(
+    normalizeKey(
+      key
+    )
+  );
+}
 
 module.exports = {
   record,
@@ -747,4 +756,6 @@ module.exports = {
   computeSignature,
 
   computeEventHash,
+
+  isSensitiveAuditKey,
 };

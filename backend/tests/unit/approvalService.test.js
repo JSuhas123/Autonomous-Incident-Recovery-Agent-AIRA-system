@@ -1,380 +1,1413 @@
+"use strict";
+
 /**
- * Unit Tests for ApprovalService
- * 
- * Tests:
- * - Approval requirement determination based on confidence
- * - Approval request creation
- * - Approval and rejection workflows
- * - Timeout and expiration handling
- * - Decision handling (approve vs auto-execute vs observe)
- * - Queue statistics
+ * ============================================================================
+ * AIRA APPROVAL SERVICE UNIT TESTS
+ * ============================================================================
+ *
+ * Phase 13 / Phase 14 architecture:
+ *
+ * - PostgreSQL is authoritative.
+ * - Approval operations are organization + environment scoped.
+ * - Unit tests do NOT boot MongoDB.
+ * - Persistence is mocked at the ApprovalQueue boundary.
+ *
+ * These tests validate:
+ *
+ * - confidence threshold behavior
+ * - strict operational scope
+ * - approval creation
+ * - approval reads
+ * - approval/rejection
+ * - tenant/environment isolation contract
+ * - decision handling
+ * - queue statistics
+ * - cleanup
  */
 
-const { ApprovalService } = require('../../services/approval/approvalService');
-const { MongoMemoryServer } = require('mongodb-memory-server');
-const mongoose = require('mongoose');
+const mockQueue = {
+  addApprovalRequest:
+    jest.fn(),
 
-let mongoServer;
+  getPendingApprovals:
+    jest.fn(),
 
-describe('ApprovalService Unit Tests', () => {
-  let approvalService;
+  getApprovalRequest:
+    jest.fn(),
 
-  beforeAll(async () => {
-    // Start in-memory MongoDB
-    mongoServer = await MongoMemoryServer.create();
-    const mongoUri = mongoServer.getUri();
-    
-    await mongoose.connect(mongoUri, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-  });
+  approveRequest:
+    jest.fn(),
 
-  afterAll(async () => {
-    // Disconnect and stop MongoDB
-    if (mongoose.connection.readyState === 1) {
-      await mongoose.disconnect();
+  rejectRequest:
+    jest.fn(),
+
+  getStats:
+    jest.fn(),
+
+  cleanupExpired:
+    jest.fn(),
+};
+
+jest.mock(
+  "../../services/approval/approvalQueue",
+  () => ({
+    getApprovalQueue:
+      jest.fn(
+        () =>
+          mockQueue
+      ),
+  })
+);
+
+jest.mock(
+  "../../services/core",
+  () => ({
+    decisionTraceService: {},
+  })
+);
+
+jest.mock(
+  "../../services/infrastructure",
+  () => ({
+    loggingService: {
+      logDecision:
+        jest.fn(),
+
+      logStructured:
+        jest.fn(),
+    },
+  })
+);
+
+const {
+  ApprovalService,
+} = require(
+  "../../services/approval/approvalService"
+);
+
+describe(
+  "ApprovalService — PostgreSQL scoped approval runtime",
+  () => {
+    let approvalService;
+
+    const scope = {
+      tenantId:
+        "tenant-1",
+
+      organizationId:
+        "org-1",
+
+      environmentId:
+        "env-1",
+
+      incidentId:
+        "incident-1",
+
+      userAgent:
+        "jest",
+
+      ipAddress:
+        "127.0.0.1",
+    };
+
+    function buildDecision(
+      overrides = {}
+    ) {
+      return {
+        tenantId:
+          "tenant-1",
+
+        incidentId:
+          "incident-1",
+
+        decisionId:
+          "decision-1",
+
+        correlationId:
+          "correlation-1",
+
+        action:
+          "restart_pod",
+
+        reason:
+          "CPU threshold exceeded",
+
+        severity:
+          "high",
+
+        confidence:
+          0.75,
+
+        resource:
+          "api-pod",
+
+        namespace:
+          "default",
+
+        additionalParams:
+          {},
+
+        decisionTrace: {
+          source:
+            "unit-test",
+        },
+
+        ...overrides,
+      };
     }
-    if (mongoServer) {
-      await mongoServer.stop();
+
+    function buildApproval(
+      overrides = {}
+    ) {
+      return {
+        approvalId:
+          "approval-1",
+
+        tenantId:
+          "tenant-1",
+
+        organizationId:
+          "org-1",
+
+        environmentId:
+          "env-1",
+
+        incidentId:
+          "incident-1",
+
+        decisionId:
+          "decision-1",
+
+        action:
+          "restart_pod",
+
+        reason:
+          "CPU threshold exceeded",
+
+        confidence:
+          0.75,
+
+        resource:
+          "api-pod",
+
+        namespace:
+          "default",
+
+        status:
+          "pending",
+
+        createdAt:
+          new Date(),
+
+        expiresAt:
+          new Date(
+            Date.now() +
+            60_000
+          ),
+
+        approvedBy:
+          null,
+
+        rejectedBy:
+          null,
+
+        rejectionReason:
+          null,
+
+        ...overrides,
+      };
     }
-  });
 
-  beforeEach(async () => {
-    // Clear collections between tests
-    const collections = mongoose.connection.collections;
-    for (const key in collections) {
-      await collections[key].deleteMany({});
-    }
-    
-    approvalService = new ApprovalService();
-  });
+    beforeEach(
+      () => {
+        jest
+          .clearAllMocks();
 
-  describe('Approval Requirement Logic', () => {
-    test('should NOT require approval for high confidence (>= 0.85)', () => {
-      const result = approvalService.requiresApproval(0.85);
+        delete process.env
+          .ESCALATION_THRESHOLD;
 
-      expect(result.requiresApproval).toBe(false);
-      expect(result.tier).toBe('AUTO_EXECUTE');
-      expect(result.reason).toContain('auto-execution');
-    });
+        delete process.env
+          .AUTO_EXECUTE_THRESHOLD;
 
-    test('should NOT require approval for very high confidence', () => {
-      const result = approvalService.requiresApproval(0.99);
+        mockQueue
+          .addApprovalRequest
+          .mockImplementation(
+            async (
+              decision,
+              operationScope
+            ) =>
+              buildApproval({
+                tenantId:
+                  decision
+                    .tenantId,
 
-      expect(result.requiresApproval).toBe(false);
-      expect(result.tier).toBe('AUTO_EXECUTE');
-    });
+                organizationId:
+                  operationScope
+                    .organizationId,
 
-    test('should require approval for medium confidence (0.60-0.85)', () => {
-      const result = approvalService.requiresApproval(0.75);
+                environmentId:
+                  operationScope
+                    .environmentId,
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('ESCALATE');
-      expect(result.reason).toContain('approval');
-    });
+                incidentId:
+                  decision
+                    .incidentId,
 
-    test('should require approval for lower medium confidence', () => {
-      const result = approvalService.requiresApproval(0.60);
+                decisionId:
+                  decision
+                    .decisionId,
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('ESCALATE');
-    });
+                action:
+                  decision
+                    .action,
 
-    test('should require approval for low confidence (< 0.60)', () => {
-      const result = approvalService.requiresApproval(0.50);
+                resource:
+                  decision
+                    .resource,
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('OBSERVE');
-      expect(result.reason).toContain('Low confidence');
-    });
+                confidence:
+                  decision
+                    .confidence,
 
-    test('should require approval for very low confidence', () => {
-      const result = approvalService.requiresApproval(0.10);
+                reason:
+                  decision
+                    .reason,
+              })
+          );
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('OBSERVE');
-    });
+        mockQueue
+          .getPendingApprovals
+          .mockResolvedValue([
+            buildApproval(),
+          ]);
 
-    test('should handle edge case: confidence exactly at auto-execute threshold', () => {
-      const result = approvalService.requiresApproval(0.85);
-      expect(result.requiresApproval).toBe(false);
-    });
+        mockQueue
+          .getApprovalRequest
+          .mockResolvedValue(
+            buildApproval()
+          );
 
-    test('should handle edge case: confidence just below auto-execute threshold', () => {
-      const result = approvalService.requiresApproval(0.849);
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('ESCALATE');
-    });
+        mockQueue
+          .approveRequest
+          .mockResolvedValue(
+            true
+          );
 
-    test('should handle edge case: confidence exactly at escalation threshold', () => {
-      const result = approvalService.requiresApproval(0.60);
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('ESCALATE');
-    });
+        mockQueue
+          .rejectRequest
+          .mockResolvedValue(
+            true
+          );
 
-    test('should handle edge case: confidence just below escalation threshold', () => {
-      const result = approvalService.requiresApproval(0.599);
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('OBSERVE');
-    });
-  });
+        mockQueue
+          .getStats
+          .mockResolvedValue({
+            pending:
+              1,
 
-  describe('Threshold Configuration', () => {
-    test('should load thresholds from environment variables', () => {
-      process.env.ESCALATION_THRESHOLD = '0.50';
-      process.env.AUTO_EXECUTE_THRESHOLD = '0.90';
+            approved:
+              2,
 
-      const service = new ApprovalService();
+            rejected:
+              3,
 
-      expect(service.escalationThreshold).toBe(0.50);
-      expect(service.autoExecuteThreshold).toBe(0.90);
-    });
+            backend:
+              "persistence",
+          });
 
-    test('should use default thresholds when env vars not set', () => {
-      delete process.env.ESCALATION_THRESHOLD;
-      delete process.env.AUTO_EXECUTE_THRESHOLD;
+        mockQueue
+          .cleanupExpired
+          .mockResolvedValue(
+            2
+          );
 
-      const service = new ApprovalService();
+        approvalService =
+          new ApprovalService();
+      }
+    );
 
-      expect(service.escalationThreshold).toBe(0.60);
-      expect(service.autoExecuteThreshold).toBe(0.85);
-    });
-  });
+    // ========================================================================
+    // APPROVAL REQUIREMENT
+    // ========================================================================
 
-  describe('Error Handling', () => {
-    test('should reject approval creation with missing required fields', async () => {
-      const invalidDecision = {
-        // Missing tenantId
-        decisionId: 'dec-123',
-        action: 'restart_pod',
-        resource: 'my-pod',
-      };
+    describe(
+      "Approval requirement logic",
+      () => {
+        test(
+          "high confidence auto-executes at threshold",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.85
+                );
 
-      await expect(
-        approvalService.createApprovalRequest(invalidDecision)
-      ).rejects.toThrow('Missing required');
-    });
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              false
+            );
 
-    test('should reject approval creation when approval not needed', async () => {
-      // High confidence decision
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-123',
-        action: 'restart_pod',
-        reason: 'High CPU',
-        confidence: 0.95, // Too high - doesn't need approval
-        resource: 'my-pod',
-        severity: 'high',
-      };
+            expect(
+              result.tier
+            ).toBe(
+              "AUTO_EXECUTE"
+            );
+          }
+        );
 
-      await expect(
-        approvalService.createApprovalRequest(decision)
-      ).rejects.toThrow('Approval not needed');
-    });
+        test(
+          "very high confidence auto-executes",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.99
+                );
 
-    test('should reject approval of non-existent request', async () => {
-      await expect(
-        approvalService.approveAndExecute('does-not-exist', 'user-1')
-      ).rejects.toThrow('not found');
-    });
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              false
+            );
 
-    test('should reject rejection of non-existent request', async () => {
-      await expect(
-        approvalService.rejectRequest('does-not-exist', 'user-1', 'reason')
-      ).rejects.toThrow('not found');
-    });
-  });
+            expect(
+              result.tier
+            ).toBe(
+              "AUTO_EXECUTE"
+            );
+          }
+        );
 
-  describe('Decision Handling Workflow', () => {
-    test('should auto-execute high confidence decision', async () => {
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-123',
-        action: 'restart_pod',
-        confidence: 0.95, // High confidence
-        resource: 'my-pod',
-      };
+        test(
+          "medium confidence requires escalation",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.75
+                );
 
-      const result = await approvalService.handleDecision(decision);
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              true
+            );
 
-      expect(result.requiresApproval).toBe(false);
-      expect(result.autoExecuted).toBe(true);
-      expect(result.tier).toBe('AUTO_EXECUTE');
-    });
+            expect(
+              result.tier
+            ).toBe(
+              "ESCALATE"
+            );
+          }
+        );
 
-    test('should require approval for medium confidence decision', async () => {
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-456',
-        action: 'restart_deployment',
-        reason: 'Memory leak detected',
-        confidence: 0.72, // Medium confidence
-        resource: 'my-service',
-        severity: 'medium',
-        namespace: 'default',
-      };
+        test(
+          "exact escalation threshold requires approval",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.60
+                );
 
-      const result = await approvalService.handleDecision(decision);
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              true
+            );
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.autoExecuted).toBe(false);
-      expect(result.tier).toBe('ESCALATE');
-      expect(result.approvalRequest).toBeDefined();
-    });
+            expect(
+              result.tier
+            ).toBe(
+              "ESCALATE"
+            );
+          }
+        );
 
-    test('should escalate low confidence decision', async () => {
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-789',
-        action: 'scale_deployment',
-        reason: 'Possible anomaly',
-        confidence: 0.45, // Low confidence
-        resource: 'my-app',
-        severity: 'low',
-      };
+        test(
+          "low confidence is OBSERVE",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.40
+                );
 
-      const result = await approvalService.handleDecision(decision);
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              true
+            );
 
-      expect(result.requiresApproval).toBe(true);
-      expect(result.tier).toBe('OBSERVE');
-    });
-  });
+            expect(
+              result.tier
+            ).toBe(
+              "OBSERVE"
+            );
+          }
+        );
 
-  describe('Approval Metadata', () => {
-    test('should capture request context in approval', async () => {
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-123',
-        action: 'restart_pod',
-        confidence: 0.75,
-        reason: 'CPU threshold exceeded',
-        resource: 'web-pod',
-        severity: 'high',
-      };
+        test(
+          "just below auto-execution threshold requires approval",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.849
+                );
 
-      const context = {
-        userAgent: 'test-client/1.0',
-        ipAddress: '192.168.1.1',
-      };
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              true
+            );
 
-      const result = await approvalService.handleDecision(decision, context);
+            expect(
+              result.tier
+            ).toBe(
+              "ESCALATE"
+            );
+          }
+        );
 
-      expect(result.approvalRequest).toBeDefined();
-      // Metadata should be captured (verified in database)
-    });
+        test(
+          "just below escalation threshold becomes OBSERVE",
+          () => {
+            const result =
+              approvalService
+                .requiresApproval(
+                  0.599
+                );
 
-    test('should include decision trace in approval', async () => {
-      const decisionTrace = {
-        signal: { errorRate: 15.5 },
-        analysisResult: { severity: 'high', isLatencyIssue: false },
-        policyMatch: { policy: 'restart-on-errors' },
-        safetyGates: { passed: true },
-      };
+            expect(
+              result
+                .requiresApproval
+            ).toBe(
+              true
+            );
 
-      const decision = {
-        tenantId: 'tenant-1',
-        decisionId: 'dec-123',
-        action: 'restart_pod',
-        confidence: 0.70,
-        reason: 'Safety gates approved',
-        resource: 'api-pod',
-        decisionTrace,
-      };
+            expect(
+              result.tier
+            ).toBe(
+              "OBSERVE"
+            );
+          }
+        );
+      }
+    );
 
-      const result = await approvalService.handleDecision(decision);
+    // ========================================================================
+    // THRESHOLD CONFIGURATION
+    // ========================================================================
 
-      expect(result.approvalRequest.decisionTrace).toEqual(decisionTrace);
-    });
-  });
+    describe(
+      "Threshold configuration",
+      () => {
+        test(
+          "loads thresholds from environment",
+          () => {
+            process.env
+              .ESCALATION_THRESHOLD =
+              "0.50";
 
-  describe('Tenant Isolation', () => {
-    test('should isolate approvals by tenant', async () => {
-      // Create two decisions from different tenants
-      const decision1 = {
-        tenantId: 'tenant-a',
-        decisionId: 'dec-1',
-        action: 'restart_pod',
-        confidence: 0.70,
-        resource: 'pod-a',
-        reason: 'Testing',
-      };
+            process.env
+              .AUTO_EXECUTE_THRESHOLD =
+              "0.90";
 
-      const decision2 = {
-        tenantId: 'tenant-b',
-        decisionId: 'dec-2',
-        action: 'restart_pod',
-        confidence: 0.70,
-        resource: 'pod-b',
-        reason: 'Testing',
-      };
+            const service =
+              new ApprovalService();
 
-      // Should create separate approval requests
-      const result1 = await approvalService.handleDecision(decision1);
-      const result2 = await approvalService.handleDecision(decision2);
+            expect(
+              service
+                .escalationThreshold
+            ).toBe(
+              0.50
+            );
 
-      expect(result1.approvalRequest.tenantId).toBe('tenant-a');
-      expect(result2.approvalRequest.tenantId).toBe('tenant-b');
-      expect(result1.approvalRequest.approvalId).not.toBe(result2.approvalRequest.approvalId);
-    });
+            expect(
+              service
+                .autoExecuteThreshold
+            ).toBe(
+              0.90
+            );
+          }
+        );
 
-    test('should retrieve approvals only for requested tenant', async () => {
-      // Create requests for different tenants
-      const decision1 = {
-        tenantId: 'tenant-a',
-        decisionId: 'dec-1',
-        action: 'restart_pod',
-        confidence: 0.70,
-        resource: 'pod-a',
-        reason: 'Testing',
-      };
+        test(
+          "uses safe defaults",
+          () => {
+            const service =
+              new ApprovalService();
 
-      await approvalService.handleDecision(decision1);
+            expect(
+              service
+                .escalationThreshold
+            ).toBe(
+              0.60
+            );
 
-      const pending = await approvalService.getPendingApprovals('tenant-a');
+            expect(
+              service
+                .autoExecuteThreshold
+            ).toBe(
+              0.85
+            );
+          }
+        );
+      }
+    );
 
-      // Should only include approvals for this tenant
-      expect(pending.every(p => p.tenantId === 'tenant-a')).toBe(true);
-    });
-  });
+    // ========================================================================
+    // STRICT SCOPE
+    // ========================================================================
 
-  describe('Approval Statistics', () => {
-    test('should provide queue statistics', async () => {
-      const stats = await approvalService.getQueueStats('tenant-1');
+    describe(
+      "Operational scope enforcement",
+      () => {
+        test(
+          "requires organizationId",
+          async () => {
+            await expect(
+              approvalService
+                .getPendingApprovals({
+                  tenantId:
+                    "tenant-1",
 
-      expect(stats).toHaveProperty('pending');
-      expect(stats).toHaveProperty('approved');
-      expect(stats).toHaveProperty('rejected');
-      expect(stats).toHaveProperty('backend');
+                  environmentId:
+                    "env-1",
+                })
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_SCOPE_REQUIRED",
 
-      // Stats should be numeric
-      expect(typeof stats.pending).toBe('number');
-      expect(typeof stats.approved).toBe('number');
-      expect(typeof stats.rejected).toBe('number');
-    });
+                status:
+                  400,
+              });
+          }
+        );
 
-    test('should track overall and per-tenant statistics', async () => {
-      const tenantStats = await approvalService.getQueueStats('tenant-1');
-      const allStats = await approvalService.getQueueStats();
+        test(
+          "requires environmentId",
+          async () => {
+            await expect(
+              approvalService
+                .getPendingApprovals({
+                  tenantId:
+                    "tenant-1",
 
-      // Both should have same structure
-      expect(tenantStats).toHaveProperty('pending');
-      expect(allStats).toHaveProperty('pending');
+                  organizationId:
+                    "org-1",
+                })
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_SCOPE_REQUIRED",
+              });
+          }
+        );
 
-      // All stats should be >= tenant stats (all includes tenant)
-      expect(allStats.pending).toBeGreaterThanOrEqual(tenantStats.pending);
-    });
-  });
+        test(
+          "does not allow tenant-only operational reads",
+          async () => {
+            await expect(
+              approvalService
+                .getPendingApprovals({
+                  tenantId:
+                    "tenant-1",
+                })
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_SCOPE_REQUIRED",
+              });
 
-  describe('Cleanup and Maintenance', () => {
-    test('should provide cleanup method for expired requests', async () => {
-      // Method should exist and be callable
-      expect(typeof approvalService.cleanupExpired).toBe('function');
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).not
+              .toHaveBeenCalled();
+          }
+        );
+      }
+    );
 
-      const result = await approvalService.cleanupExpired();
+    // ========================================================================
+    // CREATE
+    // ========================================================================
 
-      expect(typeof result).toBe('number');
-      expect(result).toBeGreaterThanOrEqual(0);
-    });
-  });
-});
+    describe(
+      "Approval request creation",
+      () => {
+        test(
+          "creates scoped approval request",
+          async () => {
+            const decision =
+              buildDecision();
+
+            const result =
+              await approvalService
+                .createApprovalRequest(
+                  decision,
+                  scope
+                );
+
+            expect(
+              result.approvalId
+            ).toBe(
+              "approval-1"
+            );
+
+            expect(
+              mockQueue
+                .addApprovalRequest
+            ).toHaveBeenCalledTimes(
+              1
+            );
+
+            const [
+              persistedDecision,
+              persistedScope,
+            ] =
+              mockQueue
+                .addApprovalRequest
+                .mock
+                .calls[0];
+
+            expect(
+              persistedDecision
+            ).toMatchObject({
+              tenantId:
+                "tenant-1",
+
+              incidentId:
+                "incident-1",
+
+              decisionId:
+                "decision-1",
+
+              action:
+                "restart_pod",
+            });
+
+            expect(
+              persistedScope
+            ).toMatchObject({
+              tenantId:
+                "tenant-1",
+
+              organizationId:
+                "org-1",
+
+              environmentId:
+                "env-1",
+
+              incidentId:
+                "incident-1",
+            });
+          }
+        );
+
+        test(
+          "rejects missing decision fields",
+          async () => {
+            await expect(
+              approvalService
+                .createApprovalRequest(
+                  {
+                    tenantId:
+                      "tenant-1",
+
+                    decisionId:
+                      "decision-1",
+
+                    action:
+                      "restart_pod",
+                  },
+
+                  scope
+                )
+            ).rejects
+              .toThrow(
+                "Missing required decision fields"
+              );
+          }
+        );
+
+        test(
+          "rejects approval creation for auto-executable decision",
+          async () => {
+            await expect(
+              approvalService
+                .createApprovalRequest(
+                  buildDecision({
+                    confidence:
+                      0.95,
+                  }),
+
+                  scope
+                )
+            ).rejects
+              .toThrow(
+                "Approval not needed"
+              );
+
+            expect(
+              mockQueue
+                .addApprovalRequest
+            ).not
+              .toHaveBeenCalled();
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // LIST
+    // ========================================================================
+
+    describe(
+      "Scoped approval reads",
+      () => {
+        test(
+          "passes organization/environment scope to queue",
+          async () => {
+            const result =
+              await approvalService
+                .getPendingApprovals(
+                  scope
+                );
+
+            expect(
+              result
+            ).toHaveLength(
+              1
+            );
+
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).toHaveBeenCalledWith(
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+
+        test(
+          "gets one approval inside scope",
+          async () => {
+            const result =
+              await approvalService
+                .getApprovalStatus(
+                  "approval-1",
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              approvalId:
+                "approval-1",
+
+              organizationId:
+                "org-1",
+
+              environmentId:
+                "env-1",
+
+              status:
+                "pending",
+            });
+
+            expect(
+              mockQueue
+                .getApprovalRequest
+            ).toHaveBeenCalledWith(
+              "approval-1",
+
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+
+        test(
+          "returns stable not-found error",
+          async () => {
+            mockQueue
+              .getApprovalRequest
+              .mockResolvedValueOnce(
+                null
+              );
+
+            await expect(
+              approvalService
+                .getApprovalStatus(
+                  "missing",
+                  scope
+                )
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_NOT_FOUND",
+
+                status:
+                  404,
+              });
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // APPROVE
+    // ========================================================================
+
+    describe(
+      "Approval workflow",
+      () => {
+        test(
+          "approves a pending request inside scope",
+          async () => {
+            const result =
+              await approvalService
+                .approveAndExecute(
+                  "approval-1",
+                  "user-approver",
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              approvalId:
+                "approval-1",
+
+              status:
+                "approved",
+
+              approvedBy:
+                "user-approver",
+
+              environmentId:
+                "env-1",
+            });
+
+            expect(
+              mockQueue
+                .approveRequest
+            ).toHaveBeenCalledWith(
+              "approval-1",
+
+              "user-approver",
+
+              expect.objectContaining({
+                userAgent:
+                  "jest",
+
+                ipAddress:
+                  "127.0.0.1",
+              }),
+
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+
+        test(
+          "rejects an approval inside scope",
+          async () => {
+            const result =
+              await approvalService
+                .rejectRequest(
+                  "approval-1",
+
+                  "user-reviewer",
+
+                  "unsafe operation",
+
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              approvalId:
+                "approval-1",
+
+              status:
+                "rejected",
+
+              rejectedBy:
+                "user-reviewer",
+
+              reason:
+                "unsafe operation",
+
+              environmentId:
+                "env-1",
+            });
+
+            expect(
+              mockQueue
+                .rejectRequest
+            ).toHaveBeenCalledWith(
+              "approval-1",
+
+              "user-reviewer",
+
+              "unsafe operation",
+
+              expect.objectContaining({
+                userAgent:
+                  "jest",
+
+                ipAddress:
+                  "127.0.0.1",
+              }),
+
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+
+        test(
+          "rejects approval of non-existent request",
+          async () => {
+            mockQueue
+              .getApprovalRequest
+              .mockResolvedValueOnce(
+                null
+              );
+
+            await expect(
+              approvalService
+                .approveAndExecute(
+                  "missing",
+                  "user-1",
+                  scope
+                )
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_NOT_FOUND",
+              });
+          }
+        );
+
+        test(
+          "rejects approval of expired request",
+          async () => {
+            mockQueue
+              .getApprovalRequest
+              .mockResolvedValueOnce(
+                buildApproval({
+                  expiresAt:
+                    new Date(
+                      Date.now() -
+                      1000
+                    ),
+                })
+              );
+
+            await expect(
+              approvalService
+                .approveAndExecute(
+                  "approval-1",
+                  "user-1",
+                  scope
+                )
+            ).rejects
+              .toThrow(
+                "expired"
+              );
+
+            expect(
+              mockQueue
+                .approveRequest
+            ).not
+              .toHaveBeenCalled();
+          }
+        );
+
+        test(
+          "rejects already completed approval",
+          async () => {
+            mockQueue
+              .getApprovalRequest
+              .mockResolvedValueOnce(
+                buildApproval({
+                  status:
+                    "approved",
+                })
+              );
+
+            await expect(
+              approvalService
+                .approveAndExecute(
+                  "approval-1",
+                  "user-1",
+                  scope
+                )
+            ).rejects
+              .toThrow(
+                "Cannot approve"
+              );
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // DECISION HANDLING
+    // ========================================================================
+
+    describe(
+      "Decision handling",
+      () => {
+        test(
+          "auto-executes high confidence decision",
+          async () => {
+            const result =
+              await approvalService
+                .handleDecision(
+                  buildDecision({
+                    confidence:
+                      0.95,
+                  }),
+
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              requiresApproval:
+                false,
+
+              autoExecuted:
+                true,
+
+              tier:
+                "AUTO_EXECUTE",
+            });
+
+            expect(
+              mockQueue
+                .addApprovalRequest
+            ).not
+              .toHaveBeenCalled();
+          }
+        );
+
+        test(
+          "creates approval for medium confidence",
+          async () => {
+            const result =
+              await approvalService
+                .handleDecision(
+                  buildDecision({
+                    confidence:
+                      0.72,
+                  }),
+
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              requiresApproval:
+                true,
+
+              autoExecuted:
+                false,
+
+              tier:
+                "ESCALATE",
+            });
+
+            expect(
+              result
+                .approvalRequest
+            ).toBeDefined();
+
+            expect(
+              mockQueue
+                .addApprovalRequest
+            ).toHaveBeenCalledTimes(
+              1
+            );
+          }
+        );
+
+        test(
+          "low confidence remains approval gated",
+          async () => {
+            const result =
+              await approvalService
+                .handleDecision(
+                  buildDecision({
+                    confidence:
+                      0.45,
+                  }),
+
+                  scope
+                );
+
+            expect(
+              result
+            ).toMatchObject({
+              requiresApproval:
+                true,
+
+              autoExecuted:
+                false,
+
+              tier:
+                "OBSERVE",
+            });
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // ISOLATION CONTRACT
+    // ========================================================================
+
+    describe(
+      "Organization/environment isolation contract",
+      () => {
+        test(
+          "different environments are passed independently to persistence",
+          async () => {
+            await approvalService
+              .getPendingApprovals({
+                ...scope,
+
+                environmentId:
+                  "env-production",
+              });
+
+            await approvalService
+              .getPendingApprovals({
+                ...scope,
+
+                environmentId:
+                  "env-staging",
+              });
+
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).toHaveBeenNthCalledWith(
+              1,
+
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-production",
+              })
+            );
+
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).toHaveBeenNthCalledWith(
+              2,
+
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-staging",
+              })
+            );
+          }
+        );
+
+        test(
+          "different organizations are never collapsed into tenant-only scope",
+          async () => {
+            await approvalService
+              .getPendingApprovals({
+                ...scope,
+
+                organizationId:
+                  "org-a",
+              });
+
+            await approvalService
+              .getPendingApprovals({
+                ...scope,
+
+                organizationId:
+                  "org-b",
+              });
+
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).toHaveBeenNthCalledWith(
+              1,
+
+              expect.objectContaining({
+                organizationId:
+                  "org-a",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+
+            expect(
+              mockQueue
+                .getPendingApprovals
+            ).toHaveBeenNthCalledWith(
+              2,
+
+              expect.objectContaining({
+                organizationId:
+                  "org-b",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // QUEUE STATS
+    // ========================================================================
+
+    describe(
+      "Approval statistics",
+      () => {
+        test(
+          "statistics require explicit operational scope",
+          async () => {
+            await expect(
+              approvalService
+                .getQueueStats({
+                  tenantId:
+                    "tenant-1",
+                })
+            ).rejects
+              .toMatchObject({
+                code:
+                  "APPROVAL_SCOPE_REQUIRED",
+              });
+          }
+        );
+
+        test(
+          "returns scoped queue statistics",
+          async () => {
+            const stats =
+              await approvalService
+                .getQueueStats(
+                  scope
+                );
+
+            expect(
+              stats
+            ).toEqual({
+              pending:
+                1,
+
+              approved:
+                2,
+
+              rejected:
+                3,
+
+              backend:
+                "persistence",
+            });
+
+            expect(
+              mockQueue
+                .getStats
+            ).toHaveBeenCalledWith(
+              expect.objectContaining({
+                organizationId:
+                  "org-1",
+
+                environmentId:
+                  "env-1",
+              })
+            );
+          }
+        );
+      }
+    );
+
+    // ========================================================================
+    // CLEANUP
+    // ========================================================================
+
+    describe(
+      "Cleanup",
+      () => {
+        test(
+          "delegates expired approval cleanup to queue",
+          async () => {
+            const result =
+              await approvalService
+                .cleanupExpired();
+
+            expect(
+              result
+            ).toBe(
+              2
+            );
+
+            expect(
+              mockQueue
+                .cleanupExpired
+            ).toHaveBeenCalledTimes(
+              1
+            );
+          }
+        );
+      }
+    );
+  }
+);
