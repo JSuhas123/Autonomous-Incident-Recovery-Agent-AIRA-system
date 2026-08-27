@@ -5,6 +5,12 @@ const {
 } = require(
   "../../persistence/operational/legacyModels"
 );
+const {
+  legacyIncidentMemoryBridge,
+} =
+  require(
+    "../memory/legacyIncidentMemoryBridge"
+  );
 /**
  * Memory Service
  * Tracks incident patterns and historical outcomes
@@ -12,6 +18,60 @@ const {
  */
 
 class MemoryService {
+    /**
+   * ========================================================================
+   * PHASE 16.4 — CANONICAL MEMORY BRIDGE
+   * ========================================================================
+   *
+   * Legacy learning remains operational during migration.
+   *
+   * PostgreSQL canonical memory is synchronized after successful legacy
+   * mutation.
+   *
+   * During the migration window a bridge failure MUST NOT erase the already
+   * completed legacy learning update. The failure is surfaced through logs
+   * and will later be covered by reconciliation/backfill.
+   */
+  async syncCanonicalMemory(
+    memory
+  ) {
+    if (
+      !memory
+    ) {
+      return null;
+    }
+
+
+    try {
+      return await legacyIncidentMemoryBridge
+        .sync(
+          memory
+        );
+
+    } catch (
+      error
+    ) {
+      console.error(
+        "[memory] Phase 16 canonical memory synchronization failed:",
+        {
+          code:
+            error.code,
+
+          message:
+            error.message,
+
+          tenantId:
+            memory.tenantId,
+
+          patternId:
+            memory.patternId,
+        }
+      );
+
+
+      return null;
+    }
+  }
   /**
    * Find or create pattern memory
    */
@@ -107,7 +167,12 @@ class MemoryService {
       memory.updatedAt = new Date();
       await memory.save();
 
-      console.log(
+await this
+  .syncCanonicalMemory(
+    memory
+  );
+
+console.log(
         `[memory] Recorded success: ${patternId} + ${action} (recovery: ${recoveryTimeMs}ms)`
       );
 
@@ -165,7 +230,12 @@ class MemoryService {
       memory.updatedAt = new Date();
       await memory.save();
 
-      console.log(
+await this
+  .syncCanonicalMemory(
+    memory
+  );
+
+console.log(
         `[memory] Recorded failure: ${patternId} + ${action} (reason: ${reason})`
       );
 
