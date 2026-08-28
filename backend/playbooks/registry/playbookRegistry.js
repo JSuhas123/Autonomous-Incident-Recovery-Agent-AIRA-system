@@ -1,59 +1,79 @@
 "use strict";
 
 /**
- * Playbook Registry
+ * Phase 18.6 — PostgreSQL Playbook Registry
  *
- * Environment-aware authoritative lifecycle registry.
+ * Canonical persistence:
  *
- * Ownership rules:
+ *   knowledge.playbook_definitions
+ *   knowledge.playbook_versions
  *
- * SYSTEM playbook
- *   owner.ownerType = system
- *   tenantId = null
- *   organizationId = null
- *   environmentId = null
+ * The previous in-memory Map is retired.
  *
- * TENANT playbook
- *   tenantId required
- *   organizationId required
- *   environmentId required
+ * This registry remains the public/domain compatibility layer used by:
  *
- * Resolution order:
+ * - routes
+ * - validation
+ * - recovery services
+ * - execution preparation
  *
- * 1. tenant playbook in exact organization + environment
- * 2. system playbook
+ * It does NOT:
  *
- * Never cross environments.
+ * - authorize execution
+ * - bypass policy
+ * - bypass approval
+ * - execute infrastructure
+ * - generate arbitrary commands
  */
+
+const PostgresPlaybookRepository =
+  require(
+    "../../persistence/postgres/PostgresPlaybookRepository"
+  );
+
 
 const {
   PLAYBOOK_LIFECYCLE,
   PLAYBOOK_LIFECYCLE_TRANSITIONS,
   PLAYBOOK_VALIDATION_PURPOSE,
   PLAYBOOK_OWNER_TYPE,
-} = require("../../constants/playbook");
+} =
+  require(
+    "../../constants/playbook"
+  );
+
 
 const {
   validatePlaybook,
-} = require("../validators/playbookValidator");
+} =
+  require(
+    "../validators/playbookValidator"
+  );
+
 
 const {
-  computePlaybookChecksum,
-  playbookVersionRef,
   isNewerVersion,
-} = require("../versioning/playbookVersioning");
+} =
+  require(
+    "../versioning/playbookVersioning"
+  );
+
 
 // ============================================================================
 // ERRORS
 // ============================================================================
 
-class PlaybookRegistryError extends Error {
+class PlaybookRegistryError
+  extends Error {
+
   constructor(
     code,
     message,
     details = {}
   ) {
-    super(message);
+    super(
+      message
+    );
 
     this.name =
       "PlaybookRegistryError";
@@ -63,11 +83,16 @@ class PlaybookRegistryError extends Error {
 
     this.details =
       details;
+
+    this.executionAuthorized =
+      false;
   }
 }
 
+
 const REGISTRY_ERROR_CODES =
   Object.freeze({
+
     NOT_FOUND:
       "NOT_FOUND",
 
@@ -106,24 +131,28 @@ const REGISTRY_ERROR_CODES =
 
     INVALID_VERSION:
       "INVALID_VERSION",
+
+    CONTROLLED_GLOBAL_IMPORT_REQUIRED:
+      "CONTROLLED_GLOBAL_IMPORT_REQUIRED",
   });
+
 
 // ============================================================================
 // REGISTRY
 // ============================================================================
 
 class PlaybookRegistry {
-  constructor() {
-    /**
-     * Keyed by ownership-aware composite key:
-     *
-     * system::<playbookId>::<semver>
-     *
-     * tenant::<organizationId>::<environmentId>::<playbookId>::<semver>
-     */
-    this._store =
-      new Map();
+
+  constructor(
+    options = {}
+  ) {
+    this._repository =
+      options.repository ||
+      new PostgresPlaybookRepository(
+        options
+      );
   }
+
 
   // ==========================================================================
   // REGISTER
@@ -138,19 +167,54 @@ class PlaybookRegistry {
       [
         "playbookId",
         "semver",
+        "name",
       ]
     );
 
-    const {
-      playbookId,
-      semver,
-    } = playbook;
 
     const scope =
       _resolveOwnership(
         playbook,
         options
       );
+
+
+    if (
+      scope.isSystem
+    ) {
+      throw new PlaybookRegistryError(
+        REGISTRY_ERROR_CODES
+          .CONTROLLED_GLOBAL_IMPORT_REQUIRED,
+
+        "SYSTEM Playbooks must be imported through the controlled global knowledge importer"
+      );
+    }
+
+
+    const canonical = {
+      ...playbook,
+
+      tenantId:
+        scope.tenantId,
+
+      organizationId:
+        scope.organizationId,
+
+      environmentId:
+        scope.environmentId,
+
+      owner: {
+        ...(
+          playbook.owner ||
+          {}
+        ),
+
+        ownerType:
+          PLAYBOOK_OWNER_TYPE
+            .TENANT,
+      },
+    };
+
 
     const purpose =
       options.validate ===
@@ -162,21 +226,13 @@ class PlaybookRegistry {
               .IMPORT
           );
 
-    if (purpose) {
+
+    if (
+      purpose
+    ) {
       const validation =
         await validatePlaybook(
-          {
-            ...playbook,
-
-            tenantId:
-              scope.tenantId,
-
-            organizationId:
-              scope.organizationId,
-
-            environmentId:
-              scope.environmentId,
-          },
+          canonical,
           {
             purpose,
 
@@ -184,20 +240,12 @@ class PlaybookRegistry {
               options.runbookRegistry,
 
             tenantContext:
-              scope.isSystem
-                ? undefined
-                : {
-                    tenantId:
-                      scope.tenantId,
-
-                    organizationId:
-                      scope.organizationId,
-
-                    environmentId:
-                      scope.environmentId,
-                  },
+              _tenantContext(
+                scope
+              ),
           }
         );
+
 
       if (
         !validation.valid
@@ -206,7 +254,7 @@ class PlaybookRegistry {
           REGISTRY_ERROR_CODES
             .IMPORT_VALIDATION_FAILED,
 
-          `Playbook validation failed for ${playbookId}@${semver}`,
+          `Playbook validation failed for ${canonical.playbookId}@${canonical.semver}`,
 
           {
             diagnostics:
@@ -219,58 +267,125 @@ class PlaybookRegistry {
       }
     }
 
-    const storageKey =
-      _entryKey(
-        playbookId,
-        semver,
+
+    let definition =
+      await this
+        ._repository
+        .getOwnedDefinitionByKey({
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          scopeType:
+            "ENVIRONMENT",
+
+          playbookId:
+            canonical.playbookId,
+        });
+
+
+    if (
+      !definition
+    ) {
+      definition =
+        await this
+          ._repository
+          .createDefinition({
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+
+            scopeType:
+              "ENVIRONMENT",
+
+            playbookId:
+              canonical.playbookId,
+
+            name:
+              canonical.name,
+
+            description:
+              canonical.description ||
+              null,
+
+            ownerType:
+              PLAYBOOK_OWNER_TYPE
+                .TENANT,
+
+            sourceType:
+              options.sourceType ||
+              "API",
+
+            legacyMongoId:
+              options.legacyMongoId ||
+              null,
+
+            metadata: {
+              tenantId:
+                scope.tenantId,
+
+              registeredBy:
+                options.initiatedBy ||
+                null,
+            },
+          });
+    }
+
+
+    try {
+
+      const stored =
+        await this
+          ._repository
+          .createVersion({
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+
+            playbook:
+              canonical,
+
+            provenance:
+              options.provenance ||
+              {
+                source:
+                  options.sourceType ||
+                  "API",
+              },
+
+            metadata: {
+              tenantId:
+                scope.tenantId,
+
+              executionAuthorized:
+                false,
+            },
+          });
+
+
+      return _flattenVersion(
+        stored,
         scope
       );
 
-    if (
-      this._store.has(
-        storageKey
-      )
+    } catch (
+      error
     ) {
-      throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES
-          .DUPLICATE_VERSION,
 
-        `Playbook ${playbookId}@${semver} is already registered in this ownership scope`
+      throw _translateRepositoryError(
+        error,
+        canonical.playbookId,
+        canonical.semver
       );
     }
-
-    const entry = {
-      ...playbook,
-
-      tenantId:
-        scope.tenantId,
-
-      organizationId:
-        scope.organizationId,
-
-      environmentId:
-        scope.environmentId,
-
-      checksum:
-        computePlaybookChecksum(
-          playbook
-        ),
-
-      immutable:
-        false,
-
-      _registeredAt:
-        new Date()
-          .toISOString(),
-    };
-
-    this._store.set(
-      storageKey,
-      entry
-    );
-
-    return entry;
   }
+
 
   // ==========================================================================
   // IMPORT
@@ -288,9 +403,14 @@ class PlaybookRegistry {
         purpose:
           PLAYBOOK_VALIDATION_PURPOSE
             .IMPORT,
+
+        sourceType:
+          options.sourceType ||
+          "YAML",
       }
     );
   }
+
 
   // ==========================================================================
   // GET ALL VERSIONS
@@ -301,38 +421,27 @@ class PlaybookRegistry {
     context = {}
   ) {
     const scope =
-      _normalizeContext(
+      _requireRuntimeScope(
         context
       );
 
-    const candidates =
-      [];
 
-    for (
-      const entry
-      of this._store.values()
-    ) {
-      if (
-        entry.playbookId !==
-        playbookId
-      ) {
-        continue;
-      }
+    const versions =
+      await this
+        ._repository
+        .listVisibleVersions({
+          organizationId:
+            scope.organizationId,
 
-      if (
-        _isVisibleToScope(
-          entry,
-          scope
-        )
-      ) {
-        candidates.push(
-          entry
-        );
-      }
-    }
+          environmentId:
+            scope.environmentId,
+
+          playbookId,
+        });
+
 
     if (
-      candidates.length ===
+      versions.length ===
       0
     ) {
       throw new PlaybookRegistryError(
@@ -343,11 +452,23 @@ class PlaybookRegistry {
       );
     }
 
-    return candidates;
+
+    return _mergeVisibleVersions(
+      versions.map(
+        (
+          item
+        ) =>
+          _flattenVersion(
+            item,
+            scope
+          )
+      )
+    );
   }
 
+
   // ==========================================================================
-  // GET VERSION
+  // GET EXACT VERSION
   // ==========================================================================
 
   async getVersion(
@@ -356,77 +477,45 @@ class PlaybookRegistry {
     context = {}
   ) {
     const scope =
-      _normalizeContext(
+      _requireRuntimeScope(
         context
       );
 
-    const tenantKey =
-      scope.organizationId &&
-      scope.environmentId
-        ? _entryKey(
-            playbookId,
-            semver,
-            {
-              isSystem:
-                false,
 
-              organizationId:
-                scope.organizationId,
+    const stored =
+      await this
+        ._repository
+        .getVersion({
+          organizationId:
+            scope.organizationId,
 
-              environmentId:
-                scope.environmentId,
-            }
-          )
-        : null;
+          environmentId:
+            scope.environmentId,
+
+          playbookId,
+
+          semver,
+        });
+
 
     if (
-      tenantKey &&
-      this._store.has(
-        tenantKey
-      )
+      !stored
     ) {
-      const entry =
-        this._store.get(
-          tenantKey
-        );
+      throw new PlaybookRegistryError(
+        REGISTRY_ERROR_CODES
+          .NOT_FOUND,
 
-      if (
-        !scope.tenantId ||
-        !entry.tenantId ||
-        entry.tenantId ===
-          scope.tenantId
-      ) {
-        return entry;
-      }
-    }
-
-    const systemKey =
-      _entryKey(
-        playbookId,
-        semver,
-        {
-          isSystem:
-            true,
-        }
-      );
-
-    if (
-      this._store.has(
-        systemKey
-      )
-    ) {
-      return this._store.get(
-        systemKey
+        `Playbook ${playbookId}@${semver} not found for active environment`
       );
     }
 
-    throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES
-        .NOT_FOUND,
 
-      `Playbook ${playbookId}@${semver} not found for active environment`
+    return _flattenVersion(
+      stored,
+      scope
     );
   }
+
 
   // ==========================================================================
   // LATEST
@@ -442,6 +531,7 @@ class PlaybookRegistry {
         context
       );
 
+
     return all.reduce(
       (
         best,
@@ -454,9 +544,11 @@ class PlaybookRegistry {
         )
           ? current
           : best,
+
       null
     );
   }
+
 
   // ==========================================================================
   // LIST
@@ -465,55 +557,41 @@ class PlaybookRegistry {
   async list(
     options = {}
   ) {
-    const {
-      lifecycle,
-      category,
-    } = options;
-
     const scope =
-      _normalizeContext(
+      _requireRuntimeScope(
         options
       );
 
-    const results =
-      [];
 
-    for (
-      const entry
-      of this._store.values()
-    ) {
-      if (
-        !_isVisibleToScope(
-          entry,
+    const versions =
+      await this
+        ._repository
+        .listVisibleVersions({
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          lifecycle:
+            options.lifecycle,
+
+          category:
+            options.category,
+        });
+
+
+    return versions.map(
+      (
+        item
+      ) =>
+        _flattenVersion(
+          item,
           scope
         )
-      ) {
-        continue;
-      }
-
-      if (
-        lifecycle &&
-        entry.lifecycle !==
-          lifecycle
-      ) {
-        continue;
-      }
-
-      if (
-        category &&
-        entry.category !==
-          category
-      ) {
-        continue;
-      }
-
-      results.push(
-        entry
-      );
-    }
-
-    return results;
+    );
   }
+
 
   // ==========================================================================
   // VALIDATE
@@ -524,12 +602,19 @@ class PlaybookRegistry {
     semver,
     options = {}
   ) {
+    const scope =
+      _requireRuntimeScope(
+        options
+      );
+
+
     const entry =
       await this.getVersion(
         playbookId,
         semver,
-        options
+        scope
       );
+
 
     _assertTransition(
       entry,
@@ -539,10 +624,6 @@ class PlaybookRegistry {
       semver
     );
 
-    const scope =
-      _normalizeContext(
-        options
-      );
 
     const result =
       await validatePlaybook(
@@ -562,6 +643,7 @@ class PlaybookRegistry {
         }
       );
 
+
     if (
       !result.valid
     ) {
@@ -578,22 +660,38 @@ class PlaybookRegistry {
       );
     }
 
-    entry.lifecycle =
-      PLAYBOOK_LIFECYCLE
-        .VALIDATED;
 
-    entry.checksum =
-      computePlaybookChecksum(
-        entry
-      );
+    const stored =
+      await this
+        ._repository
+        .transitionVersionLifecycle({
+          organizationId:
+            scope.organizationId,
+
+          environmentId:
+            scope.environmentId,
+
+          playbookId,
+
+          semver,
+
+          targetLifecycle:
+            PLAYBOOK_LIFECYCLE
+              .VALIDATED,
+        });
+
 
     return {
-      ...entry,
+      ..._flattenVersion(
+        stored,
+        scope
+      ),
 
       validationResult:
         result,
     };
   }
+
 
   // ==========================================================================
   // APPROVE
@@ -604,37 +702,15 @@ class PlaybookRegistry {
     semver,
     options = {}
   ) {
-    const entry =
-      await this.getVersion(
-        playbookId,
-        semver,
-        options
-      );
-
-    _assertTransition(
-      entry,
+    return this._transition(
+      playbookId,
+      semver,
       PLAYBOOK_LIFECYCLE
         .APPROVED,
-      playbookId,
-      semver
+      options
     );
-
-    entry.lifecycle =
-      PLAYBOOK_LIFECYCLE
-        .APPROVED;
-
-    entry._approvedAt =
-      new Date()
-        .toISOString();
-
-    entry._approvedBy =
-      options.approvedBy ||
-      "system";
-
-    return {
-      ...entry,
-    };
   }
+
 
   // ==========================================================================
   // ACTIVATE
@@ -645,12 +721,19 @@ class PlaybookRegistry {
     semver,
     options = {}
   ) {
+    const scope =
+      _requireRuntimeScope(
+        options
+      );
+
+
     const entry =
       await this.getVersion(
         playbookId,
         semver,
-        options
+        scope
       );
+
 
     _assertTransition(
       entry,
@@ -660,10 +743,6 @@ class PlaybookRegistry {
       semver
     );
 
-    const scope =
-      _normalizeContext(
-        options
-      );
 
     const result =
       await validatePlaybook(
@@ -682,6 +761,7 @@ class PlaybookRegistry {
             ),
         }
       );
+
 
     if (
       !result.valid
@@ -702,23 +782,33 @@ class PlaybookRegistry {
       );
     }
 
-    entry.lifecycle =
-      PLAYBOOK_LIFECYCLE
-        .ACTIVE;
 
-    entry._activatedAt =
-      new Date()
-        .toISOString();
+    const stored =
+      await this
+        ._repository
+        .transitionVersionLifecycle({
+          organizationId:
+            scope.organizationId,
 
-    entry.checksum =
-      computePlaybookChecksum(
-        entry
-      );
+          environmentId:
+            scope.environmentId,
 
-    return {
-      ...entry,
-    };
+          playbookId,
+
+          semver,
+
+          targetLifecycle:
+            PLAYBOOK_LIFECYCLE
+              .ACTIVE,
+        });
+
+
+    return _flattenVersion(
+      stored,
+      scope
+    );
   }
+
 
   // ==========================================================================
   // DISABLE
@@ -729,41 +819,15 @@ class PlaybookRegistry {
     semver,
     options = {}
   ) {
-    const entry =
-      await this.getVersion(
-        playbookId,
-        semver,
-        options
-      );
-
-    _assertTransition(
-      entry,
+    return this._transition(
+      playbookId,
+      semver,
       PLAYBOOK_LIFECYCLE
         .DISABLED,
-      playbookId,
-      semver
+      options
     );
-
-    entry.lifecycle =
-      PLAYBOOK_LIFECYCLE
-        .DISABLED;
-
-    entry._disabledAt =
-      new Date()
-        .toISOString();
-
-    entry._disabledBy =
-      options.disabledBy ||
-      "system";
-
-    entry._disabledReason =
-      options.reason ||
-      null;
-
-    return {
-      ...entry,
-    };
   }
+
 
   // ==========================================================================
   // DEPRECATE
@@ -774,41 +838,81 @@ class PlaybookRegistry {
     semver,
     options = {}
   ) {
+    return this._transition(
+      playbookId,
+      semver,
+      PLAYBOOK_LIFECYCLE
+        .DEPRECATED,
+      options
+    );
+  }
+
+
+  async _transition(
+    playbookId,
+    semver,
+    targetLifecycle,
+    options
+  ) {
+    const scope =
+      _requireRuntimeScope(
+        options
+      );
+
+
     const entry =
       await this.getVersion(
         playbookId,
         semver,
-        options
+        scope
       );
+
 
     _assertTransition(
       entry,
-      PLAYBOOK_LIFECYCLE
-        .DEPRECATED,
+      targetLifecycle,
       playbookId,
       semver
     );
 
-    entry.lifecycle =
-      PLAYBOOK_LIFECYCLE
-        .DEPRECATED;
 
-    entry._deprecatedAt =
-      new Date()
-        .toISOString();
+    try {
 
-    entry._deprecatedBy =
-      options.deprecatedBy ||
-      "system";
+      const stored =
+        await this
+          ._repository
+          .transitionVersionLifecycle({
+            organizationId:
+              scope.organizationId,
 
-    entry._deprecationReason =
-      options.reason ||
-      null;
+            environmentId:
+              scope.environmentId,
 
-    return {
-      ...entry,
-    };
+            playbookId,
+
+            semver,
+
+            targetLifecycle,
+          });
+
+
+      return _flattenVersion(
+        stored,
+        scope
+      );
+
+    } catch (
+      error
+    ) {
+
+      throw _translateRepositoryError(
+        error,
+        playbookId,
+        semver
+      );
+    }
   }
+
 
   // ==========================================================================
   // CREATE VERSION
@@ -821,42 +925,43 @@ class PlaybookRegistry {
     patches = {},
     options = {}
   ) {
+    const scope =
+      _requireRuntimeScope(
+        options
+      );
+
+
     const base =
       await this.getVersion(
         playbookId,
         baseSemver,
-        options
-      );
-
-    const scope =
-      _resolveOwnership(
-        base,
-        options
-      );
-
-    const newKey =
-      _entryKey(
-        playbookId,
-        newSemver,
         scope
       );
 
+
     if (
-      this._store.has(
-        newKey
-      )
+      base.owner
+        ?.ownerType ===
+      PLAYBOOK_OWNER_TYPE
+        .SYSTEM
     ) {
       throw new PlaybookRegistryError(
         REGISTRY_ERROR_CODES
-          .DUPLICATE_VERSION,
+          .CONTROLLED_GLOBAL_IMPORT_REQUIRED,
 
-        `Playbook ${playbookId}@${newSemver} already exists in this ownership scope`
+        "SYSTEM Playbook versions require the controlled global knowledge importer"
       );
     }
 
-    const newDefinition = {
-      ...base,
+
+    const definition = {
+      ..._stripPersistenceFields(
+        base
+      ),
+
       ...patches,
+
+      playbookId,
 
       semver:
         newSemver,
@@ -867,25 +972,22 @@ class PlaybookRegistry {
 
       immutable:
         false,
-
-      checksum:
-        null,
-
-      _registeredAt:
-        new Date()
-          .toISOString(),
     };
 
+
     return this.register(
-      newDefinition,
+      definition,
       {
         ...options,
+
+        ...scope,
 
         validate:
           false,
       }
     );
   }
+
 
   // ==========================================================================
   // EXECUTION DEFINITION
@@ -896,50 +998,62 @@ class PlaybookRegistry {
     semver,
     context = {}
   ) {
-    const entry =
-      await this.getVersion(
-        playbookId,
-        semver,
+    const scope =
+      _requireRuntimeScope(
         context
       );
 
-    if (
-      entry.lifecycle !==
-      PLAYBOOK_LIFECYCLE
-        .ACTIVE
-    ) {
-      throw new PlaybookRegistryError(
-        REGISTRY_ERROR_CODES
-          .NOT_EXECUTABLE,
 
-        `Playbook ${playbookId}@${semver} is not ACTIVE (lifecycle: ${entry.lifecycle})`
+    try {
+
+      const stored =
+        await this
+          ._repository
+          .lockExecutionDefinition({
+            organizationId:
+              scope.organizationId,
+
+            environmentId:
+              scope.environmentId,
+
+            playbookId,
+
+            semver,
+          });
+
+
+      return _deepFreeze(
+        _flattenVersion(
+          stored,
+          scope
+        )
+      );
+
+    } catch (
+      error
+    ) {
+
+      if (
+        error.code ===
+        "POSTGRES_PLAYBOOK_NOT_EXECUTABLE"
+      ) {
+        throw new PlaybookRegistryError(
+          REGISTRY_ERROR_CODES
+            .NOT_EXECUTABLE,
+
+          `Playbook ${playbookId}@${semver} is not ACTIVE`
+        );
+      }
+
+
+      throw _translateRepositoryError(
+        error,
+        playbookId,
+        semver
       );
     }
-
-    if (
-      !entry.immutable
-    ) {
-      entry.immutable =
-        true;
-
-      entry.checksum =
-        computePlaybookChecksum(
-          entry
-        );
-
-      entry._frozenAt =
-        new Date()
-          .toISOString();
-    }
-
-    return Object.freeze(
-      JSON.parse(
-        JSON.stringify(
-          entry
-        )
-      )
-    );
   }
+
 
   // ==========================================================================
   // EXECUTABLE
@@ -955,15 +1069,17 @@ class PlaybookRegistry {
     );
   }
 
-  // ==========================================================================
-  // SIZE
-  // ==========================================================================
 
+  /**
+   * Retained only so old diagnostics do not crash.
+   *
+   * PostgreSQL no longer exposes a synchronous authoritative registry size.
+   */
   get size() {
-    return this._store
-      .size;
+    return undefined;
   }
 }
+
 
 // ============================================================================
 // HELPERS
@@ -973,6 +1089,20 @@ function _requireFields(
   object,
   fields
 ) {
+  if (
+    !object ||
+    typeof object !==
+      "object"
+  ) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .VALIDATION_FAILED,
+
+      "Playbook definition must be an object"
+    );
+  }
+
+
   for (
     const field
     of fields
@@ -990,43 +1120,10 @@ function _requireFields(
   }
 }
 
-function _assertTransition(
-  entry,
-  targetLifecycle,
-  playbookId,
-  semver
-) {
-  const allowed =
-    PLAYBOOK_LIFECYCLE_TRANSITIONS[
-      entry.lifecycle
-    ] ||
-    [];
-
-  if (
-    !allowed.includes(
-      targetLifecycle
-    )
-  ) {
-    throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES
-        .INVALID_TRANSITION,
-
-      `Cannot transition ${playbookId}@${semver} from ${entry.lifecycle} → ${targetLifecycle}. Allowed: ${
-        allowed.length
-          ? allowed.join(", ")
-          : "none"
-      }`
-    );
-  }
-}
 
 function _normalizeContext(
   context = {}
 ) {
-  /**
-   * Compatibility:
-   * older callers may still pass tenantId as a string.
-   */
   if (
     typeof context ===
     "string"
@@ -1043,20 +1140,80 @@ function _normalizeContext(
     };
   }
 
+
+  const nested =
+    context.tenantContext ||
+    {};
+
+
   return {
     tenantId:
       context.tenantId ||
+      nested.tenantId ||
       null,
 
     organizationId:
       context.organizationId ||
+      context.orgId ||
+      nested.organizationId ||
       null,
 
     environmentId:
       context.environmentId ||
+      nested.environmentId ||
       null,
   };
 }
+
+
+function _requireRuntimeScope(
+  context = {}
+) {
+  const scope =
+    _normalizeContext(
+      context
+    );
+
+
+  if (
+    !scope.tenantId
+  ) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .TENANT_REQUIRED,
+
+      "tenantId is required for Playbook registry operations"
+    );
+  }
+
+
+  if (
+    !scope.organizationId
+  ) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .ORGANIZATION_REQUIRED,
+
+      "organizationId is required for Playbook registry operations"
+    );
+  }
+
+
+  if (
+    !scope.environmentId
+  ) {
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .ENVIRONMENT_REQUIRED,
+
+      "environmentId is required for Playbook registry operations"
+    );
+  }
+
+
+  return scope;
+}
+
 
 function _resolveOwnership(
   definition,
@@ -1067,6 +1224,28 @@ function _resolveOwnership(
       context
     );
 
+
+  /**
+   * Authenticated runtime context wins over body ownership.
+   *
+   * This prevents a tenant request from changing ownerType to SYSTEM.
+   */
+  if (
+    normalized.tenantId ||
+    normalized.organizationId ||
+    normalized.environmentId
+  ) {
+    return {
+      isSystem:
+        false,
+
+      ..._requireRuntimeScope(
+        normalized
+      ),
+    };
+  }
+
+
   const ownerType =
     definition.owner
       ?.ownerType ||
@@ -1074,13 +1253,18 @@ function _resolveOwnership(
       .SYSTEM ||
     "system";
 
+
   const isSystem =
     String(
       ownerType
-    ).toLowerCase() ===
+    )
+      .toLowerCase() ===
     "system";
 
-  if (isSystem) {
+
+  if (
+    isSystem
+  ) {
     return {
       isSystem:
         true,
@@ -1096,177 +1280,55 @@ function _resolveOwnership(
     };
   }
 
-  const tenantId =
-    normalized.tenantId ||
-    definition.tenantId;
-
-  const organizationId =
-    normalized.organizationId ||
-    definition.organizationId;
-
-  const environmentId =
-    normalized.environmentId ||
-    definition.environmentId;
-
-  if (!tenantId) {
-    throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES
-        .TENANT_REQUIRED,
-
-      "Tenant playbook requires tenantId"
-    );
-  }
-
-  if (!organizationId) {
-    throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES
-        .ORGANIZATION_REQUIRED,
-
-      "Tenant playbook requires organizationId"
-    );
-  }
-
-  if (!environmentId) {
-    throw new PlaybookRegistryError(
-      REGISTRY_ERROR_CODES
-        .ENVIRONMENT_REQUIRED,
-
-      "Tenant playbook requires environmentId"
-    );
-  }
 
   return {
     isSystem:
       false,
 
-    tenantId,
-
-    organizationId:
-      String(
-        organizationId
-      ),
-
-    environmentId:
-      String(
-        environmentId
-      ),
+    ..._requireRuntimeScope(
+      definition
+    ),
   };
 }
 
-function _entryKey(
-  playbookId,
-  semver,
-  scope
-) {
-  if (
-    scope.isSystem
-  ) {
-    return [
-      "system",
-      playbookId,
-      semver,
-    ].join("::");
-  }
 
-  return [
-    "tenant",
-    String(
-      scope.organizationId
-    ),
-    String(
-      scope.environmentId
-    ),
-    playbookId,
-    semver,
-  ].join("::");
-}
-
-function _isSystemEntry(
-  entry
-) {
-  return (
-    String(
-      entry.owner
-        ?.ownerType ||
-      ""
-    ).toLowerCase() ===
-      "system" ||
-    (
-      !entry.tenantId &&
-      !entry.organizationId &&
-      !entry.environmentId
-    )
-  );
-}
-
-function _isVisibleToScope(
+function _assertTransition(
   entry,
-  scope
+  targetLifecycle,
+  playbookId,
+  semver
 ) {
+  const allowed =
+    PLAYBOOK_LIFECYCLE_TRANSITIONS[
+      entry.lifecycle
+    ] ||
+    [];
+
+
   if (
-    _isSystemEntry(
-      entry
+    !allowed.includes(
+      targetLifecycle
     )
   ) {
-    return true;
-  }
+    throw new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .INVALID_TRANSITION,
 
-  /**
-   * Tenant definition is visible only when both canonical
-   * ownership fields match exactly.
-   */
-  if (
-    !scope.organizationId ||
-    !scope.environmentId
-  ) {
-    return false;
+      `Cannot transition ${playbookId}@${semver} from ${entry.lifecycle} → ${targetLifecycle}. Allowed: ${
+        allowed.length
+          ? allowed.join(
+              ", "
+            )
+          : "none"
+      }`
+    );
   }
-
-  if (
-    String(
-      entry.organizationId
-    ) !==
-    String(
-      scope.organizationId
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    String(
-      entry.environmentId
-    ) !==
-    String(
-      scope.environmentId
-    )
-  ) {
-    return false;
-  }
-
-  if (
-    scope.tenantId &&
-    entry.tenantId &&
-    entry.tenantId !==
-      scope.tenantId
-  ) {
-    return false;
-  }
-
-  return true;
 }
+
 
 function _tenantContext(
   scope
 ) {
-  if (
-    !scope.tenantId ||
-    !scope.organizationId ||
-    !scope.environmentId
-  ) {
-    return undefined;
-  }
-
   return {
     tenantId:
       scope.tenantId,
@@ -1279,6 +1341,295 @@ function _tenantContext(
   };
 }
 
+
+function _flattenVersion(
+  stored,
+  scope
+) {
+  if (
+    !stored
+  ) {
+    return null;
+  }
+
+
+  const definition =
+    stored.definition ||
+    {};
+
+
+  const isGlobal =
+    stored.scopeType ===
+    "GLOBAL";
+
+
+  return {
+    ...definition,
+
+    id:
+      stored.id,
+
+    publicId:
+      stored.publicId,
+
+    playbookDefinitionId:
+      stored.playbookDefinitionId,
+
+    playbookId:
+      stored.playbookId ||
+      definition.playbookId,
+
+    semver:
+      stored.semver ||
+      definition.semver,
+
+    lifecycle:
+      stored.lifecycle,
+
+    checksum:
+      stored.checksum,
+
+    immutable:
+      Boolean(
+        stored.immutable
+      ),
+
+    tenantId:
+      isGlobal
+        ? null
+        : (
+            definition.tenantId ||
+            scope.tenantId
+          ),
+
+    organizationId:
+      isGlobal
+        ? null
+        : scope.organizationId,
+
+    environmentId:
+      isGlobal
+        ? null
+        : scope.environmentId,
+
+    owner: {
+      ...(
+        definition.owner ||
+        {}
+      ),
+
+      ownerType:
+        isGlobal
+          ? PLAYBOOK_OWNER_TYPE
+              .SYSTEM
+          : PLAYBOOK_OWNER_TYPE
+              .TENANT,
+    },
+
+    provenance:
+      stored.provenance ||
+      {},
+
+    safety: {
+      ...(
+        stored.safety ||
+        {}
+      ),
+
+      executionAuthorized:
+        false,
+
+      grantsExecutionPermission:
+        false,
+
+      bypassesPolicy:
+        false,
+
+      bypassesAuthorization:
+        false,
+    },
+
+    executionAuthorized:
+      false,
+
+    _frozenAt:
+      stored.lockedAt ||
+      null,
+
+    _registeredAt:
+      stored.createdAt ||
+      null,
+  };
+}
+
+
+function _mergeVisibleVersions(
+  entries
+) {
+  const byVersion =
+    new Map();
+
+
+  /**
+   * SYSTEM first.
+   *
+   * Tenant copy with the same semver then overrides it.
+   */
+  for (
+    const entry
+    of entries.filter(
+      (
+        item
+      ) =>
+        item.owner
+          ?.ownerType ===
+        PLAYBOOK_OWNER_TYPE
+          .SYSTEM
+    )
+  ) {
+    byVersion.set(
+      entry.semver,
+      entry
+    );
+  }
+
+
+  for (
+    const entry
+    of entries.filter(
+      (
+        item
+      ) =>
+        item.owner
+          ?.ownerType !==
+        PLAYBOOK_OWNER_TYPE
+          .SYSTEM
+    )
+  ) {
+    byVersion.set(
+      entry.semver,
+      entry
+    );
+  }
+
+
+  return Array.from(
+    byVersion.values()
+  );
+}
+
+
+function _stripPersistenceFields(
+  value
+) {
+  const clean = {
+    ...value,
+  };
+
+
+  for (
+    const field
+    of [
+      "id",
+      "publicId",
+      "playbookDefinitionId",
+      "checksum",
+      "immutable",
+      "provenance",
+      "safety",
+      "executionAuthorized",
+      "_frozenAt",
+      "_registeredAt",
+    ]
+  ) {
+    delete clean[
+      field
+    ];
+  }
+
+
+  return clean;
+}
+
+
+function _translateRepositoryError(
+  error,
+  playbookId,
+  semver
+) {
+  if (
+    error.code ===
+      "23505" ||
+
+    error.code ===
+      "POSTGRES_PLAYBOOK_VERSION_NOT_NEWER"
+  ) {
+    return new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .DUPLICATE_VERSION,
+
+      `Playbook ${playbookId}@${semver} already exists or is not a newer version`
+    );
+  }
+
+
+  if (
+    error.code ===
+    "POSTGRES_PLAYBOOK_INVALID_TRANSITION"
+  ) {
+    return new PlaybookRegistryError(
+      REGISTRY_ERROR_CODES
+        .INVALID_TRANSITION,
+
+      error.message
+    );
+  }
+
+
+  error.executionAuthorized =
+    false;
+
+
+  return error;
+}
+
+
+function _deepFreeze(
+  value
+) {
+  if (
+    !value ||
+    typeof value !==
+      "object" ||
+    Object.isFrozen(
+      value
+    )
+  ) {
+    return value;
+  }
+
+
+  Object.freeze(
+    value
+  );
+
+
+  for (
+    const child
+    of Object.values(
+      value
+    )
+  ) {
+    _deepFreeze(
+      child
+    );
+  }
+
+
+  return value;
+}
+
+
 // ============================================================================
 // SINGLETON
 // ============================================================================
@@ -1286,19 +1637,31 @@ function _tenantContext(
 let instance =
   null;
 
-function getPlaybookRegistry() {
-  if (!instance) {
+
+function getPlaybookRegistry(
+  options
+) {
+  if (
+    !instance ||
+    options
+  ) {
     instance =
-      new PlaybookRegistry();
+      new PlaybookRegistry(
+        options ||
+        {}
+      );
   }
+
 
   return instance;
 }
+
 
 function resetPlaybookRegistry() {
   instance =
     null;
 }
+
 
 module.exports = {
   PlaybookRegistry,

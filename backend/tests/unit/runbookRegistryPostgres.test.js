@@ -2,35 +2,25 @@
 
 /**
  * Phase 18.6
- * PostgreSQL-backed PlaybookRegistry compatibility tests.
- *
- * The old version of this test assumed:
- *
- *   PlaybookRegistry -> in-memory Map
- *
- * That architecture is intentionally retired.
- *
- * These tests verify the registry contract while injecting a PostgreSQL
- * repository double.
+ * PostgreSQL-backed RunbookRegistry compatibility tests.
  */
 
 const {
-  PlaybookRegistry,
-  PlaybookRegistryError,
-  REGISTRY_ERROR_CODES,
-  getPlaybookRegistry,
-  resetPlaybookRegistry,
+  RunbookRegistry,
+  RegistryError,
+  getRunbookRegistry,
+  resetRunbookRegistry,
 } =
   require(
-    "../../playbooks/registry/playbookRegistry"
+    "../../runbooks/registry/runbookRegistry"
   );
 
 
 const {
-  PLAYBOOK_LIFECYCLE,
+  RUNBOOK_LIFECYCLE,
 } =
   require(
-    "../../constants/playbook"
+    "../../constants/runbook"
   );
 
 
@@ -47,7 +37,7 @@ const SCOPE =
   });
 
 
-function playbookDefinition(
+function runbookDefinition(
   overrides = {}
 ) {
   return {
@@ -55,22 +45,22 @@ function playbookDefinition(
       "aira.io/v1",
 
     kind:
-      "Playbook",
+      "Runbook",
 
-    playbookId:
-      "PB-TEST-REGISTRY-001",
+    runbookId:
+      "RB-K8S-POD-RESTART",
 
     semver:
       "1.0.0",
 
     name:
-      "PostgreSQL Registry Test Playbook",
+      "Restart Kubernetes Pod",
 
     description:
-      "Phase 18.6 registry compatibility fixture.",
+      "Deterministic Phase 18.6 test Runbook.",
 
     lifecycle:
-      PLAYBOOK_LIFECYCLE
+      RUNBOOK_LIFECYCLE
         .DRAFT,
 
     owner: {
@@ -78,43 +68,45 @@ function playbookDefinition(
         "tenant",
     },
 
-    stages: [
-      {
-        stageId:
-          "stage-investigation",
-
-        name:
-          "Investigate",
-
-        type:
-          "INVESTIGATION",
-
-        order:
-          1,
-
-        runbooks: [
-          {
-            runbookId:
-              "RB-K8S-POD-RESTART",
-
-            semver:
-              ">=1.0.0",
-          },
-        ],
-
-        failurePolicy:
-          "STOP",
-      },
-    ],
+    scope: {
+      resourceTypes: [
+        "kubernetes.pod",
+      ],
+    },
 
     risk: {
       level:
         "LOW",
     },
 
-    approval: {
-      mode:
-        "AUTOMATIC",
+    parameters: [],
+
+    steps: [
+      {
+        id:
+          "restart",
+
+        type:
+          "kubernetes",
+
+        action:
+          "restart_pod",
+
+        failurePolicy:
+          "STOP",
+      },
+    ],
+
+    verification: {
+      strategy:
+        "ALL",
+
+      checks: [],
+    },
+
+    rollbackConfig: {
+      strategy:
+        "NONE",
     },
 
     ...overrides,
@@ -126,7 +118,7 @@ function storedVersion(
   overrides = {}
 ) {
   const definition =
-    playbookDefinition(
+    runbookDefinition(
       overrides.definition ||
       {}
     );
@@ -134,16 +126,16 @@ function storedVersion(
 
   return {
     id:
-      "11111111-1111-4111-8111-111111111111",
+      "33333333-3333-4333-8333-333333333333",
 
     publicId:
-      "pbver_test",
+      "rbver_test",
 
-    playbookDefinitionId:
-      "22222222-2222-4222-8222-222222222222",
+    runbookDefinitionId:
+      "44444444-4444-4444-8444-444444444444",
 
-    playbookId:
-      definition.playbookId,
+    runbookId:
+      definition.runbookId,
 
     scopeType:
       "ENVIRONMENT",
@@ -209,8 +201,7 @@ function storedVersion(
 
     ...overrides,
 
-    definition:
-      definition,
+    definition,
   };
 }
 
@@ -224,10 +215,10 @@ function repositoryDouble(
         .fn()
         .mockResolvedValue({
           id:
-            "22222222-2222-4222-8222-222222222222",
+            "44444444-4444-4444-8444-444444444444",
 
-          playbookId:
-            "PB-TEST-REGISTRY-001",
+          runbookId:
+            "RB-K8S-POD-RESTART",
 
           scopeType:
             "ENVIRONMENT",
@@ -235,17 +226,7 @@ function repositoryDouble(
 
     createDefinition:
       jest
-        .fn()
-        .mockResolvedValue({
-          id:
-            "22222222-2222-4222-8222-222222222222",
-
-          playbookId:
-            "PB-TEST-REGISTRY-001",
-
-          scopeType:
-            "ENVIRONMENT",
-        }),
+        .fn(),
 
     createVersion:
       jest
@@ -256,13 +237,13 @@ function repositoryDouble(
           ) =>
             storedVersion({
               definition:
-                input.playbook,
+                input.runbook,
 
               semver:
-                input.playbook.semver,
+                input.runbook.semver,
 
               lifecycle:
-                input.playbook.lifecycle,
+                input.runbook.lifecycle,
             })
         ),
 
@@ -292,7 +273,7 @@ function repositoryDouble(
                 input.targetLifecycle,
 
               definition:
-                playbookDefinition({
+                runbookDefinition({
                   lifecycle:
                     input.targetLifecycle,
                 }),
@@ -305,7 +286,7 @@ function repositoryDouble(
         .mockResolvedValue(
           storedVersion({
             lifecycle:
-              PLAYBOOK_LIFECYCLE
+              RUNBOOK_LIFECYCLE
                 .ACTIVE,
 
             immutable:
@@ -317,10 +298,13 @@ function repositoryDouble(
             firstExecutedAt:
               new Date(),
 
+            versionRef:
+              "RB-K8S-POD-RESTART@1.0.0",
+
             definition:
-              playbookDefinition({
+              runbookDefinition({
                 lifecycle:
-                  PLAYBOOK_LIFECYCLE
+                  RUNBOOK_LIFECYCLE
                     .ACTIVE,
               }),
           })
@@ -332,11 +316,11 @@ function repositoryDouble(
 
 
 describe(
-  "PlaybookRegistry — Phase 18.6 PostgreSQL cutover",
+  "RunbookRegistry — Phase 18.6 PostgreSQL cutover",
   () => {
 
     test(
-      "register writes through PostgreSQL repository",
+      "register stores tenant Runbook through PostgreSQL repository",
       async () => {
 
         const repository =
@@ -344,21 +328,17 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         const result =
           await registry.register(
-            playbookDefinition(),
-            {
-              validate:
-                false,
-
-              tenantContext:
-                SCOPE,
-            }
+            runbookDefinition(),
+            SCOPE
           );
 
 
@@ -376,8 +356,8 @@ describe(
             scopeType:
               "ENVIRONMENT",
 
-            playbookId:
-              "PB-TEST-REGISTRY-001",
+            runbookId:
+              "RB-K8S-POD-RESTART",
           });
 
 
@@ -389,10 +369,10 @@ describe(
 
 
         expect(
-          result.playbookId
+          result.runbookId
         )
           .toBe(
-            "PB-TEST-REGISTRY-001"
+            "RB-K8S-POD-RESTART"
           );
 
 
@@ -407,7 +387,7 @@ describe(
 
 
     test(
-      "creates PostgreSQL definition when owned definition does not exist",
+      "creates PostgreSQL definition when exact tenant definition is absent",
       async () => {
 
         const repository =
@@ -418,23 +398,28 @@ describe(
                 .mockResolvedValue(
                   null
                 ),
+
+            createDefinition:
+              jest
+                .fn()
+                .mockResolvedValue({
+                  id:
+                    "44444444-4444-4444-8444-444444444444",
+                }),
           });
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         await registry.register(
-          playbookDefinition(),
-          {
-            validate:
-              false,
-
-            ...SCOPE,
-          }
+          runbookDefinition(),
+          SCOPE
         );
 
 
@@ -450,11 +435,11 @@ describe(
               environmentId:
                 SCOPE.environmentId,
 
+              runbookId:
+                "RB-K8S-POD-RESTART",
+
               scopeType:
                 "ENVIRONMENT",
-
-              playbookId:
-                "PB-TEST-REGISTRY-001",
 
               ownerType:
                 "tenant",
@@ -465,87 +450,32 @@ describe(
 
 
     test(
-      "tenantContext is accepted as authoritative runtime scope",
-      async () => {
-
-        const repository =
-          repositoryDouble();
-
-
-        const registry =
-          new PlaybookRegistry({
-            repository,
-          });
-
-
-        await registry.register(
-          playbookDefinition({
-            tenantId:
-              undefined,
-
-            organizationId:
-              undefined,
-
-            environmentId:
-              undefined,
-          }),
-          {
-            validate:
-              false,
-
-            tenantContext:
-              SCOPE,
-          }
-        );
-
-
-        expect(
-          repository
-            .createVersion
-        )
-          .toHaveBeenCalledWith(
-            expect.objectContaining({
-              organizationId:
-                SCOPE.organizationId,
-
-              environmentId:
-                SCOPE.environmentId,
-            })
-          );
-      }
-    );
-
-
-    test(
-      "SYSTEM registration fails closed",
+      "SYSTEM Runbook registration without tenant context fails closed",
       async () => {
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository:
               repositoryDouble(),
+
+            actionRegistry: {},
           });
 
 
         await expect(
           registry.register(
-            playbookDefinition({
+            runbookDefinition({
               owner: {
                 ownerType:
                   "system",
               },
-            }),
-            {
-              validate:
-                false,
-            }
+            })
           )
         )
           .rejects
           .toMatchObject({
             code:
-              REGISTRY_ERROR_CODES
-                .CONTROLLED_GLOBAL_IMPORT_REQUIRED,
+              "CONTROLLED_GLOBAL_IMPORT_REQUIRED",
 
             executionAuthorized:
               false,
@@ -555,61 +485,7 @@ describe(
 
 
     test(
-      "duplicate PostgreSQL version maps to DUPLICATE_VERSION",
-      async () => {
-
-        const error =
-          Object.assign(
-            new Error(
-              "not newer"
-            ),
-            {
-              code:
-                "POSTGRES_PLAYBOOK_VERSION_NOT_NEWER",
-            }
-          );
-
-
-        const repository =
-          repositoryDouble({
-            createVersion:
-              jest
-                .fn()
-                .mockRejectedValue(
-                  error
-                ),
-          });
-
-
-        const registry =
-          new PlaybookRegistry({
-            repository,
-          });
-
-
-        await expect(
-          registry.register(
-            playbookDefinition(),
-            {
-              validate:
-                false,
-
-              ...SCOPE,
-            }
-          )
-        )
-          .rejects
-          .toMatchObject({
-            code:
-              REGISTRY_ERROR_CODES
-                .DUPLICATE_VERSION,
-          });
-      }
-    );
-
-
-    test(
-      "getVersion returns exact flattened PostgreSQL version",
+      "getVersion returns exact PostgreSQL Runbook version",
       async () => {
 
         const repository =
@@ -617,14 +493,16 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         const result =
           await registry.getVersion(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             "1.0.0",
             SCOPE
           );
@@ -641,8 +519,8 @@ describe(
             environmentId:
               SCOPE.environmentId,
 
-            playbookId:
-              "PB-TEST-REGISTRY-001",
+            runbookId:
+              "RB-K8S-POD-RESTART",
 
             semver:
               "1.0.0",
@@ -650,15 +528,7 @@ describe(
 
 
         expect(
-          result.playbookId
-        )
-          .toBe(
-            "PB-TEST-REGISTRY-001"
-          );
-
-
-        expect(
-          result.stages
+          result.steps
         )
           .toHaveLength(
             1
@@ -676,7 +546,7 @@ describe(
 
 
     test(
-      "getVersion throws NOT_FOUND when PostgreSQL has no version",
+      "getVersion throws NOT_FOUND when PostgreSQL has no exact version",
       async () => {
 
         const repository =
@@ -691,14 +561,16 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         await expect(
           registry.getVersion(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             "9.9.9",
             SCOPE
           )
@@ -706,15 +578,17 @@ describe(
           .rejects
           .toMatchObject({
             code:
-              REGISTRY_ERROR_CODES
-                .NOT_FOUND,
+              "NOT_FOUND",
+
+            executionAuthorized:
+              false,
           });
       }
     );
 
 
     test(
-      "getById returns visible PostgreSQL versions",
+      "getById resolves visible PostgreSQL versions",
       async () => {
 
         const repository =
@@ -723,14 +597,23 @@ describe(
               jest
                 .fn()
                 .mockResolvedValue([
-                  storedVersion(),
+                  storedVersion({
+                    semver:
+                      "1.0.0",
+
+                    definition:
+                      runbookDefinition({
+                        semver:
+                          "1.0.0",
+                      }),
+                  }),
 
                   storedVersion({
                     semver:
                       "2.0.0",
 
                     definition:
-                      playbookDefinition({
+                      runbookDefinition({
                         semver:
                           "2.0.0",
                       }),
@@ -740,14 +623,16 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         const result =
           await registry.getById(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             SCOPE
           );
 
@@ -757,6 +642,15 @@ describe(
         )
           .toHaveLength(
             2
+          );
+
+
+        expect(
+          result[0]
+            .semver
+        )
+          .toBe(
+            "2.0.0"
           );
       }
     );
@@ -774,34 +668,34 @@ describe(
                 .mockResolvedValue([
                   storedVersion({
                     semver:
-                      "1.0.0",
+                      "1.2.0",
 
                     definition:
-                      playbookDefinition({
+                      runbookDefinition({
                         semver:
-                          "1.0.0",
+                          "1.2.0",
                       }),
                   }),
 
                   storedVersion({
                     semver:
-                      "2.1.0",
+                      "3.0.0",
 
                     definition:
-                      playbookDefinition({
+                      runbookDefinition({
                         semver:
-                          "2.1.0",
+                          "3.0.0",
                       }),
                   }),
 
                   storedVersion({
                     semver:
-                      "1.9.9",
+                      "2.5.0",
 
                     definition:
-                      playbookDefinition({
+                      runbookDefinition({
                         semver:
-                          "1.9.9",
+                          "2.5.0",
                       }),
                   }),
                 ]),
@@ -809,30 +703,32 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
-        const latest =
+        const result =
           await registry.getLatestVersion(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             SCOPE
           );
 
 
         expect(
-          latest.semver
+          result.semver
         )
           .toBe(
-            "2.1.0"
+            "3.0.0"
           );
       }
     );
 
 
     test(
-      "list delegates visible filtering to PostgreSQL repository",
+      "search delegates query to PostgreSQL",
       async () => {
 
         const repository =
@@ -840,21 +736,17 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
-        await registry.list({
-          ...SCOPE,
-
-          lifecycle:
-            PLAYBOOK_LIFECYCLE
-              .DRAFT,
-
-          category:
-            "kubernetes",
-        });
+        await registry.search(
+          "restart",
+          SCOPE
+        );
 
 
         expect(
@@ -868,19 +760,15 @@ describe(
             environmentId:
               SCOPE.environmentId,
 
-            lifecycle:
-              PLAYBOOK_LIFECYCLE
-                .DRAFT,
-
-            category:
-              "kubernetes",
+            query:
+              "restart",
           });
       }
     );
 
 
     test(
-      "approve transitions VALIDATED to APPROVED through PostgreSQL",
+      "isExecutable returns true only for ACTIVE version",
       async () => {
 
         const repository =
@@ -891,148 +779,29 @@ describe(
                 .mockResolvedValue(
                   storedVersion({
                     lifecycle:
-                      PLAYBOOK_LIFECYCLE
-                        .VALIDATED,
-
-                    definition:
-                      playbookDefinition({
-                        lifecycle:
-                          PLAYBOOK_LIFECYCLE
-                            .VALIDATED,
-                      }),
+                      RUNBOOK_LIFECYCLE
+                        .ACTIVE,
                   })
                 ),
           });
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
-          });
 
-
-        const result =
-          await registry.approve(
-            "PB-TEST-REGISTRY-001",
-            "1.0.0",
-            SCOPE
-          );
-
-
-        expect(
-          repository
-            .transitionVersionLifecycle
-        )
-          .toHaveBeenCalledWith({
-            organizationId:
-              SCOPE.organizationId,
-
-            environmentId:
-              SCOPE.environmentId,
-
-            playbookId:
-              "PB-TEST-REGISTRY-001",
-
-            semver:
-              "1.0.0",
-
-            targetLifecycle:
-              PLAYBOOK_LIFECYCLE
-                .APPROVED,
-          });
-
-
-        expect(
-          result.lifecycle
-        )
-          .toBe(
-            PLAYBOOK_LIFECYCLE
-              .APPROVED
-          );
-      }
-    );
-
-
-    test(
-      "illegal lifecycle transition fails before repository mutation",
-      async () => {
-
-        const repository =
-          repositoryDouble({
-            getVersion:
-              jest
-                .fn()
-                .mockResolvedValue(
-                  storedVersion({
-                    lifecycle:
-                      PLAYBOOK_LIFECYCLE
-                        .DRAFT,
-                  })
-                ),
-          });
-
-
-        const registry =
-          new PlaybookRegistry({
-            repository,
+            actionRegistry: {},
           });
 
 
         await expect(
-          registry.approve(
-            "PB-TEST-REGISTRY-001",
+          registry.isExecutable(
+            "RB-K8S-POD-RESTART",
             "1.0.0",
             SCOPE
           )
         )
-          .rejects
-          .toMatchObject({
-            code:
-              REGISTRY_ERROR_CODES
-                .INVALID_TRANSITION,
-          });
-
-
-        expect(
-          repository
-            .transitionVersionLifecycle
-        )
-          .not
-          .toHaveBeenCalled();
-      }
-    );
-
-
-    test(
-      "isExecutable is true only for ACTIVE",
-      () => {
-
-        const registry =
-          new PlaybookRegistry({
-            repository:
-              repositoryDouble(),
-          });
-
-
-        expect(
-          registry.isExecutable({
-            lifecycle:
-              PLAYBOOK_LIFECYCLE
-                .DRAFT,
-          })
-        )
-          .toBe(
-            false
-          );
-
-
-        expect(
-          registry.isExecutable({
-            lifecycle:
-              PLAYBOOK_LIFECYCLE
-                .ACTIVE,
-          })
-        )
+          .resolves
           .toBe(
             true
           );
@@ -1041,7 +810,7 @@ describe(
 
 
     test(
-      "getExecutionDefinition locks exact ACTIVE PostgreSQL version",
+      "getExecutionDefinition locks exact ACTIVE Runbook",
       async () => {
 
         const repository =
@@ -1049,14 +818,16 @@ describe(
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         const result =
           await registry.getExecutionDefinition(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             "1.0.0",
             SCOPE
           );
@@ -1073,8 +844,8 @@ describe(
             environmentId:
               SCOPE.environmentId,
 
-            playbookId:
-              "PB-TEST-REGISTRY-001",
+            runbookId:
+              "RB-K8S-POD-RESTART",
 
             semver:
               "1.0.0",
@@ -1110,20 +881,8 @@ describe(
 
 
     test(
-      "repository NOT_EXECUTABLE is translated correctly",
+      "POSTGRES_RUNBOOK_NOT_EXECUTABLE maps to RegistryError",
       async () => {
-
-        const error =
-          Object.assign(
-            new Error(
-              "not active"
-            ),
-            {
-              code:
-                "POSTGRES_PLAYBOOK_NOT_EXECUTABLE",
-            }
-          );
-
 
         const repository =
           repositoryDouble({
@@ -1131,20 +890,30 @@ describe(
               jest
                 .fn()
                 .mockRejectedValue(
-                  error
+                  Object.assign(
+                    new Error(
+                      "not active"
+                    ),
+                    {
+                      code:
+                        "POSTGRES_RUNBOOK_NOT_EXECUTABLE",
+                    }
+                  )
                 ),
           });
 
 
         const registry =
-          new PlaybookRegistry({
+          new RunbookRegistry({
             repository,
+
+            actionRegistry: {},
           });
 
 
         await expect(
           registry.getExecutionDefinition(
-            "PB-TEST-REGISTRY-001",
+            "RB-K8S-POD-RESTART",
             "1.0.0",
             SCOPE
           )
@@ -1152,8 +921,10 @@ describe(
           .rejects
           .toMatchObject({
             code:
-              REGISTRY_ERROR_CODES
-                .NOT_EXECUTABLE,
+              "NOT_EXECUTABLE",
+
+            executionAuthorized:
+              false,
           });
       }
     );
@@ -1162,37 +933,24 @@ describe(
 
 
 describe(
-  "PlaybookRegistryError",
+  "RunbookRegistry error/singleton behavior",
   () => {
 
+    afterEach(
+      () => {
+        resetRunbookRegistry();
+      }
+    );
+
+
     test(
-      "is non-authorizing by construction",
+      "RegistryError is always non-authorizing",
       () => {
 
         const error =
-          new PlaybookRegistryError(
-            "NOT_FOUND",
-            "not found",
-            {
-              id:
-                "x",
-            }
-          );
-
-
-        expect(
-          error.name
-        )
-          .toBe(
-            "PlaybookRegistryError"
-          );
-
-
-        expect(
-          error.code
-        )
-          .toBe(
-            "NOT_FOUND"
+          new RegistryError(
+            "TEST",
+            "failure"
           );
 
 
@@ -1212,31 +970,18 @@ describe(
           );
       }
     );
-  }
-);
-
-
-describe(
-  "PlaybookRegistry singleton",
-  () => {
-
-    afterEach(
-      () => {
-        resetPlaybookRegistry();
-      }
-    );
 
 
     test(
-      "returns same singleton instance",
+      "singleton is stable until reset",
       () => {
 
         const first =
-          getPlaybookRegistry();
+          getRunbookRegistry();
 
 
         const second =
-          getPlaybookRegistry();
+          getRunbookRegistry();
 
 
         expect(
@@ -1245,31 +990,21 @@ describe(
           .toBe(
             second
           );
-      }
-    );
 
 
-    test(
-      "reset creates fresh singleton instance",
-      () => {
-
-        const first =
-          getPlaybookRegistry();
+        resetRunbookRegistry();
 
 
-        resetPlaybookRegistry();
-
-
-        const second =
-          getPlaybookRegistry();
+        const third =
+          getRunbookRegistry();
 
 
         expect(
-          first
+          third
         )
           .not
           .toBe(
-            second
+            first
           );
       }
     );

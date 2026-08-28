@@ -45,7 +45,9 @@ const {
 } = require("../versioning/runbookVersioning");
 
 const RunbookExecution =
-  require("../../models/RunbookExecution");
+  require(
+    "../../persistence/postgres/PostgresRunbookExecutionAdapter"
+  );
 
 const {
   RUNBOOK_FAILURE_POLICY,
@@ -188,12 +190,15 @@ class RunbookExecutionEngine {
     };
   }
 
-  _executionFilter(
+   _executionFilter(
     execution
   ) {
     return {
       executionId:
         execution.executionId,
+
+      tenantId:
+        execution.tenantId,
 
       organizationId:
         execution.organizationId,
@@ -250,16 +255,27 @@ class RunbookExecutionEngine {
         environmentId:
           scope.environmentId,
 
-        incidentId:
-          scope.incidentId,
+incidentId:
+  scope.incidentId,
 
-        /**
-         * Temporary legacy compatibility.
-         */
-        orgId:
-          String(
-            scope.organizationId
-          ),
+/**
+ * Phase 18 execution lineage.
+ *
+ * Every Runbook launched from a Playbook retains the canonical
+ * parent Playbook execution identity. Standalone Runbook execution
+ * is still valid and therefore stores null.
+ */
+playbookExecutionId:
+  executionInput.playbookExecutionId ||
+  null,
+
+/**
+ * Temporary legacy compatibility.
+ */
+orgId:
+  String(
+    scope.organizationId
+  ),
 
         runbookId:
           runbookDef.runbookId,
@@ -551,28 +567,32 @@ class RunbookExecutionEngine {
       let failedStep =
         null;
 
-      const executionContext = {
-        executionId,
+     const executionContext = {
+  executionId,
 
-        correlationId,
+  correlationId,
 
-        tenantId:
-          scope.tenantId,
+  playbookExecutionId:
+    executionInput.playbookExecutionId ||
+    null,
 
-        organizationId:
-          scope.organizationId,
+  tenantId:
+    scope.tenantId,
 
-        environmentId:
-          scope.environmentId,
+  organizationId:
+    scope.organizationId,
 
-        incidentId:
-          scope.incidentId,
+  environmentId:
+    scope.environmentId,
 
-        dryRun:
-          Boolean(
-            executionInput.dryRun
-          ),
-      };
+  incidentId:
+    scope.incidentId,
+
+  dryRun:
+    Boolean(
+      executionInput.dryRun
+    ),
+};
 
       for (
         const step

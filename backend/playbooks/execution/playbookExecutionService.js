@@ -38,9 +38,11 @@ const {
 } = require("../../constants/playbook");
 
 const PlaybookExecution =
-  require("../../models/PlaybookExecution");
-
-const {
+  require(
+    "../../persistence/postgres/PostgresPlaybookExecutionAdapter"
+  );
+  
+  const {
   getPlaybookRegistry,
 } = require("../registry/playbookRegistry");
 
@@ -505,29 +507,32 @@ class PlaybookExecutionService {
 
         await record.save();
 
-        await this._executeStage(
-          stageRecord,
-          stage,
-          incidentContext,
-          playbookDef,
-          {
-            ...options,
+       await this._executeStage(
+  stageRecord,
+  stage,
+  incidentContext,
+  playbookDef,
+  {
+    ...options,
 
-            tenantId:
-              scope.tenantId,
+    tenantId:
+      scope.tenantId,
 
-            organizationId:
-              scope.organizationId,
+    organizationId:
+      scope.organizationId,
 
-            environmentId:
-              scope.environmentId,
+    environmentId:
+      scope.environmentId,
 
-            incidentId:
-              scope.incidentId,
+    incidentId:
+      scope.incidentId,
 
-            correlationId,
-          }
-        );
+    playbookExecutionId:
+      record.executionId,
+
+    correlationId,
+  }
+);
 
         /**
          * stageRecord is a plain object, so explicitly mark
@@ -642,31 +647,34 @@ class PlaybookExecutionService {
         PLAYBOOK_EXECUTION_STATUS
           .ROLLBACK_PENDING
       ) {
-        await this
-          ._executeRollback(
-            record,
-            playbookDef,
-            incidentContext,
-            {
-              ...options,
+       await this
+  ._executeRollback(
+    record,
+    playbookDef,
+    incidentContext,
+    {
+      ...options,
 
-              tenantId:
-                scope.tenantId,
+      tenantId:
+        scope.tenantId,
 
-              organizationId:
-                scope.organizationId,
+      organizationId:
+        scope.organizationId,
 
-              environmentId:
-                scope.environmentId,
+      environmentId:
+        scope.environmentId,
 
-              incidentId:
-                scope.incidentId,
+      incidentId:
+        scope.incidentId,
 
-              correlationId,
-            },
-            startedAtMs
-          );
-      }
+      playbookExecutionId:
+        record.executionId,
+
+      correlationId,
+    },
+    startedAtMs
+  );
+}
 
       // ======================================================================
       // 6. VERIFICATION
@@ -711,29 +719,32 @@ class PlaybookExecutionService {
           await record.save();
 
           await this
-            ._executeStage(
-              stageRecord,
-              verificationStage,
-              incidentContext,
-              playbookDef,
-              {
-                ...options,
+  ._executeStage(
+    stageRecord,
+    verificationStage,
+    incidentContext,
+    playbookDef,
+    {
+      ...options,
 
-                tenantId:
-                  scope.tenantId,
+      tenantId:
+        scope.tenantId,
 
-                organizationId:
-                  scope.organizationId,
+      organizationId:
+        scope.organizationId,
 
-                environmentId:
-                  scope.environmentId,
+      environmentId:
+        scope.environmentId,
 
-                incidentId:
-                  scope.incidentId,
+      incidentId:
+        scope.incidentId,
 
-                correlationId,
-              }
-            );
+      playbookExecutionId:
+        record.executionId,
+
+      correlationId,
+    }
+  );
 
           record.markModified(
             "stageExecutions"
@@ -1034,57 +1045,60 @@ class PlaybookExecutionService {
          * action handlers.
          */
         const runbookExecution =
-          await this
-            ._executionEngine
-            .execute(
-              runbookDefinition,
-              {
-                explicitInputs:
-                  mapped,
+  await this
+    ._executionEngine
+    .execute(
+      runbookDefinition,
+      {
+        explicitInputs:
+          mapped,
 
-                incidentEvidence:
-                  incidentContext
-                    .evidence ||
-                  {},
+        incidentEvidence:
+          incidentContext
+            .evidence ||
+          {},
 
-                alertLabels:
-                  incidentContext
-                    .signal
-                    ?.labels ||
-                  {},
+        alertLabels:
+          incidentContext
+            .signal
+            ?.labels ||
+          {},
 
-                tenantId:
-                  options.tenantId,
+        tenantId:
+          options.tenantId,
 
-                organizationId:
-                  options.organizationId,
+        organizationId:
+          options.organizationId,
 
-                environmentId:
-                  options.environmentId,
+        environmentId:
+          options.environmentId,
 
-                incidentId:
-                  options.incidentId,
+        incidentId:
+          options.incidentId,
 
-                correlationId:
-                  options.correlationId,
+        playbookExecutionId:
+          options.playbookExecutionId,
 
-                initiatedBy:
-                  options.initiatedBy,
+        correlationId:
+          options.correlationId,
 
-                initiatorType:
-                  options.initiatorType ||
-                  "system",
+        initiatedBy:
+          options.initiatedBy,
 
-                approvalId:
-                  options.approvalId,
+        initiatorType:
+          options.initiatorType ||
+          "system",
 
-                approver:
-                  options.approver,
+        approvalId:
+          options.approvalId,
 
-                dryRun:
-                  options.dryRun,
-              }
-            );
+        approver:
+          options.approver,
+
+        dryRun:
+          options.dryRun,
+      }
+    );
 
         stageRecord
           .runbookExecutions

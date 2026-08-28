@@ -6,6 +6,21 @@
 //
 // The mock below behaves like the subset of a Mongoose document that the
 // execution service uses: create(), save(), markModified(), toObject().
+jest.mock(
+  "../../persistence/postgres/PostgresPlaybookExecutionAdapter",
+  () =>
+    require(
+      "../../persistence/postgres/__mocks__/PostgresPlaybookExecutionAdapter"
+    )
+);
+
+jest.mock(
+  "../../persistence/postgres/PostgresRunbookExecutionAdapter",
+  () =>
+    require(
+      "../../persistence/postgres/__mocks__/PostgresRunbookExecutionAdapter"
+    )
+);
 
 jest.mock('../../models/PlaybookExecution', () => {
   let sequence = 0;
