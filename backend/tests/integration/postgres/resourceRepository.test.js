@@ -1,15 +1,23 @@
 "use strict";
 
-const crypto = require("crypto");
-
-const {
-  createResourceRepository,
-} = require(
-"C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA\\backend\\persistence\\postgres\\PostgresResourceRepository.js"
+const crypto = require(
+  "node:crypto"
 );
 
-function createMockPool() {
+const PostgresResourceRepository = require(
+  "../../../persistence/postgres/PostgresResourceRepository"
+);
+
+
+function createHarness() {
   const resources = [];
+
+  const organizationUuid =
+    crypto.randomUUID();
+
+  const environmentUuid =
+    crypto.randomUUID();
+
 
   function clone(value) {
     return JSON.parse(
@@ -17,416 +25,837 @@ function createMockPool() {
     );
   }
 
-  function normalizeResource(input) {
-    const now =
-      new Date().toISOString();
 
-    return {
-      id:
-        input.id ||
-        crypto.randomUUID(),
-
-      public_id:
-        input.publicId,
-
-      organization_id:
-        input.organizationId,
-
-      environment_id:
-        input.environmentId,
-
-      resource_type:
-        input.resourceType,
-
-      provider:
-        input.provider,
-
-      external_id:
-        input.externalId || null,
-
-      name:
-        input.name || null,
-
-      display_name:
-        input.displayName || null,
-
-      namespace:
-        input.namespace || null,
-
-      region:
-        input.region || null,
-
-      zone:
-        input.zone || null,
-
-      service_id:
-        input.serviceId || null,
-
-      labels:
-        input.labels || {},
-
-      attributes:
-        input.attributes || {},
-
-      metadata:
-        input.metadata || {},
-
-      status:
-        input.status || "ACTIVE",
-
-      discovered_at:
-        input.discoveredAt || now,
-
-      first_seen_at:
-        input.firstSeenAt || now,
-
-      last_seen_at:
-        input.lastSeenAt || now,
-
-      created_at:
-        now,
-
-      updated_at:
-        now,
-    };
+  function normalizeSql(sql) {
+    return String(sql)
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
   }
 
-  function findByScope(
+
+  function findById(
     organizationId,
-    environmentId
+    environmentId,
+    resourceId
   ) {
-    return resources.filter(
+    return resources.find(
       function (resource) {
         return (
           resource.organization_id ===
             organizationId &&
           resource.environment_id ===
-            environmentId
+            environmentId &&
+          resource.id ===
+            resourceId
         );
       }
     );
   }
 
-  async function query(
-    text,
-    params
-  ) {
-    const sql =
-      String(text)
-        .replace(/\s+/g, " ")
-        .trim()
-        .toLowerCase();
-
-    const values =
-      params || [];
-
-    if (
-      sql.indexOf(
-        "insert into resources.resources"
-      ) !== -1
-    ) {
-      const resource = {
-        id:
-          crypto.randomUUID(),
-
-        public_id:
-          values[0],
-
-        organization_id:
-          values[1],
-
-        environment_id:
-          values[2],
-
-        provider:
-          values[3],
-
-        resource_type:
-          values[4],
-
-        external_id:
-          values[5] || null,
-
-        name:
-          values[6] || null,
-
-        display_name:
-          values[7] || null,
-
-        namespace:
-          values[8] || null,
-
-        region:
-          values[9] || null,
-
-        zone:
-          values[10] || null,
-
-        service_id:
-          values[11] || null,
-
-        labels:
-          values[12] || {},
-
-        attributes:
-          values[13] || {},
-
-        metadata:
-          values[14] || {},
-
-        status:
-          values[15] || "ACTIVE",
-
-        discovered_at:
-          values[16] ||
-          new Date().toISOString(),
-
-        first_seen_at:
-          values[17] ||
-          new Date().toISOString(),
-
-        last_seen_at:
-          values[18] ||
-          new Date().toISOString(),
-
-        created_at:
-          new Date().toISOString(),
-
-        updated_at:
-          new Date().toISOString(),
-      };
-
-      resources.push(
-        resource
-      );
-
-      return {
-        rows: [
-          clone(resource),
-        ],
-
-        rowCount:
-          1,
-      };
-    }
-
-    if (
-      sql.indexOf(
-        "from resources.resources"
-      ) !== -1 &&
-      sql.indexOf(
-        "where"
-      ) !== -1
-    ) {
-      let result =
-        resources.slice();
-
-      if (
-        values.length >= 2
-      ) {
-        result =
-          findByScope(
-            values[0],
-            values[1]
-          );
-      }
-
-      if (
-        sql.indexOf(
-          "id = $3"
-        ) !== -1
-      ) {
-        result =
-          result.filter(
-            function (resource) {
-              return (
-                resource.id ===
-                values[2]
-              );
-            }
-          );
-      }
-
-      if (
-        sql.indexOf(
-          "public_id = $3"
-        ) !== -1
-      ) {
-        result =
-          result.filter(
-            function (resource) {
-              return (
-                resource.public_id ===
-                values[2]
-              );
-            }
-          );
-      }
-
-      if (
-        sql.indexOf(
-          "resource_type = $3"
-        ) !== -1 &&
-        sql.indexOf(
-          "external_id"
-        ) !== -1
-      ) {
-        result =
-          result.filter(
-            function (resource) {
-              return (
-                resource.resource_type ===
-                  values[2] &&
-                resource.external_id ===
-                  values[3]
-              );
-            }
-          );
-      }
-
-      return {
-        rows:
-          result.map(
-            clone
-          ),
-
-        rowCount:
-          result.length,
-      };
-    }
-
-    if (
-      sql.indexOf(
-        "update resources.resources"
-      ) !== -1
-    ) {
-      const resourceId =
-        values[0];
-
-      const organizationId =
-        values[1];
-
-      const environmentId =
-        values[2];
-
-      const resource =
-        resources.find(
-          function (item) {
-            return (
-              item.id ===
-                resourceId &&
-              item.organization_id ===
-                organizationId &&
-              item.environment_id ===
-                environmentId
-            );
-          }
-        );
-
-      if (
-        !resource
-      ) {
-        return {
-          rows: [],
-          rowCount: 0,
-        };
-      }
-
-      return {
-        rows: [
-          clone(resource),
-        ],
-
-        rowCount:
-          1,
-      };
-    }
-
-    return {
-      rows: [],
-      rowCount: 0,
-    };
-  }
 
   const client = {
-    query:
-      query,
+    query: jest.fn(
+      async function (
+        sql,
+        params = []
+      ) {
+        const normalized =
+          normalizeSql(sql);
 
-    release:
-      function () {},
-  };
 
-  return {
-    query:
-      query,
+        /*
+         * ================================================================
+         * CREATE RESOURCE
+         * ================================================================
+         */
 
-    connect:
-      async function () {
-        return client;
-      },
+        if (
+          normalized.startsWith(
+            "insert into resources.resources"
+          )
+        ) {
+          const now =
+            new Date()
+              .toISOString();
 
-    __resources:
-      resources,
 
-    __insertResource:
-      function (input) {
-        const resource =
-          normalizeResource(
-            input
+          const row = {
+            id:
+              crypto.randomUUID(),
+
+            public_id:
+              params[0],
+
+            legacy_mongo_id:
+              null,
+
+            tenant_id:
+              null,
+
+            organization_id:
+              params[1],
+
+            environment_id:
+              params[2],
+
+            provider:
+              params[3],
+
+            resource_type:
+              params[4],
+
+            external_id:
+              params[5] ||
+              null,
+
+            name:
+              params[6] ||
+              null,
+
+            display_name:
+              params[7] ||
+              null,
+
+            namespace:
+              params[8] ||
+              null,
+
+            region:
+              params[9] ||
+              null,
+
+            zone:
+              params[10] ||
+              null,
+
+            service_id:
+              params[11] ||
+              null,
+
+            labels:
+              params[12]
+                ? JSON.parse(
+                    params[12]
+                  )
+                : {},
+
+            attributes:
+              params[13]
+                ? JSON.parse(
+                    params[13]
+                  )
+                : {},
+
+            current_state:
+              {},
+
+            metadata:
+              params[14]
+                ? JSON.parse(
+                    params[14]
+                  )
+                : {},
+
+            status:
+              params[15] ||
+              "ACTIVE",
+
+            discovered_at:
+              params[16] ||
+              now,
+
+            first_seen_at:
+              params[17] ||
+              now,
+
+            last_seen_at:
+              params[18] ||
+              now,
+
+            created_at:
+              now,
+
+            updated_at:
+              now,
+          };
+
+
+          resources.push(
+            row
           );
 
-        resources.push(
-          resource
-        );
 
-        return clone(
-          resource
+          return {
+            rows: [
+              clone(row),
+            ],
+
+            rowCount:
+              1,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * UPDATE MUTABLE RESOURCE METADATA
+         * ================================================================
+         *
+         * IMPORTANT:
+         *
+         * This must appear BEFORE generic SELECT handling.
+         * We also explicitly check that the SQL starts with UPDATE.
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "update resources.resources"
+          ) &&
+          normalized.includes(
+            "display_name"
+          ) &&
+          normalized.includes(
+            "attributes"
+          )
+        ) {
+          const row =
+            findById(
+              params[0],
+              params[1],
+              params[2]
+            );
+
+
+          if (!row) {
+            return {
+              rows: [],
+              rowCount: 0,
+            };
+          }
+
+
+          if (
+            params[3] !==
+            null
+          ) {
+            row.name =
+              params[3];
+          }
+
+
+          if (
+            params[4] !==
+            null
+          ) {
+            row.display_name =
+              params[4];
+          }
+
+
+          if (
+            params[5] !==
+            null
+          ) {
+            row.namespace =
+              params[5];
+          }
+
+
+          if (
+            params[6] !==
+            null
+          ) {
+            row.region =
+              params[6];
+          }
+
+
+          if (
+            params[7] !==
+            null
+          ) {
+            row.zone =
+              params[7];
+          }
+
+
+          if (
+            params[8] !==
+            null
+          ) {
+            row.service_id =
+              params[8];
+          }
+
+
+          if (
+            params[9] !==
+            null
+          ) {
+            row.labels =
+              JSON.parse(
+                params[9]
+              );
+          }
+
+
+          if (
+            params[10] !==
+            null
+          ) {
+            row.attributes =
+              JSON.parse(
+                params[10]
+              );
+          }
+
+
+          if (
+            params[11] !==
+            null
+          ) {
+            row.metadata =
+              JSON.parse(
+                params[11]
+              );
+          }
+
+
+          if (
+            params[12] !==
+            null
+          ) {
+            row.status =
+              params[12];
+          }
+
+
+          row.updated_at =
+            new Date()
+              .toISOString();
+
+
+          return {
+            rows: [
+              clone(row),
+            ],
+
+            rowCount:
+              1,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * MARK RESOURCE SEEN
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "update resources.resources"
+          ) &&
+          normalized.includes(
+            "last_seen_at"
+          )
+        ) {
+          const row =
+            findById(
+              params[0],
+              params[1],
+              params[2]
+            );
+
+
+          if (!row) {
+            return {
+              rows: [],
+              rowCount: 0,
+            };
+          }
+
+
+          row.last_seen_at =
+            params[3] ||
+            new Date()
+              .toISOString();
+
+
+          row.updated_at =
+            new Date()
+              .toISOString();
+
+
+          return {
+            rows: [
+              clone(row),
+            ],
+
+            rowCount:
+              1,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * GET RESOURCE BY CANONICAL POSTGRESQL UUID
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "select"
+          ) &&
+          normalized.includes(
+            "from resources.resources"
+          ) &&
+          normalized.includes(
+            "and id = $3"
+          )
+        ) {
+          const row =
+            findById(
+              params[0],
+              params[1],
+              params[2]
+            );
+
+
+          return {
+            rows:
+              row
+                ? [
+                    clone(row),
+                  ]
+                : [],
+
+            rowCount:
+              row
+                ? 1
+                : 0,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * GET RESOURCE BY PUBLIC ID
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "select"
+          ) &&
+          normalized.includes(
+            "from resources.resources"
+          ) &&
+          normalized.includes(
+            "public_id = $3"
+          )
+        ) {
+          const row =
+            resources.find(
+              function (resource) {
+                return (
+                  resource.organization_id ===
+                    params[0] &&
+                  resource.environment_id ===
+                    params[1] &&
+                  resource.public_id ===
+                    params[2]
+                );
+              }
+            );
+
+
+          return {
+            rows:
+              row
+                ? [
+                    clone(row),
+                  ]
+                : [],
+
+            rowCount:
+              row
+                ? 1
+                : 0,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * FIND RESOURCE BY EXTERNAL ID
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "select"
+          ) &&
+          normalized.includes(
+            "from resources.resources"
+          ) &&
+          normalized.includes(
+            "external_id = $4"
+          )
+        ) {
+          const provider =
+            params.length >= 5
+              ? params[4]
+              : null;
+
+
+          const row =
+            resources.find(
+              function (resource) {
+                const scopeMatches =
+                  resource.organization_id ===
+                    params[0] &&
+                  resource.environment_id ===
+                    params[1];
+
+
+                const identityMatches =
+                  resource.resource_type ===
+                    params[2] &&
+                  resource.external_id ===
+                    params[3];
+
+
+                if (
+                  !scopeMatches ||
+                  !identityMatches
+                ) {
+                  return false;
+                }
+
+
+                if (
+                  provider !==
+                  null
+                ) {
+                  return (
+                    resource.provider ===
+                    provider
+                  );
+                }
+
+
+                return true;
+              }
+            );
+
+
+          return {
+            rows:
+              row
+                ? [
+                    clone(row),
+                  ]
+                : [],
+
+            rowCount:
+              row
+                ? 1
+                : 0,
+          };
+        }
+
+
+        /*
+         * ================================================================
+         * LIST RESOURCES
+         * ================================================================
+         */
+
+        if (
+          normalized.startsWith(
+            "select"
+          ) &&
+          normalized.includes(
+            "from resources.resources"
+          )
+        ) {
+          let rows =
+            resources.filter(
+              function (resource) {
+                return (
+                  resource.organization_id ===
+                    params[0] &&
+                  resource.environment_id ===
+                    params[1]
+                );
+              }
+            );
+
+
+          let parameterIndex =
+            2;
+
+
+          if (
+            normalized.includes(
+              "resource_type = $3"
+            )
+          ) {
+            rows =
+              rows.filter(
+                function (resource) {
+                  return (
+                    resource.resource_type ===
+                    params[
+                      parameterIndex
+                    ]
+                  );
+                }
+              );
+
+
+            parameterIndex +=
+              1;
+          }
+
+
+          const providerMatch =
+            normalized.match(
+              /provider = \$(\d+)/
+            );
+
+
+          if (
+            providerMatch
+          ) {
+            const index =
+              Number(
+                providerMatch[1]
+              ) -
+              1;
+
+
+            rows =
+              rows.filter(
+                function (resource) {
+                  return (
+                    resource.provider ===
+                    params[index]
+                  );
+                }
+              );
+          }
+
+
+          const statusMatch =
+            normalized.match(
+              /status = \$(\d+)/
+            );
+
+
+          if (
+            statusMatch
+          ) {
+            const index =
+              Number(
+                statusMatch[1]
+              ) -
+              1;
+
+
+            rows =
+              rows.filter(
+                function (resource) {
+                  return (
+                    resource.status ===
+                    params[index]
+                  );
+                }
+              );
+          }
+
+
+          const namespaceMatch =
+            normalized.match(
+              /namespace = \$(\d+)/
+            );
+
+
+          if (
+            namespaceMatch
+          ) {
+            const index =
+              Number(
+                namespaceMatch[1]
+              ) -
+              1;
+
+
+            rows =
+              rows.filter(
+                function (resource) {
+                  return (
+                    resource.namespace ===
+                    params[index]
+                  );
+                }
+              );
+          }
+
+
+          const regionMatch =
+            normalized.match(
+              /region = \$(\d+)/
+            );
+
+
+          if (
+            regionMatch
+          ) {
+            const index =
+              Number(
+                regionMatch[1]
+              ) -
+              1;
+
+
+            rows =
+              rows.filter(
+                function (resource) {
+                  return (
+                    resource.region ===
+                    params[index]
+                  );
+                }
+              );
+          }
+
+
+          return {
+            rows:
+              rows.map(
+                clone
+              ),
+
+            rowCount:
+              rows.length,
+          };
+        }
+
+
+        throw new Error(
+          "Unexpected SQL in Phase 17.3 test harness: " +
+            normalized
         );
-      },
+      }
+    ),
+  };
+
+
+  const scope = {
+    run: jest.fn(
+      async function (
+        requestedScope,
+        work
+      ) {
+        if (
+          !requestedScope ||
+          !requestedScope.organizationId ||
+          !requestedScope.environmentId
+        ) {
+          throw new Error(
+            "Phase 17.3 test scope missing"
+          );
+        }
+
+
+        return work(
+          client,
+
+          {
+            organizationUuid,
+
+            environmentUuid,
+
+            applicationOrganizationId:
+              requestedScope
+                .organizationId,
+
+            applicationEnvironmentId:
+              requestedScope
+                .environmentId,
+          }
+        );
+      }
+    ),
+  };
+
+
+  return {
+    resources,
+    client,
+    scope,
+    organizationUuid,
+    environmentUuid,
   };
 }
 
+
 describe(
-  "Phase 17.3 - Resource Repository",
+  "Phase 17.3 - PostgresResourceRepository",
   function () {
-    let pool;
+    let harness;
     let repository;
 
-    let organizationId;
-    let environmentId;
+
+    const organizationId =
+      "aira-dev-org";
+
+    const environmentId =
+      "env_aira_development";
+
 
     beforeEach(
       function () {
-        organizationId =
-          crypto.randomUUID();
+        harness =
+          createHarness();
 
-        environmentId =
-          crypto.randomUUID();
-
-        pool =
-          createMockPool();
 
         repository =
-          createResourceRepository({
-            pool:
-              pool,
+          new PostgresResourceRepository({
+            scope:
+              harness.scope,
           });
       }
     );
 
+
     test(
-      "creates repository",
+      "constructs canonical PostgreSQL resource repository",
       function () {
         expect(
           repository
-        ).toBeDefined();
+        ).toBeInstanceOf(
+          PostgresResourceRepository
+        );
+      }
+    );
 
+
+    test(
+      "exposes required Phase 17.3 operations",
+      function () {
         expect(
           typeof repository
             .createResource
         ).toBe(
           "function"
         );
+
 
         expect(
           typeof repository
@@ -435,12 +864,14 @@ describe(
           "function"
         );
 
+
         expect(
           typeof repository
             .getResourceByPublicId
         ).toBe(
           "function"
         );
+
 
         expect(
           typeof repository
@@ -449,6 +880,7 @@ describe(
           "function"
         );
 
+
         expect(
           typeof repository
             .listResources
@@ -456,12 +888,14 @@ describe(
           "function"
         );
 
+
         expect(
           typeof repository
             .updateResourceMetadata
         ).toBe(
           "function"
         );
+
 
         expect(
           typeof repository
@@ -472,12 +906,816 @@ describe(
       }
     );
 
+
     test(
-      "repository does not expose generic SQL methods",
+      "creates domain-neutral resource",
+      async function () {
+        const resource =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            publicId:
+              "res_phase17",
+
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "kubernetes.pod",
+
+            externalId:
+              "payments-pod",
+
+            name:
+              "payments",
+
+            namespace:
+              "production",
+
+            attributes: {
+              restartCount:
+                2,
+            },
+          });
+
+
+        expect(
+          resource.id
+        ).toBeDefined();
+
+
+        expect(
+          resource.publicId
+        ).toBe(
+          "res_phase17"
+        );
+
+
+        expect(
+          resource.resourceType
+        ).toBe(
+          "kubernetes.pod"
+        );
+
+
+        expect(
+          resource.organizationId
+        ).toBe(
+          organizationId
+        );
+
+
+        expect(
+          resource.environmentId
+        ).toBe(
+          environmentId
+        );
+
+
+        expect(
+          resource
+            .canonicalOrganizationId
+        ).toBe(
+          harness.organizationUuid
+        );
+
+
+        expect(
+          resource
+            .canonicalEnvironmentId
+        ).toBe(
+          harness.environmentUuid
+        );
+      }
+    );
+
+
+    test(
+      "generates public ID when omitted",
+      async function () {
+        const resource =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "linux",
+
+            resourceType:
+              "linux.host",
+
+            externalId:
+              "host-01",
+          });
+
+
+        expect(
+          resource.publicId
+        ).toMatch(
+          /^res_/
+        );
+      }
+    );
+
+
+    test(
+      "retrieves resource by PostgreSQL UUID",
+      async function () {
+        const created =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "postgres",
+
+            resourceType:
+              "postgres.database",
+
+            externalId:
+              "payments-db",
+          });
+
+
+        const found =
+          await repository.getResourceById({
+            organizationId,
+
+            environmentId,
+
+            resourceId:
+              created.id,
+          });
+
+
+        expect(
+          found
+        ).not.toBeNull();
+
+
+        expect(
+          found.id
+        ).toBe(
+          created.id
+        );
+      }
+    );
+
+
+    test(
+      "retrieves resource by public ID",
+      async function () {
+        const created =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            publicId:
+              "res_lookup",
+
+            provider:
+              "aws",
+
+            resourceType:
+              "aws.ec2",
+
+            externalId:
+              "i-test",
+          });
+
+
+        const found =
+          await repository.getResourceByPublicId({
+            organizationId,
+
+            environmentId,
+
+            publicId:
+              created.publicId,
+          });
+
+
+        expect(
+          found
+        ).not.toBeNull();
+
+
+        expect(
+          found.id
+        ).toBe(
+          created.id
+        );
+      }
+    );
+
+
+    test(
+      "retrieves resource by external identity",
+      async function () {
+        const created =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "robotics",
+
+            resourceType:
+              "robotics.amr",
+
+            externalId:
+              "amr-17",
+          });
+
+
+        const found =
+          await repository.findResourceByExternalId({
+            organizationId,
+
+            environmentId,
+
+            resourceType:
+              "robotics.amr",
+
+            externalId:
+              "amr-17",
+          });
+
+
+        expect(
+          found
+        ).not.toBeNull();
+
+
+        expect(
+          found.id
+        ).toBe(
+          created.id
+        );
+      }
+    );
+
+
+    test(
+      "lists tenant-scoped resources",
+      async function () {
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
+
+          provider:
+            "kubernetes",
+
+          resourceType:
+            "kubernetes.pod",
+
+          externalId:
+            "pod-01",
+        });
+
+
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
+
+          provider:
+            "postgres",
+
+          resourceType:
+            "postgres.database",
+
+          externalId:
+            "db-01",
+        });
+
+
+        const resources =
+          await repository.listResources({
+            organizationId,
+
+            environmentId,
+          });
+
+
+        expect(
+          resources
+        ).toHaveLength(
+          2
+        );
+      }
+    );
+
+
+    test(
+      "filters resources by resource type",
+      async function () {
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
+
+          provider:
+            "robotics",
+
+          resourceType:
+            "robotics.amr",
+
+          externalId:
+            "amr-filter",
+        });
+
+
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
+
+          provider:
+            "kubernetes",
+
+          resourceType:
+            "kubernetes.pod",
+
+          externalId:
+            "pod-filter",
+        });
+
+
+        const resources =
+          await repository.listResources({
+            organizationId,
+
+            environmentId,
+
+            resourceType:
+              "robotics.amr",
+          });
+
+
+        expect(
+          resources
+        ).toHaveLength(
+          1
+        );
+
+
+        expect(
+          resources[0]
+            .resourceType
+        ).toBe(
+          "robotics.amr"
+        );
+      }
+    );
+
+
+    test(
+      "updates mutable resource metadata without changing identity",
+      async function () {
+        const created =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            publicId:
+              "res_update",
+
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "kubernetes.pod",
+
+            externalId:
+              "pod-update",
+
+            name:
+              "before",
+          });
+
+
+        const updated =
+          await repository.updateResourceMetadata({
+            organizationId,
+
+            environmentId,
+
+            resourceId:
+              created.id,
+
+            name:
+              "after",
+
+            displayName:
+              "Updated Pod",
+
+            labels: {
+              phase:
+                "17.3",
+            },
+
+            attributes: {
+              restartCount:
+                5,
+            },
+          });
+
+
+        expect(
+          updated
+        ).not.toBeNull();
+
+
+        expect(
+          updated.id
+        ).toBe(
+          created.id
+        );
+
+
+        expect(
+          updated.publicId
+        ).toBe(
+          created.publicId
+        );
+
+
+        expect(
+          updated.resourceType
+        ).toBe(
+          created.resourceType
+        );
+
+
+        expect(
+          updated.provider
+        ).toBe(
+          created.provider
+        );
+
+
+        expect(
+          updated.externalId
+        ).toBe(
+          created.externalId
+        );
+
+
+        expect(
+          updated.name
+        ).toBe(
+          "after"
+        );
+
+
+        expect(
+          updated.displayName
+        ).toBe(
+          "Updated Pod"
+        );
+
+
+        expect(
+          updated.attributes
+            .restartCount
+        ).toBe(
+          5
+        );
+      }
+    );
+
+
+    test(
+      "marks resource as seen",
+      async function () {
+        const created =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "network",
+
+            resourceType:
+              "network.switch",
+
+            externalId:
+              "switch-01",
+          });
+
+
+        const seenAt =
+          new Date(
+            "2026-08-28T10:00:00.000Z"
+          );
+
+
+        const updated =
+          await repository.markResourceSeen({
+            organizationId,
+
+            environmentId,
+
+            resourceId:
+              created.id,
+
+            seenAt,
+          });
+
+
+        expect(
+          updated
+        ).not.toBeNull();
+
+
+        expect(
+          new Date(
+            updated.lastSeenAt
+          ).toISOString()
+        ).toBe(
+          seenAt.toISOString()
+        );
+      }
+    );
+
+
+    test(
+      "returns null for unknown resource",
+      async function () {
+        const result =
+          await repository.getResourceById({
+            organizationId,
+
+            environmentId,
+
+            resourceId:
+              crypto.randomUUID(),
+          });
+
+
+        expect(
+          result
+        ).toBeNull();
+      }
+    );
+
+
+    test(
+      "supports multiple infrastructure domains through one resource model",
+      async function () {
+        const examples = [
+          [
+            "kubernetes.pod",
+            "kubernetes",
+          ],
+
+          [
+            "aws.ec2",
+            "aws",
+          ],
+
+          [
+            "postgres.database",
+            "postgres",
+          ],
+
+          [
+            "network.switch",
+            "network",
+          ],
+
+          [
+            "robotics.amr",
+            "robotics",
+          ],
+
+          [
+            "robotics.lidar",
+            "robotics",
+          ],
+        ];
+
+
+        for (
+          const [
+            resourceType,
+            provider,
+          ] of examples
+        ) {
+          const resource =
+            await repository.createResource({
+              organizationId,
+
+              environmentId,
+
+              provider,
+
+              resourceType,
+
+              externalId:
+                crypto.randomUUID(),
+            });
+
+
+          expect(
+            resource.resourceType
+          ).toBe(
+            resourceType
+          );
+        }
+      }
+    );
+
+
+    test(
+      "rejects provider-specific top-level fields",
+      async function () {
+        await expect(
+          repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "kubernetes.pod",
+
+            externalId:
+              "bad-pod",
+
+            podIp:
+              "10.0.0.9",
+          })
+        ).rejects.toMatchObject({
+          code:
+            "RESOURCE_CONTRACT_INVALID",
+        });
+      }
+    );
+
+
+    test(
+      "allows provider-specific information inside attributes",
+      async function () {
+        const resource =
+          await repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "kubernetes.pod",
+
+            externalId:
+              "good-pod",
+
+            attributes: {
+              podIp:
+                "10.0.0.9",
+
+              restartCount:
+                3,
+            },
+          });
+
+
+        expect(
+          resource.attributes
+            .podIp
+        ).toBe(
+          "10.0.0.9"
+        );
+      }
+    );
+
+
+    test(
+      "rejects invalid resource type format",
+      async function () {
+        await expect(
+          repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "Pod",
+          })
+        ).rejects.toMatchObject({
+          code:
+            "RESOURCE_CONTRACT_INVALID",
+        });
+      }
+    );
+
+
+    test(
+      "requires provider",
+      async function () {
+        await expect(
+          repository.createResource({
+            organizationId,
+
+            environmentId,
+
+            resourceType:
+              "kubernetes.pod",
+          })
+        ).rejects.toMatchObject({
+          code:
+            "POSTGRES_RESOURCE_PROVIDER_REQUIRED",
+        });
+      }
+    );
+
+
+    test(
+      "requires tenant and environment scope",
+      async function () {
+        await expect(
+          repository.createResource({
+            provider:
+              "kubernetes",
+
+            resourceType:
+              "kubernetes.pod",
+          })
+        ).rejects.toMatchObject({
+          code:
+            "POSTGRES_RESOURCE_SCOPE_REQUIRED",
+        });
+      }
+    );
+
+
+    test(
+      "all persistence work uses tenant scope",
+      async function () {
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
+
+          provider:
+            "kubernetes",
+
+          resourceType:
+            "kubernetes.pod",
+
+          externalId:
+            "scope-test",
+        });
+
+
+        expect(
+          harness.scope.run
+        ).toHaveBeenCalledTimes(
+          1
+        );
+
+
+        expect(
+          harness.scope.run
+            .mock.calls[0][0]
+        ).toEqual({
+          organizationId,
+
+          environmentId,
+        });
+      }
+    );
+
+
+    test(
+      "does not expose arbitrary SQL APIs",
       function () {
+        expect(
+          repository.query
+        ).toBeUndefined();
+
+
         expect(
           repository.raw
         ).toBeUndefined();
+
 
         expect(
           repository.execute
@@ -485,527 +1723,65 @@ describe(
       }
     );
 
-    test(
-      "resource model remains domain neutral",
-      function () {
-        const resourceTypes = [
-          "kubernetes.pod",
-          "aws.ec2",
-          "postgres.database",
-          "network.switch",
-          "robotics.amr",
-          "robotics.lidar",
-        ];
-
-        expect(
-          resourceTypes
-        ).toEqual([
-          "kubernetes.pod",
-          "aws.ec2",
-          "postgres.database",
-          "network.switch",
-          "robotics.amr",
-          "robotics.lidar",
-        ]);
-      }
-    );
 
     test(
-      "mock storage isolates organization and environment",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_test",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "kubernetes.pod",
-
-            provider:
-              "kubernetes",
-
-            externalId:
-              "pod_test",
-
-            name:
-              "payments-api",
-          });
-
-        expect(
-          resource.organization_id
-        ).toBe(
-          organizationId
-        );
-
-        expect(
-          resource.environment_id
-        ).toBe(
-          environmentId
-        );
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "kubernetes.pod"
-        );
-      }
-    );
-
-    test(
-      "same resource abstraction supports Kubernetes",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_kubernetes",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "kubernetes.pod",
-
-            provider:
-              "kubernetes",
-
-            externalId:
-              "payments-api-pod",
-
-            name:
-              "payments-api",
-
-            namespace:
-              "production",
-
-            attributes: {
-              nodeName:
-                "worker-03",
-
-              restartCount:
-                2,
-            },
-          });
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "kubernetes.pod"
-        );
-
-        expect(
-          resource.provider
-        ).toBe(
-          "kubernetes"
-        );
-
-        expect(
-          resource.attributes
-            .nodeName
-        ).toBe(
-          "worker-03"
-        );
-      }
-    );
-
-    test(
-      "same resource abstraction supports AWS",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_aws",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "aws.ec2",
-
-            provider:
-              "aws",
-
-            externalId:
-              "i-test123",
-
-            name:
-              "payments-worker",
-
-            region:
-              "ap-south-1",
-
-            attributes: {
-              instanceType:
-                "m7g.large",
-            },
-          });
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "aws.ec2"
-        );
-
-        expect(
-          resource.region
-        ).toBe(
-          "ap-south-1"
-        );
-
-        expect(
-          resource.attributes
-            .instanceType
-        ).toBe(
-          "m7g.large"
-        );
-      }
-    );
-
-    test(
-      "same resource abstraction supports PostgreSQL",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_postgres",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "postgres.database",
-
-            provider:
-              "postgres",
-
-            externalId:
-              "payments-db",
-
-            name:
-              "payments-db",
-          });
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "postgres.database"
-        );
-
-        expect(
-          resource.provider
-        ).toBe(
-          "postgres"
-        );
-      }
-    );
-
-    test(
-      "same resource abstraction supports networking",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_switch",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "network.switch",
-
-            provider:
-              "network",
-
-            externalId:
-              "switch-01",
-
-            name:
-              "datacenter-switch",
-          });
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "network.switch"
-        );
-      }
-    );
-
-    test(
-      "same resource abstraction supports robotics",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_robot",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "robotics.amr",
-
-            provider:
-              "robotics",
-
-            externalId:
-              "amr-17",
-
-            name:
-              "warehouse-amr-17",
-
-            attributes: {
-              model:
-                "XR-5",
-
-              batteryPercent:
-                67,
-
-              firmware:
-                "4.2.1",
-            },
-          });
-
-        expect(
-          resource.resource_type
-        ).toBe(
-          "robotics.amr"
-        );
-
-        expect(
-          resource.attributes
-            .model
-        ).toBe(
-          "XR-5"
-        );
-
-        expect(
-          resource.attributes
-            .batteryPercent
-        ).toBe(
-          67
-        );
-      }
-    );
-
-    test(
-      "provider specific information stays in attributes",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_provider_data",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "kubernetes.pod",
-
-            provider:
-              "kubernetes",
-
-            externalId:
-              "pod-provider-data",
-
-            name:
-              "payments-api",
-
-            attributes: {
-              nodeName:
-                "worker-03",
-
-              podIp:
-                "10.2.4.18",
-
-              restartCount:
-                2,
-            },
-          });
-
-        expect(
-          resource.nodeName
-        ).toBeUndefined();
-
-        expect(
-          resource.podIp
-        ).toBeUndefined();
-
-        expect(
-          resource.restartCount
-        ).toBeUndefined();
-
-        expect(
-          resource.attributes
-            .nodeName
-        ).toBe(
-          "worker-03"
-        );
-
-        expect(
-          resource.attributes
-            .podIp
-        ).toBe(
-          "10.2.4.18"
-        );
-      }
-    );
-
-    test(
-      "resource identity keeps public ID separate from PostgreSQL UUID",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_public_123",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "linux.host",
-
-            provider:
-              "linux",
-
-            externalId:
-              "host-01",
-
-            name:
-              "host-01",
-          });
-
-        expect(
-          resource.id
-        ).toBeDefined();
-
-        expect(
-          resource.public_id
-        ).toBe(
-          "res_public_123"
-        );
-
-        expect(
-          resource.id
-        ).not.toBe(
-          resource.public_id
-        );
-      }
-    );
-
-    test(
-      "resource capability is not stored as execution authorization",
-      function () {
-        const resource =
-          pool.__insertResource({
-            publicId:
-              "res_capability",
-
-            organizationId:
-              organizationId,
-
-            environmentId:
-              environmentId,
-
-            resourceType:
-              "kubernetes.pod",
-
-            provider:
-              "kubernetes",
-
-            externalId:
-              "pod-capability",
-
-            name:
-              "payments-api",
-
-            attributes: {
-              capabilities: [
-                "READ_STATE",
-                "RESTART",
-              ],
-            },
-          });
-
-        expect(
-          resource
-            .executionAuthorized
-        ).toBeUndefined();
-
-        expect(
-          resource
-            .authorized
-        ).toBeUndefined();
-
-        expect(
-          resource
-            .permission
-        ).toBeUndefined();
-      }
-    );
-
-    test(
-      "resource creation does not create historical state",
-      function () {
-        pool.__insertResource({
-          publicId:
-            "res_no_state",
-
-          organizationId:
-            organizationId,
-
-          environmentId:
-            environmentId,
-
-          resourceType:
-            "kubernetes.pod",
+      "resource repository does not write resource state snapshots",
+      async function () {
+        await repository.createResource({
+          organizationId,
+
+          environmentId,
 
           provider:
             "kubernetes",
 
-          externalId:
-            "pod-no-state",
+          resourceType:
+            "kubernetes.pod",
 
-          name:
-            "payments-api",
+          externalId:
+            "state-separation",
         });
 
-        expect(
-          pool.__resources
-            .length
-        ).toBe(
-          1
-        );
+
+        const statements =
+          harness.client.query
+            .mock.calls
+            .map(
+              function (
+                call
+              ) {
+                return String(
+                  call[0]
+                ).toLowerCase();
+              }
+            );
+
+
+        const wroteState =
+          statements.some(
+            function (
+              sql
+            ) {
+              return (
+                sql.includes(
+                  "insert into resources.resource_states"
+                ) ||
+                sql.includes(
+                  "update resources.resource_states"
+                ) ||
+                sql.includes(
+                  "delete from resources.resource_states"
+                )
+              );
+            }
+          );
+
 
         expect(
-          pool.resourceStates
-        ).toBeUndefined();
+          wroteState
+        ).toBe(
+          false
+        );
       }
     );
   }

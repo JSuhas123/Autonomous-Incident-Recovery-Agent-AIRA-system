@@ -6,56 +6,114 @@ const PostgresTenantScope = require(
   "./PostgresTenantScope"
 );
 
+const {
+  assertValidResource,
+} = require(
+  "../../contracts/topology/resourceContract"
+);
+
+
+/*
+ * ============================================================================
+ * POSTGRES RESOURCE REPOSITORY
+ * ============================================================================
+ *
+ * Phase 17.3
+ *
+ * Canonical persistence boundary for Resource identity.
+ *
+ * PostgreSQL:
+ *   resources.resources
+ *
+ * Responsibilities:
+ *
+ * - create canonical resources
+ * - retrieve resources by PostgreSQL UUID
+ * - retrieve resources by public ID
+ * - resolve provider/external identity
+ * - list resources within tenant/environment scope
+ * - update mutable descriptive metadata
+ * - update discovery last-seen timestamps
+ *
+ * Explicitly NOT responsible for:
+ *
+ * - ResourceState snapshots
+ * - known-good state
+ * - relationships
+ * - capabilities
+ * - authorization
+ * - execution
+ * - provider-specific normalization
+ *
+ * All PostgreSQL work MUST run through PostgresTenantScope.
+ * ============================================================================
+ */
+
 class PostgresResourceRepository {
   constructor(options = {}) {
     this.scope =
       options.scope ||
-      new PostgresTenantScope(options);
+      new PostgresTenantScope(
+        options
+      );
   }
 
+
+  /*
+   * ==========================================================================
+   * CREATE
+   * ==========================================================================
+   */
+
   async createResource(
-    resource,
+    input,
     transaction = null
   ) {
-    requireScope(resource);
+    requireScope(
+      input
+    );
 
-    if (!resource.resourceType) {
-      throw Object.assign(
-        new Error(
-          "Resource resourceType is required"
-        ),
-        {
-          code:
-            "POSTGRES_RESOURCE_TYPE_REQUIRED",
-        }
+
+    const candidate = {
+      ...input,
+
+      publicId:
+        input.publicId ||
+        generatePublicId(),
+    };
+
+
+    /*
+     * Resource contract validation is intentionally done
+     * before PostgreSQL interaction.
+     *
+     * This guarantees provider-specific fields cannot leak
+     * into the domain-neutral Resource model.
+     */
+    const resource =
+      assertValidResource(
+        candidate
+      );
+
+
+    /*
+     * resources.resources.provider is NOT NULL in the
+     * canonical PostgreSQL schema.
+     */
+    if (
+      !resource.provider
+    ) {
+      throw createRepositoryError(
+        "Resource provider is required",
+        "POSTGRES_RESOURCE_PROVIDER_REQUIRED"
       );
     }
 
-    if (!resource.provider) {
-      throw Object.assign(
-        new Error(
-          "Resource provider is required"
-        ),
-        {
-          code:
-            "POSTGRES_RESOURCE_PROVIDER_REQUIRED",
-        }
-      );
-    }
-
-    const publicId =
-      resource.publicId ||
-      "res_" +
-        crypto.randomUUID();
 
     return this.scope.run(
-      {
-        organizationId:
-          resource.organizationId,
-
-        environmentId:
-          resource.environmentId,
-      },
+      buildScope(
+        resource
+      ),
 
       async (
         client,
@@ -109,7 +167,7 @@ class PostgresResourceRepository {
               RETURNING *
             `,
             [
-              publicId,
+              resource.publicId,
 
               resolved.organizationUuid,
 
@@ -119,26 +177,19 @@ class PostgresResourceRepository {
 
               resource.resourceType,
 
-              resource.externalId ||
-                null,
+              resource.externalId,
 
-              resource.name ||
-                null,
+              resource.name,
 
-              resource.displayName ||
-                null,
+              resource.displayName,
 
-              resource.namespace ||
-                null,
+              resource.namespace,
 
-              resource.region ||
-                null,
+              resource.region,
 
-              resource.zone ||
-                null,
+              resource.zone,
 
-              resource.serviceId ||
-                null,
+              resource.serviceId,
 
               JSON.stringify(
                 resource.labels || {}
@@ -155,23 +206,33 @@ class PostgresResourceRepository {
               resource.status ||
                 "ACTIVE",
 
-              resource.discoveredAt ||
-                null,
+              resource.discoveredAt,
 
-              resource.firstSeenAt ||
-                null,
+              resource.firstSeenAt,
 
-              resource.lastSeenAt ||
-                null,
+              resource.lastSeenAt,
             ]
           );
 
-        return result.rows[0] || null;
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
       },
 
       transaction
     );
   }
+
+
+  /*
+   * ==========================================================================
+   * READ BY CANONICAL POSTGRESQL UUID
+   * ==========================================================================
+   */
 
   async getResourceById(
     {
@@ -186,9 +247,13 @@ class PostgresResourceRepository {
       environmentId,
     });
 
-    if (!resourceId) {
+
+    if (
+      !resourceId
+    ) {
       return null;
     }
+
 
     return this.scope.run(
       {
@@ -213,17 +278,32 @@ class PostgresResourceRepository {
             `,
             [
               resolved.organizationUuid,
+
               resolved.environmentUuid,
+
               resourceId,
             ]
           );
 
-        return result.rows[0] || null;
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
       },
 
       transaction
     );
   }
+
+
+  /*
+   * ==========================================================================
+   * READ BY PUBLIC ID
+   * ==========================================================================
+   */
 
   async getResourceByPublicId(
     {
@@ -238,9 +318,13 @@ class PostgresResourceRepository {
       environmentId,
     });
 
-    if (!publicId) {
+
+    if (
+      !publicId
+    ) {
       return null;
     }
+
 
     return this.scope.run(
       {
@@ -265,17 +349,32 @@ class PostgresResourceRepository {
             `,
             [
               resolved.organizationUuid,
+
               resolved.environmentUuid,
+
               publicId,
             ]
           );
 
-        return result.rows[0] || null;
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
       },
 
       transaction
     );
   }
+
+
+  /*
+   * ==========================================================================
+   * EXTERNAL IDENTITY LOOKUP
+   * ==========================================================================
+   */
 
   async findResourceByExternalId(
     {
@@ -292,12 +391,14 @@ class PostgresResourceRepository {
       environmentId,
     });
 
+
     if (
       !resourceType ||
       !externalId
     ) {
       return null;
     }
+
 
     return this.scope.run(
       {
@@ -311,148 +412,39 @@ class PostgresResourceRepository {
       ) => {
         const values = [
           resolved.organizationUuid,
+
           resolved.environmentUuid,
+
           resourceType,
+
           externalId,
         ];
 
-        let providerSql = "";
-
-        if (provider) {
-          values.push(provider);
-
-          providerSql =
-            " AND provider = $" +
-            values.length;
-        }
-
-        const result =
-          await client.query(
-            `
-              SELECT *
-              FROM resources.resources
-              WHERE
-                organization_id = $1
-                AND environment_id = $2
-                AND resource_type = $3
-                AND external_id = $4
-                ${providerSql}
-              ORDER BY created_at ASC
-              LIMIT 1
-            `,
-            values
-          );
-
-        return result.rows[0] || null;
-      },
-
-      transaction
-    );
-  }
-
-  async listResources(
-    filter,
-    transaction = null
-  ) {
-    requireScope(filter);
-
-    const limit =
-      normalizeLimit(
-        filter.limit
-      );
-
-    const offset =
-      normalizeOffset(
-        filter.offset
-      );
-
-    return this.scope.run(
-      {
-        organizationId:
-          filter.organizationId,
-
-        environmentId:
-          filter.environmentId,
-      },
-
-      async (
-        client,
-        resolved
-      ) => {
-        const values = [
-          resolved.organizationUuid,
-          resolved.environmentUuid,
-        ];
 
         const conditions = [
           "organization_id = $1",
+
           "environment_id = $2",
+
+          "resource_type = $3",
+
+          "external_id = $4",
         ];
 
-        if (filter.resourceType) {
+
+        if (
+          provider
+        ) {
           values.push(
-            filter.resourceType
+            provider
           );
 
+
           conditions.push(
-            "resource_type = $" +
-              values.length
+            `provider = $${values.length}`
           );
         }
 
-        if (filter.provider) {
-          values.push(
-            filter.provider
-          );
-
-          conditions.push(
-            "provider = $" +
-              values.length
-          );
-        }
-
-        if (filter.status) {
-          values.push(
-            filter.status
-          );
-
-          conditions.push(
-            "status = $" +
-              values.length
-          );
-        }
-
-        if (filter.namespace) {
-          values.push(
-            filter.namespace
-          );
-
-          conditions.push(
-            "namespace = $" +
-              values.length
-          );
-        }
-
-        if (filter.region) {
-          values.push(
-            filter.region
-          );
-
-          conditions.push(
-            "region = $" +
-              values.length
-          );
-        }
-
-        values.push(limit);
-
-        const limitParameter =
-          values.length;
-
-        values.push(offset);
-
-        const offsetParameter =
-          values.length;
 
         const result =
           await client.query(
@@ -461,10 +453,150 @@ class PostgresResourceRepository {
               FROM resources.resources
               WHERE
                 ${conditions.join(
-                  " AND "
+                  "\nAND "
+                )}
+              ORDER BY
+                created_at ASC,
+                id ASC
+              LIMIT 1
+            `,
+            values
+          );
+
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
+      },
+
+      transaction
+    );
+  }
+
+
+  /*
+   * ==========================================================================
+   * LIST
+   * ==========================================================================
+   */
+
+  async listResources(
+    filter = {},
+    transaction = null
+  ) {
+    requireScope(
+      filter
+    );
+
+
+    const limit =
+      normalizeLimit(
+        filter.limit
+      );
+
+
+    const offset =
+      normalizeOffset(
+        filter.offset
+      );
+
+
+    return this.scope.run(
+      buildScope(
+        filter
+      ),
+
+      async (
+        client,
+        resolved
+      ) => {
+        const values = [
+          resolved.organizationUuid,
+
+          resolved.environmentUuid,
+        ];
+
+
+        const conditions = [
+          "organization_id = $1",
+
+          "environment_id = $2",
+        ];
+
+
+        appendFilter(
+          conditions,
+          values,
+          "resource_type",
+          filter.resourceType
+        );
+
+
+        appendFilter(
+          conditions,
+          values,
+          "provider",
+          filter.provider
+        );
+
+
+        appendFilter(
+          conditions,
+          values,
+          "status",
+          filter.status
+        );
+
+
+        appendFilter(
+          conditions,
+          values,
+          "namespace",
+          filter.namespace
+        );
+
+
+        appendFilter(
+          conditions,
+          values,
+          "region",
+          filter.region
+        );
+
+
+        values.push(
+          limit
+        );
+
+
+        const limitParameter =
+          values.length;
+
+
+        values.push(
+          offset
+        );
+
+
+        const offsetParameter =
+          values.length;
+
+
+        const result =
+          await client.query(
+            `
+              SELECT *
+              FROM resources.resources
+              WHERE
+                ${conditions.join(
+                  "\nAND "
                 )}
               ORDER BY
                 updated_at DESC,
+                created_at DESC,
                 id ASC
               LIMIT $${limitParameter}
               OFFSET $${offsetParameter}
@@ -472,39 +604,62 @@ class PostgresResourceRepository {
             values
           );
 
-        return result.rows;
+
+        return result.rows.map(
+          (row) =>
+            exposeResource(
+              row,
+              resolved
+            )
+        );
       },
 
       transaction
     );
   }
 
+
+  /*
+   * ==========================================================================
+   * MUTABLE RESOURCE METADATA
+   * ==========================================================================
+   *
+   * Identity fields are intentionally excluded:
+   *
+   * - public_id
+   * - organization_id
+   * - environment_id
+   * - provider
+   * - resource_type
+   * - external_id
+   *
+   * Those fields must not silently mutate through this method.
+   * ==========================================================================
+   */
+
   async updateResourceMetadata(
     update,
     transaction = null
   ) {
-    requireScope(update);
+    requireScope(
+      update
+    );
 
-    if (!update.resourceId) {
-      throw Object.assign(
-        new Error(
-          "Resource resourceId is required"
-        ),
-        {
-          code:
-            "POSTGRES_RESOURCE_ID_REQUIRED",
-        }
+
+    if (
+      !update.resourceId
+    ) {
+      throw createRepositoryError(
+        "Resource resourceId is required",
+        "POSTGRES_RESOURCE_ID_REQUIRED"
       );
     }
 
-    return this.scope.run(
-      {
-        organizationId:
-          update.organizationId,
 
-        environmentId:
-          update.environmentId,
-      },
+    return this.scope.run(
+      buildScope(
+        update
+      ),
 
       async (
         client,
@@ -592,54 +747,67 @@ class PostgresResourceRepository {
 
               update.resourceId,
 
-              valueOrNull(
+              nullableValue(
                 update.name
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.displayName
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.namespace
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.region
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.zone
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.serviceId
               ),
 
-              jsonOrNull(
+              nullableJson(
                 update.labels
               ),
 
-              jsonOrNull(
+              nullableJson(
                 update.attributes
               ),
 
-              jsonOrNull(
+              nullableJson(
                 update.metadata
               ),
 
-              valueOrNull(
+              nullableValue(
                 update.status
               ),
             ]
           );
 
-        return result.rows[0] || null;
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
       },
 
       transaction
     );
   }
+
+
+  /*
+   * ==========================================================================
+   * DISCOVERY HEARTBEAT
+   * ==========================================================================
+   */
 
   async markResourceSeen(
     {
@@ -655,17 +823,16 @@ class PostgresResourceRepository {
       environmentId,
     });
 
-    if (!resourceId) {
-      throw Object.assign(
-        new Error(
-          "Resource resourceId is required"
-        ),
-        {
-          code:
-            "POSTGRES_RESOURCE_ID_REQUIRED",
-        }
+
+    if (
+      !resourceId
+    ) {
+      throw createRepositoryError(
+        "Resource resourceId is required",
+        "POSTGRES_RESOURCE_ID_REQUIRED"
       );
     }
+
 
     return this.scope.run(
       {
@@ -688,13 +855,6 @@ class PostgresResourceRepository {
                     NOW()
                   ),
 
-                status =
-                  CASE
-                    WHEN status = 'DELETED'
-                      THEN status
-                    ELSE 'ACTIVE'
-                  END,
-
                 updated_at =
                   NOW()
 
@@ -716,13 +876,26 @@ class PostgresResourceRepository {
             ]
           );
 
-        return result.rows[0] || null;
+
+        return exposeResource(
+          result.rows[0] ||
+            null,
+
+          resolved
+        );
       },
 
       transaction
     );
   }
 }
+
+
+/*
+ * ============================================================================
+ * HELPERS
+ * ============================================================================
+ */
 
 function requireScope(
   value = {}
@@ -731,17 +904,20 @@ function requireScope(
     !value.organizationId ||
     !value.environmentId
   ) {
-    throw Object.assign(
-      new Error(
-        "Resource PostgreSQL operation requires organizationId and environmentId"
-      ),
-      {
-        code:
-          "POSTGRES_RESOURCE_SCOPE_REQUIRED",
-      }
+    throw createRepositoryError(
+      "Resource PostgreSQL operation requires organizationId and environmentId",
+      "POSTGRES_RESOURCE_SCOPE_REQUIRED"
     );
   }
 
+
+  return value;
+}
+
+
+function buildScope(
+  value
+) {
   return {
     organizationId:
       value.organizationId,
@@ -751,7 +927,41 @@ function requireScope(
   };
 }
 
-function valueOrNull(
+
+function generatePublicId() {
+  return (
+    "res_" +
+    crypto.randomUUID()
+  );
+}
+
+
+function appendFilter(
+  conditions,
+  values,
+  column,
+  value
+) {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return;
+  }
+
+
+  values.push(
+    value
+  );
+
+
+  conditions.push(
+    `${column} = $${values.length}`
+  );
+}
+
+
+function nullableValue(
   value
 ) {
   return value === undefined
@@ -759,7 +969,8 @@ function valueOrNull(
     : value;
 }
 
-function jsonOrNull(
+
+function nullableJson(
   value
 ) {
   if (
@@ -768,10 +979,12 @@ function jsonOrNull(
     return null;
   }
 
+
   return JSON.stringify(
     value
   );
 }
+
 
 function normalizeLimit(
   value
@@ -782,6 +995,7 @@ function normalizeLimit(
       10
     );
 
+
   if (
     !Number.isFinite(
       parsed
@@ -789,6 +1003,7 @@ function normalizeLimit(
   ) {
     return 100;
   }
+
 
   return Math.min(
     Math.max(
@@ -799,6 +1014,7 @@ function normalizeLimit(
   );
 }
 
+
 function normalizeOffset(
   value
 ) {
@@ -808,6 +1024,7 @@ function normalizeOffset(
       10
     );
 
+
   if (
     !Number.isFinite(
       parsed
@@ -816,11 +1033,147 @@ function normalizeOffset(
     return 0;
   }
 
+
   return Math.max(
     parsed,
     0
   );
 }
+
+
+function exposeResource(
+  row,
+  resolved
+) {
+  if (
+    !row
+  ) {
+    return null;
+  }
+
+
+  return {
+    id:
+      row.id,
+
+    publicId:
+      row.public_id,
+
+    legacyMongoId:
+      row.legacy_mongo_id ||
+      null,
+
+    tenantId:
+      row.tenant_id ||
+      null,
+
+    organizationId:
+      resolved
+        ?.applicationOrganizationId ||
+      row.organization_id,
+
+    environmentId:
+      resolved
+        ?.applicationEnvironmentId ||
+      row.environment_id,
+
+    canonicalOrganizationId:
+      row.organization_id,
+
+    canonicalEnvironmentId:
+      row.environment_id,
+
+    provider:
+      row.provider,
+
+    resourceType:
+      row.resource_type,
+
+    externalId:
+      row.external_id ||
+      null,
+
+    name:
+      row.name ||
+      null,
+
+    displayName:
+      row.display_name ||
+      null,
+
+    namespace:
+      row.namespace ||
+      null,
+
+    region:
+      row.region ||
+      null,
+
+    zone:
+      row.zone ||
+      null,
+
+    serviceId:
+      row.service_id ||
+      null,
+
+    labels:
+      row.labels ||
+      {},
+
+    attributes:
+      row.attributes ||
+      {},
+
+    currentState:
+      row.current_state ||
+      {},
+
+    metadata:
+      row.metadata ||
+      {},
+
+    status:
+      row.status ||
+      "ACTIVE",
+
+    discoveredAt:
+      row.discovered_at ||
+      null,
+
+    firstSeenAt:
+      row.first_seen_at ||
+      null,
+
+    lastSeenAt:
+      row.last_seen_at ||
+      null,
+
+    createdAt:
+      row.created_at ||
+      null,
+
+    updatedAt:
+      row.updated_at ||
+      null,
+  };
+}
+
+
+function createRepositoryError(
+  message,
+  code
+) {
+  return Object.assign(
+    new Error(
+      message
+    ),
+    {
+      code,
+    }
+  );
+}
+
 
 module.exports =
   PostgresResourceRepository;
