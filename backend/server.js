@@ -85,6 +85,10 @@ const http =
 // ============================================================================
 // PHASE 12.1 - AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
 // ============================================================================
+const coverageRoutes =
+  require(
+    "./routes/coverageRoutes"
+  );
 
 const {
   initializeAgentOrchestrator,
@@ -973,6 +977,13 @@ app.use(
 
   integrationGovernanceRoutes
 );
+app.use(
+  "/api/v1/coverage",
+  sessionAuthMiddleware,
+  browserEnvironmentContext,
+  coverageRoutes
+);
+
 app.use(
   "/api/v1/notification-routing",
 

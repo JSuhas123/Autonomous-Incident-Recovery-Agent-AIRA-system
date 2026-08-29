@@ -1,0 +1,113 @@
+"use strict";
+
+/**
+ * Phase 19
+ * Knowledge Coverage Engine
+ *
+ * Canonical recovery coverage classifications.
+ *
+ * Coverage describes recovery readiness.
+ * Coverage NEVER authorizes execution.
+ */
+
+const COVERAGE_CLASSIFICATIONS = Object.freeze({
+  COVERED: "COVERED",
+
+  PARTIAL: "PARTIAL",
+
+  HUMAN_ONLY: "HUMAN_ONLY",
+
+  UNKNOWN: "UNKNOWN",
+});
+
+/**
+ * Canonical gap reasons.
+ *
+ * Every non-covered result must explain WHY.
+ */
+
+const COVERAGE_REASON_CODES = Object.freeze({
+  NO_FAILURE_MODE: "NO_FAILURE_MODE",
+
+  NO_PLAYBOOK: "NO_PLAYBOOK",
+
+  NO_APPROVED_PLAYBOOK: "NO_APPROVED_PLAYBOOK",
+
+  RUNBOOK_MISSING: "RUNBOOK_MISSING",
+
+  RUNBOOK_VERSION_UNRESOLVED: "RUNBOOK_VERSION_UNRESOLVED",
+
+  EVIDENCE_UNAVAILABLE: "EVIDENCE_UNAVAILABLE",
+
+  CAPABILITY_MISSING: "CAPABILITY_MISSING",
+
+  POLICY_BLOCKED: "POLICY_BLOCKED",
+
+  HUMAN_APPROVAL_REQUIRED: "HUMAN_APPROVAL_REQUIRED",
+
+  ROLLBACK_MISSING: "ROLLBACK_MISSING",
+
+  VERIFICATION_MISSING: "VERIFICATION_MISSING",
+
+  UNTESTED_RECOVERY: "UNTESTED_RECOVERY",
+
+  LOW_HISTORICAL_CONFIDENCE:
+    "LOW_HISTORICAL_CONFIDENCE",
+
+  UNSUPPORTED_RESOURCE_TYPE:
+    "UNSUPPORTED_RESOURCE_TYPE",
+});
+
+/**
+ * Primary enterprise KPI.
+ */
+
+const PRIMARY_COVERAGE_METRIC = Object.freeze({
+  APPLICABLE_FAILURE_MODE_COVERAGE:
+    "APPLICABLE_FAILURE_MODE_COVERAGE",
+});
+
+/**
+ * Secondary analytics.
+ */
+
+const SECONDARY_COVERAGE_METRICS = Object.freeze({
+  RESOURCE_COVERAGE: "RESOURCE_COVERAGE",
+
+  DOMAIN_COVERAGE: "DOMAIN_COVERAGE",
+
+  ENVIRONMENT_COVERAGE:
+    "ENVIRONMENT_COVERAGE",
+
+  PRODUCTION_COVERAGE:
+    "PRODUCTION_COVERAGE",
+
+  RISK_WEIGHTED_COVERAGE:
+    "RISK_WEIGHTED_COVERAGE",
+});
+
+/**
+ * Permanent safety contract.
+ */
+
+const COVERAGE_SAFETY = Object.freeze({
+  executionAuthorized: false,
+
+  coverageImpliesExecution: false,
+
+  correlationIsCausation: false,
+
+  capabilityImpliesAuthorization: false,
+});
+
+module.exports = {
+  COVERAGE_CLASSIFICATIONS,
+
+  COVERAGE_REASON_CODES,
+
+  PRIMARY_COVERAGE_METRIC,
+
+  SECONDARY_COVERAGE_METRICS,
+
+  COVERAGE_SAFETY,
+};
