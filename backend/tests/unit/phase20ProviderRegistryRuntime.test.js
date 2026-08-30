@@ -357,15 +357,44 @@ function buildRuntime() {
   const connectionStore =
     buildConnectionStore();
 
+  const runtimeGovernance = {
+  assertAllowed:
+    jest.fn(
+      async () => ({
+        governancePresent:
+          false,
 
-  const runtime =
-    new IntegrationRuntime({
-      providerRegistry,
+        allowed:
+          true,
 
-      connectionStore,
+        executionAuthorized:
+          false,
+      })
+    ),
 
-      defaultTimeoutMs:
-        1000,
+
+  assertCredentialAccess:
+    jest.fn(
+      async () => ({
+        allowed:
+          true,
+
+        executionAuthorized:
+          false,
+      })
+    ),
+};
+
+ const runtime =
+  new IntegrationRuntime({
+    providerRegistry,
+
+    connectionStore,
+
+    runtimeGovernance,
+
+    defaultTimeoutMs:
+      1000,
 
       randomUUID:
         () =>
@@ -393,15 +422,17 @@ function buildRuntime() {
     });
 
 
-  return {
-    runtime,
+ return {
+  runtime,
 
-    providerRegistry,
+  providerRegistry,
 
-    connectionStore,
+  connectionStore,
 
-    adapter,
-  };
+  runtimeGovernance,
+
+  adapter,
+};
 }
 
 
@@ -977,97 +1008,209 @@ describe(
     );
 
 
-    test(
-      "executeCapability refuses requests without deterministic authorization proof",
-      async () => {
-        const {
-          runtime,
-        } =
-          buildRuntime();
+   test(
+  "executeCapability refuses requests without persisted authorization reference",
+  async () => {
+    const {
+      runtime,
+    } =
+      buildRuntime();
 
 
-        await expect(
-          runtime
-            .executeCapability(
-              CONTEXT,
-              {
-                capability:
-                  "restart_service",
-              },
-              null
-            )
-        ).rejects
-          .toMatchObject({
-            code:
-              "INTEGRATION_AUTHORIZATION_REQUIRED",
+    runtime
+      .executionAuthorizationBoundary = {
+        verify:
+          jest.fn(
+            async () => {
+              throw Object.assign(
+                new Error(
+                  "authorization reference required"
+                ),
+                {
+                  code:
+                    "INTEGRATION_EXECUTION_REFERENCE_REQUIRED",
 
-            executionAuthorized:
-              false,
-          });
-      }
+                  executionAuthorized:
+                    false,
+                }
+              );
+            }
+          ),
+      };
+
+
+    await expect(
+      runtime
+        .executeCapability(
+          CONTEXT,
+
+          {
+            capability:
+              "restart_service",
+          },
+
+          null
+        )
+    ).rejects
+      .toMatchObject({
+        code:
+          "INTEGRATION_EXECUTION_REFERENCE_REQUIRED",
+
+        executionAuthorized:
+          false,
+      });
+  }
+);
+
+
+   test(
+  "executeCapability requires boundary-verified persisted authorization and still returns non-authorizing result",
+  async () => {
+    const {
+      runtime,
+    } =
+      buildRuntime();
+
+
+    runtime
+      .executionAuthorizationBoundary = {
+        verify:
+          jest.fn(
+            async (
+              reference
+            ) => ({
+              verified:
+                true,
+
+              authorizationId:
+                reference
+                  .authorizationId,
+
+              executionRequestId:
+                reference
+                  .executionRequestId,
+
+              incidentId:
+                reference
+                  .incidentId,
+
+              planId:
+                reference
+                  .planId,
+
+              planHash:
+                reference
+                  .planHash,
+
+              authorizationDecision:
+                "AUTHORIZED",
+
+              authorizationStatus:
+                "AUTHORIZED",
+
+              approvalState:
+                "NOT_REQUIRED",
+
+              policyState:
+                "ALLOWED",
+
+              freshnessState:
+                "FRESH",
+
+              killSwitchState:
+                "ENABLED",
+
+              lockState:
+                "ACQUIRED",
+
+              executionRequestState:
+                "AUTHORIZED",
+
+              checkedAt:
+                "2026-08-30T00:00:00.000Z",
+
+              executionAuthorized:
+                false,
+            })
+          ),
+      };
+
+
+    const result =
+      await runtime
+        .executeCapability(
+          CONTEXT,
+
+          {
+            capability:
+              "restart_service",
+          },
+
+          {
+            incidentId:
+              "inc_123",
+
+            authorizationId:
+              "auth_123",
+
+            executionRequestId:
+              "execreq_123",
+
+            planId:
+              "plan_123",
+
+            planHash:
+              "hash_123",
+          }
+        );
+
+
+    expect(
+      runtime
+        .executionAuthorizationBoundary
+        .verify
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authorizationId:
+          "auth_123",
+
+        executionRequestId:
+          "execreq_123",
+
+        planId:
+          "plan_123",
+
+        planHash:
+          "hash_123",
+
+        capability:
+          "restart_service",
+      })
     );
 
 
-    test(
-      "executeCapability accepts prior authorization proof but runtime result still cannot authorize",
-      async () => {
-        const {
-          runtime,
-        } =
-          buildRuntime();
-
-
-        const result =
-          await runtime
-            .executeCapability(
-              CONTEXT,
-              {
-                capability:
-                  "restart_service",
-              },
-              {
-                authorized:
-                  true,
-
-                decisionId:
-                  "decision-123",
-
-                policyDecisionId:
-                  "policy-456",
-              }
-            );
-
-
-        expect(
-          result.data.performed
-        ).toBe(
-          true
-        );
-
-
-        expect(
-          result.data
-            .authorizationDecisionId
-        ).toBe(
-          "decision-123"
-        );
-
-
-        expect(
-          result.data
-            .executionAuthorized
-        ).toBe(
-          false
-        );
-
-
-        expect(
-          result.executionAuthorized
-        ).toBe(
-          false
-        );
-      }
+    expect(
+      result.data.performed
+    ).toBe(
+      true
     );
+
+
+    expect(
+      result.data
+        .executionAuthorized
+    ).toBe(
+      false
+    );
+
+
+    expect(
+      result.executionAuthorized
+    ).toBe(
+      false
+    );
+  }
+);
 
 
     test(
@@ -1121,32 +1264,5 @@ describe(
     );
 
 
-    test(
-      "authorization proof validator is separate from ordinary invocation context",
-      () => {
-        expect(
-          () =>
-            validateAuthorizationProof({
-              authorized:
-                true,
-
-              decisionId:
-                "decision-1",
-            })
-        ).not.toThrow();
-
-
-        expect(
-          () =>
-            validateAuthorizationProof({
-              authorized:
-                false,
-
-              decisionId:
-                "decision-1",
-            })
-        ).toThrow();
-      }
-    );
   }
 );

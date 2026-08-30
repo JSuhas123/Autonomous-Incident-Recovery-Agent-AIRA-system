@@ -41,6 +41,8 @@ const adapterRegistry =
 
 const {
   INTEGRATION_CAPABILITIES,
+
+  INTEGRATION_GROUP,
 } =
   require(
     "../../constants/integrationPlatform"
@@ -743,6 +745,11 @@ function buildProviderRecord({
     category:
       definition.category,
 
+    group:
+  resolveProviderGroup(
+    definition.category
+  ),
+
     description:
       definition.description,
 
@@ -833,11 +840,90 @@ function normalizeProvider(
   );
 }
 
+function resolveProviderGroup(
+  category
+) {
+  const value =
+    String(
+      category ||
+      ""
+    );
 
+
+  if (
+    value ===
+      "monitoring_alerting" ||
+    value ===
+      "telemetry_observability"
+  ) {
+    return INTEGRATION_GROUP
+      .OBSERVABILITY;
+  }
+
+
+  if (
+    value ===
+    "cloud"
+  ) {
+    return INTEGRATION_GROUP
+      .CLOUD;
+  }
+
+
+  if (
+    value ===
+    "incident_management"
+  ) {
+    return INTEGRATION_GROUP
+      .INCIDENT;
+  }
+
+
+  if (
+    value ===
+    "communication"
+  ) {
+    return INTEGRATION_GROUP
+      .COMMUNICATION;
+  }
+
+
+  if (
+    value ===
+    "developer_tools"
+  ) {
+    return INTEGRATION_GROUP
+      .CI_CD;
+  }
+
+
+  if (
+    value ===
+    "databases_queues"
+  ) {
+    return INTEGRATION_GROUP
+      .DATA;
+  }
+
+
+  if (
+    value ===
+    "infrastructure"
+  ) {
+    return INTEGRATION_GROUP
+      .INFRA;
+  }
+
+
+  return INTEGRATION_GROUP
+    .CUSTOM;
+}
 module.exports = {
   ProviderRegistry,
 
   PROVIDER_RUNTIME_STATUS,
 
   PROVIDER_CERTIFICATION_STATUS,
+
+  resolveProviderGroup,
 };

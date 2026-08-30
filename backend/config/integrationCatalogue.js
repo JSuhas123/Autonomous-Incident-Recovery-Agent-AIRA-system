@@ -1,5 +1,11 @@
 "use strict";
 
+const {
+  INTEGRATION_CAPABILITIES,
+} =
+  require(
+    "../constants/integrationPlatform"
+  );
 /**
  * Canonical AIRA integration catalogue.
  *
@@ -65,23 +71,6 @@ const AVAILABILITY_STATUSES =
     "available",
     "beta",
     "coming_soon",
-  ]);
-
-// ============================================================================
-// CAPABILITIES
-// ============================================================================
-
-const INTEGRATION_CAPABILITIES =
-  Object.freeze([
-    "receive_events",
-    "normalize_events",
-    "send_notifications",
-    "get_health",
-    "discover_resources",
-    "query_metrics",
-    "query_logs",
-    "query_traces",
-    "revoke",
   ]);
 
 // ============================================================================
@@ -832,37 +821,6 @@ const CATALOGUE = [
       1,
   },
 
-  {
-    provider:
-      "discord",
-
-    displayName:
-      "Discord",
-
-    category:
-      CATEGORIES.COMMS,
-
-    description:
-      "Send AIRA operational and incident notifications to Discord.",
-
-    capabilities: [
-      "send_notifications",
-      "get_health",
-      "revoke",
-    ],
-
-    availabilityStatus:
-      "coming_soon",
-
-    documentationUrl:
-      null,
-
-    icon:
-      "discord",
-
-    configSchemaVersion:
-      1,
-  },
 
   // ==========================================================================
   // DATABASES
@@ -1210,6 +1168,72 @@ const CATALOGUE = [
     configSchemaVersion:
       1,
   },
+  {
+  provider:
+    "tekton",
+
+  displayName:
+    "Tekton",
+
+  category:
+    CATEGORIES.DEV,
+
+  description:
+    "Integrate Tekton PipelineRuns, TaskRuns, build status and deployment pipeline events with AIRA.",
+
+  capabilities: [
+    "receive_events",
+    "normalize_events",
+    "get_health",
+    "discover_resources",
+    "revoke",
+  ],
+
+  availabilityStatus:
+    "coming_soon",
+
+  documentationUrl:
+    "https://tekton.dev/docs/",
+
+  icon:
+    "tekton",
+
+  configSchemaVersion:
+    1,
+},
+{
+  provider:
+    "terraform",
+
+  displayName:
+    "Terraform",
+
+  category:
+    CATEGORIES.INFRA,
+
+  description:
+    "Integrate Terraform infrastructure state, resource discovery and infrastructure change evidence with AIRA.",
+
+  capabilities: [
+    "get_health",
+    "discover_resources",
+    "discover_relationships",
+    "get_changes",
+    "revoke",
+  ],
+
+  availabilityStatus:
+    "coming_soon",
+
+  documentationUrl:
+    "https://developer.hashicorp.com/terraform/docs",
+
+  icon:
+    "terraform",
+
+  configSchemaVersion:
+    1,
+},
 ];
 
 // ============================================================================

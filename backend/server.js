@@ -547,6 +547,11 @@ const integrationGovernanceRoutes =
     "./routes/notificationRoutingRoutes"
   );
 
+  const integrationPlatformRoutes =
+  require(
+    "./routes/integrationPlatformRoutes"
+  );
+  
 const humanTaskRoutes =
   require(
     "./routes/humanTaskRoutes"
@@ -982,6 +987,18 @@ app.use(
   sessionAuthMiddleware,
   browserEnvironmentContext,
   coverageRoutes
+);
+
+app.use(
+  "/api/v1/integration-platform",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  browserEnvironmentContext,
+
+  integrationPlatformRoutes
 );
 
 app.use(

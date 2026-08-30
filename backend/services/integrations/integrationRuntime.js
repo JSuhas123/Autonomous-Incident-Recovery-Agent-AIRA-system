@@ -36,11 +36,45 @@ const IntegrationConnectionStore =
     "./integrationConnectionStore"
   );
 
+  const {
+  IntegrationRuntimeGovernance,
+} =
+  require(
+    "./integrationRuntimeGovernance"
+  );
+
+const {
+  IntegrationResilienceService,
+} =
+  require(
+    "./integrationResilienceService"
+  );
+
+const {
+  IntegrationInvocationAuditService,
+} =
+  require(
+    "./integrationInvocationAuditService"
+  );
+
+const {
+  sanitizeIntegrationValue,
+} =
+  require(
+    "./integrationSecurity"
+  );
 const {
   ProviderRegistry,
 } =
   require(
     "./providerRegistry"
+  );
+
+  const {
+  IntegrationExecutionAuthorizationBoundary,
+} =
+  require(
+    "./integrationExecutionAuthorizationBoundary"
   );
 
 const {
@@ -102,6 +136,35 @@ class IntegrationRuntime {
         options
       );
 
+    this.executionAuthorizationBoundary =
+  options
+    .executionAuthorizationBoundary ||
+  new IntegrationExecutionAuthorizationBoundary(
+    options
+  );
+
+  this.runtimeGovernance =
+  options.runtimeGovernance ||
+  new IntegrationRuntimeGovernance(
+    options
+  );
+
+
+this.resilienceService =
+  options.resilienceService ||
+  new IntegrationResilienceService({
+    ...options,
+
+    connectionStore:
+      this.connectionStore,
+  });
+
+
+this.invocationAuditService =
+  options.invocationAuditService ||
+  new IntegrationInvocationAuditService(
+    options
+  );
 
     this.defaultTimeoutMs =
       normalizePositiveInteger(
@@ -123,29 +186,29 @@ class IntegrationRuntime {
   }
 
 
-  async invoke({
-    organizationId,
+ async invoke({
+  organizationId,
 
-    environmentId,
+  environmentId,
 
-    integrationId,
+  integrationId,
 
-    provider,
+  provider,
 
-    operation,
+  operation,
 
-    input =
-      {},
+  input =
+    {},
 
-    headers =
-      {},
+  headers =
+    {},
 
-    authorizationProof =
-      null,
+  authorizationReference =
+    null,
 
-    timeoutMs =
-      null,
-  } = {}) {
+  timeoutMs =
+    null,
+} = {}) {
     const normalizedProvider =
       normalizeProvider(
         provider
@@ -277,16 +340,80 @@ class IntegrationRuntime {
           capability
         );
 
+        await this
+  .runtimeGovernance
+  .assertAllowed({
+    organizationId,
 
-    if (
-      operation ===
-      INTEGRATION_OPERATION
-        .EXECUTE_CAPABILITY
-    ) {
-      validateAuthorizationProof(
-        authorizationProof
-      );
-    }
+    environmentId,
+
+    integrationId:
+      connection.publicId ||
+      integrationId,
+
+    provider:
+      normalizedProvider,
+
+    operation,
+
+    capability,
+  });
+
+
+   let authorizationProof =
+  null;
+
+
+if (
+  operation ===
+  INTEGRATION_OPERATION
+    .EXECUTE_CAPABILITY
+) {
+  authorizationProof =
+    await this
+      .executionAuthorizationBoundary
+      .verify({
+        organizationId,
+
+        environmentId,
+
+        incidentId:
+          authorizationReference
+            ?.incidentId,
+
+        authorizationId:
+          authorizationReference
+            ?.authorizationId,
+
+        executionRequestId:
+          authorizationReference
+            ?.executionRequestId,
+
+        planId:
+          authorizationReference
+            ?.planId,
+
+        planHash:
+          authorizationReference
+            ?.planHash,
+
+        capability:
+          input
+            ?.capability ||
+          null,
+      });
+      await this
+  .runtimeGovernance
+  .assertCredentialAccess({
+    organizationId,
+
+    environmentId,
+
+    integrationId:
+      connection.publicId ||
+      integrationId,
+  });
+}
 
 
     const credential =
@@ -319,84 +446,334 @@ class IntegrationRuntime {
       this.now();
 
 
-    try {
-      const rawResult =
-        await withTimeout(
-          () =>
-            this.invokeAdapterOperation({
-              adapter,
-
-              operation,
-
-              runtimeConnection,
-
-              input,
-
-              headers,
-
-              authorizationProof,
-
-              invocationId,
-
-              context,
-            }),
-
-          normalizePositiveInteger(
-            timeoutMs,
-            this.defaultTimeoutMs
-          ),
-
-          {
-            provider:
-              normalizedProvider,
-
-            operation,
-
-            invocationId,
-          }
-        );
+   const effectiveTimeoutMs =
+  normalizePositiveInteger(
+    timeoutMs,
+    this.defaultTimeoutMs
+  );
 
 
-      const finishedAt =
-        this.now();
+let attemptCount =
+  1;
 
 
-      const result =
-        this.normalizeResult({
-          provider:
-            normalizedProvider,
-
-          operation,
-
-          rawResult,
-
-          invocationId,
-
-          providerRecord,
-
-          connection,
-
-          startedAt,
-
-          finishedAt,
-        });
-
-
-      return result;
-    } catch (
-      error
-    ) {
-      throw normalizeRuntimeError({
-        error,
-
-        provider:
-          normalizedProvider,
-
+try {
+  const resilient =
+    await this
+      .resilienceService
+      .execute({
         operation,
 
-        invocationId,
+        connection,
+
+        invoke:
+          async ({
+            attempt,
+          }) => {
+            attemptCount =
+              attempt;
+
+
+            return withTimeout(
+              () =>
+                this.invokeAdapterOperation({
+                  adapter,
+
+                  operation,
+
+                  runtimeConnection,
+
+                  input,
+
+                  headers,
+
+                  authorizationProof,
+
+                  invocationId,
+
+                  context,
+                }),
+
+              effectiveTimeoutMs,
+
+              {
+                provider:
+                  normalizedProvider,
+
+                operation,
+
+                invocationId,
+
+                attempt,
+              }
+            );
+          },
       });
-    }
+
+
+  attemptCount =
+    resilient
+      .attemptCount;
+
+
+  const rawResult =
+    resilient.value;
+
+
+  const finishedAt =
+    this.now();
+
+
+  const durationMs =
+    Math.max(
+      0,
+      finishedAt.getTime() -
+      startedAt.getTime()
+    );
+
+
+  const result =
+    this.normalizeResult({
+      provider:
+        normalizedProvider,
+
+      operation,
+
+      rawResult,
+
+      invocationId,
+
+      providerRecord,
+
+      connection,
+
+      startedAt,
+
+      finishedAt,
+    });
+
+
+  await this
+    .resilienceService
+    .recordSuccess({
+      organizationId,
+
+      environmentId,
+
+      connection,
+
+      operation,
+
+      durationMs,
+    })
+    .catch(
+      () => null
+    );
+
+
+  await this
+    .invocationAuditService
+    .record({
+      organizationId,
+
+      environmentId,
+
+      invocationId,
+
+      connectionId:
+        connection.id,
+
+      integrationPublicId:
+        connection.publicId,
+
+      provider:
+        normalizedProvider,
+
+      operation,
+
+      capability,
+
+      outcome:
+        result.status ===
+          INTEGRATION_RESULT_STATUS
+            .PARTIAL
+          ? "PARTIAL"
+          : "SUCCESS",
+
+      attemptCount,
+
+      durationMs,
+
+      authorizationId:
+        authorizationProof
+          ?.authorizationId ||
+        null,
+
+      executionRequestId:
+        authorizationProof
+          ?.executionRequestId ||
+        null,
+
+      metadata: {
+        providerAvailability:
+          providerRecord
+            ?.availabilityStatus ||
+          null,
+
+        providerCertification:
+          providerRecord
+            ?.certificationStatus ||
+          null,
+
+        resultStatus:
+          result.status,
+
+        executionAuthorized:
+          false,
+      },
+    });
+
+
+  return {
+    ...result,
+
+    executionAuthorized:
+      false,
+  };
+} catch (
+  error
+) {
+  const finishedAt =
+    this.now();
+
+
+  const durationMs =
+    Math.max(
+      0,
+      finishedAt.getTime() -
+      startedAt.getTime()
+    );
+
+
+  const normalizedError =
+    normalizeRuntimeError({
+      error,
+
+      provider:
+        normalizedProvider,
+
+      operation,
+
+      invocationId,
+    });
+
+
+  await this
+    .resilienceService
+    .recordFailure({
+      organizationId,
+
+      environmentId,
+
+      connection,
+
+      operation,
+
+      durationMs,
+
+      error:
+        normalizedError,
+    })
+    .catch(
+      () => null
+    );
+
+
+  const auditOutcome =
+    normalizedError
+      ?.code ===
+      "INTEGRATION_CIRCUIT_OPEN"
+      ? "CIRCUIT_OPEN"
+      : normalizedError
+          ?.code ===
+          INTEGRATION_ERROR_CODE
+            .TIMEOUT
+        ? "TIMEOUT"
+        : "FAILED";
+
+
+  await this
+    .invocationAuditService
+    .record({
+      organizationId,
+
+      environmentId,
+
+      invocationId,
+
+      connectionId:
+        connection.id,
+
+      integrationPublicId:
+        connection.publicId,
+
+      provider:
+        normalizedProvider,
+
+      operation,
+
+      capability,
+
+      outcome:
+        auditOutcome,
+
+      attemptCount:
+        Number(
+          error
+            ?.integrationAttemptCount ||
+          attemptCount ||
+          1
+        ),
+
+      durationMs,
+
+      errorCode:
+        normalizedError
+          ?.code ||
+        "INTEGRATION_RUNTIME_FAILED",
+
+      authorizationId:
+        authorizationProof
+          ?.authorizationId ||
+        null,
+
+      executionRequestId:
+        authorizationProof
+          ?.executionRequestId ||
+        null,
+
+      metadata: {
+        error:
+          sanitizeIntegrationValue({
+            code:
+              normalizedError
+                ?.code ||
+              null,
+
+            message:
+              normalizedError
+                ?.message ||
+              "Integration operation failed",
+          }),
+
+        executionAuthorized:
+          false,
+      },
+    });
+
+
+  throw normalizedError;
+}
   }
 
 
@@ -522,24 +899,24 @@ class IntegrationRuntime {
   }
 
 
-  async executeCapability(
-    context,
-    executionRequest,
-    authorizationProof
-  ) {
-    return this.invoke({
-      ...context,
+ async executeCapability(
+  context,
+  executionRequest,
+  authorizationReference
+) {
+  return this.invoke({
+    ...context,
 
-      operation:
-        INTEGRATION_OPERATION
-          .EXECUTE_CAPABILITY,
+    operation:
+      INTEGRATION_OPERATION
+        .EXECUTE_CAPABILITY,
 
-      input:
-        executionRequest,
+    input:
+      executionRequest,
 
-      authorizationProof,
-    });
-  }
+    authorizationReference,
+  });
+}
 
 
   async sendNotification(
@@ -984,7 +1361,7 @@ class IntegrationRuntime {
        * Never trust an adapter to inject authorization.
        */
       return {
-        ...sanitizeResult(
+        ...sanitizeIntegrationValue(
           rawResult
         ),
 
@@ -1103,165 +1480,6 @@ function buildAdapterMetadata({
       false,
   };
 }
-
-
-function validateAuthorizationProof(
-  proof
-) {
-  if (
-    !proof ||
-    typeof proof !==
-      "object" ||
-    Array.isArray(
-      proof
-    )
-  ) {
-    throw runtimeError(
-      "executeCapability requires deterministic authorization proof",
-      INTEGRATION_ERROR_CODE
-        .AUTHORIZATION_REQUIRED
-    );
-  }
-
-
-  if (
-    proof.authorized !==
-    true
-  ) {
-    throw runtimeError(
-      "executeCapability authorization proof is not authorized",
-      INTEGRATION_ERROR_CODE
-        .AUTHORIZATION_REQUIRED
-    );
-  }
-
-
-  if (
-    !proof.decisionId
-  ) {
-    throw runtimeError(
-      "executeCapability authorization proof requires decisionId",
-      INTEGRATION_ERROR_CODE
-        .AUTHORIZATION_REQUIRED
-    );
-  }
-
-
-  /*
-   * Important:
-   *
-   * The proof is evidence that another deterministic control-plane component
-   * already authorized this operation.
-   *
-   * IntegrationRuntime does not create this authorization.
-   */
-}
-
-
-function sanitizeResult(
-  value
-) {
-  if (
-    value ===
-      null ||
-    value ===
-      undefined
-  ) {
-    return value;
-  }
-
-
-  if (
-    Array.isArray(
-      value
-    )
-  ) {
-    return value.map(
-      sanitizeResult
-    );
-  }
-
-
-  if (
-    typeof value !==
-      "object"
-  ) {
-    return value;
-  }
-
-
-  const safe =
-    {};
-
-
-  for (
-    const [
-      key,
-      nestedValue,
-    ]
-    of Object.entries(
-      value
-    )
-  ) {
-    /*
-     * Runtime-only compatibility field.
-     *
-     * This must disappear entirely rather than merely being replaced by a
-     * redaction marker.
-     */
-    if (
-      key ===
-        "_decryptedSecret"
-    ) {
-      continue;
-    }
-
-
-    if (
-      isSecretField(
-        key
-      )
-    ) {
-      safe[
-        key
-      ] =
-        "[REDACTED]";
-
-      continue;
-    }
-
-
-    safe[
-      key
-    ] =
-      sanitizeResult(
-        nestedValue
-      );
-  }
-
-
-  /*
-   * Provider-returned objects are evidence/results only.
-   *
-   * They can never grant execution authorization, even when a provider
-   * implementation accidentally or maliciously returns true.
-   */
-  if (
-    Object.prototype
-      .hasOwnProperty
-      .call(
-        safe,
-        "executionAuthorized"
-      )
-  ) {
-    safe.executionAuthorized =
-      false;
-  }
-
-
-  return safe;
-}
-
 
 function isSecretField(
   key
@@ -1595,6 +1813,13 @@ function toISOString(
   )
     .toISOString();
 }
+function sanitizeResult(
+  value
+) {
+  return sanitizeIntegrationValue(
+    value
+  );
+}
 
 
 module.exports = {
@@ -1602,7 +1827,9 @@ module.exports = {
 
   DEFAULT_OPERATION_TIMEOUT_MS,
 
-  validateAuthorizationProof,
+  withTimeout,
+
+  normalizeRuntimeError,
 
   sanitizeResult,
 };

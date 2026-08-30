@@ -1,10 +1,8 @@
 "use strict";
 
-const {
-  getPostgresPool,
-} =
+const PostgresTenantScope =
   require(
-    "../../persistence/postgres/postgresPool"
+    "../../persistence/postgres/PostgresTenantScope"
   );
 
 const {
@@ -21,304 +19,451 @@ function createError(
   status,
   code
 ) {
-  const error =
+  return Object.assign(
     new Error(
       message
-    );
+    ),
+    {
+      status,
 
-  error.status =
-    status;
+      code,
 
-  error.code =
-    code;
-
-  error.executionAuthorized =
-    false;
-
-  return error;
+      executionAuthorized:
+        false,
+    }
+  );
 }
 
 
-async function requireEnvironment({
-  organizationId,
-  environmentId,
-}) {
-  const result =
-    await getPostgresPool()
-      .query(
-        `
-          SELECT id
-          FROM tenancy.environments
-          WHERE
-            organization_id = $1
-            AND id = $2
-          LIMIT 1
-        `,
-        [
-          organizationId,
-          environmentId,
-        ]
-      );
-
-  if (
-    !result.rows[0]
-  ) {
-    throw createError(
-      "Environment not found",
-      404,
-      "ENVIRONMENT_NOT_FOUND"
-    );
-  }
-
-  return result.rows[0];
+function createScope(
+  options =
+    {}
+) {
+  return (
+    options.scope ||
+    new PostgresTenantScope(
+      options
+    )
+  );
 }
 
 
 async function getGovernance({
   organizationId,
+
   environmentId,
+
   integrationId,
-}) {
-  await requireEnvironment({
+
+  scope =
+    null,
+} = {}) {
+  requireFields({
     organizationId,
+
     environmentId,
+
+    integrationId,
   });
 
-  const result =
-    await getPostgresPool()
-      .query(
-        `
-          SELECT *
-          FROM integrations.connection_governance
-          WHERE
-            organization_id = $1
-            AND environment_id = $2
-            AND integration_id = $3
-          LIMIT 1
-        `,
-        [
-          organizationId,
-          environmentId,
-          String(
-            integrationId
-          ),
-        ]
-      );
 
-  return result.rows[0] ||
-    null;
+  const tenantScope =
+    scope ||
+    createScope();
+
+
+  return tenantScope.run(
+    {
+      organizationId,
+
+      environmentId,
+    },
+
+    async (
+      client,
+      resolved
+    ) => {
+      const result =
+        await client.query(
+          `
+            SELECT *
+            FROM
+              integrations.connection_governance
+            WHERE
+              organization_id = $1
+              AND environment_id = $2
+              AND integration_id = $3
+            LIMIT 1
+          `,
+          [
+            resolved
+              .organizationUuid,
+
+            resolved
+              .environmentUuid,
+
+            String(
+              integrationId
+            ),
+          ]
+        );
+
+
+      return result.rows[0] ||
+        null;
+    }
+  );
 }
 
 
 async function upsertGovernance({
   organizationId,
+
   environmentId,
+
   integrationId,
+
   provider =
     null,
-  actorUserId,
+
+  actorUserId =
+    null,
+
   settings =
     {},
-}) {
-  await requireEnvironment({
+
+  scope =
+    null,
+} = {}) {
+  requireFields({
     organizationId,
+
     environmentId,
+
+    integrationId,
   });
 
-  const result =
-    await getPostgresPool()
-      .query(
-        `
-          INSERT INTO integrations.connection_governance (
-            organization_id,
-            environment_id,
-            integration_id,
-            provider,
-            enabled,
-            allow_ingestion,
-            allow_queries,
-            allow_resource_discovery,
-            allow_execution,
-            credential_access_mode,
-            credential_rotation_required,
-            credential_rotation_days,
-            allowed_capabilities,
-            denied_capabilities,
-            rate_limits,
-            metadata,
-            created_by_user_id,
-            updated_by_user_id
-          )
-          VALUES (
-            $1,$2,$3,$4,
-            COALESCE($5, TRUE),
-            COALESCE($6, TRUE),
-            COALESCE($7, TRUE),
-            COALESCE($8, TRUE),
-            COALESCE($9, FALSE),
-            COALESCE($10, 'managed_only'),
-            COALESCE($11, TRUE),
-            COALESCE($12, 90),
-            COALESCE($13::jsonb, '[]'::jsonb),
-            COALESCE($14::jsonb, '[]'::jsonb),
-            COALESCE($15::jsonb, '{}'::jsonb),
-            COALESCE($16::jsonb, '{}'::jsonb),
-            $17,
-            $17
-          )
 
-          ON CONFLICT (
-            organization_id,
-            environment_id,
-            integration_id
-          )
-          DO UPDATE SET
-            provider =
-              COALESCE(
-                EXCLUDED.provider,
-                integrations.connection_governance.provider
-              ),
+  const tenantScope =
+    scope ||
+    createScope();
 
-            enabled =
-              COALESCE(
-                $5,
-                integrations.connection_governance.enabled
-              ),
 
-            allow_ingestion =
-              COALESCE(
-                $6,
-                integrations.connection_governance.allow_ingestion
-              ),
+  const governance =
+    await tenantScope.run(
+      {
+        organizationId,
 
-            allow_queries =
-              COALESCE(
-                $7,
-                integrations.connection_governance.allow_queries
-              ),
+        environmentId,
+      },
 
-            allow_resource_discovery =
-              COALESCE(
-                $8,
-                integrations.connection_governance.allow_resource_discovery
-              ),
+      async (
+        client,
+        resolved
+      ) => {
+        const result =
+          await client.query(
+            `
+              INSERT INTO
+                integrations.connection_governance (
+                  organization_id,
+                  environment_id,
+                  integration_id,
 
-            allow_execution =
-              COALESCE(
-                $9,
-                integrations.connection_governance.allow_execution
-              ),
+                  provider,
 
-            credential_access_mode =
-              COALESCE(
-                $10,
-                integrations.connection_governance.credential_access_mode
-              ),
+                  enabled,
 
-            credential_rotation_required =
-              COALESCE(
-                $11,
-                integrations.connection_governance.credential_rotation_required
-              ),
+                  allow_ingestion,
+                  allow_queries,
+                  allow_resource_discovery,
+                  allow_execution,
 
-            credential_rotation_days =
-              COALESCE(
-                $12,
-                integrations.connection_governance.credential_rotation_days
-              ),
+                  credential_access_mode,
 
-            allowed_capabilities =
-              COALESCE(
-                $13::jsonb,
-                integrations.connection_governance.allowed_capabilities
-              ),
+                  credential_rotation_required,
+                  credential_rotation_days,
 
-            denied_capabilities =
-              COALESCE(
-                $14::jsonb,
-                integrations.connection_governance.denied_capabilities
-              ),
+                  allowed_capabilities,
+                  denied_capabilities,
 
-            rate_limits =
-              COALESCE(
-                $15::jsonb,
-                integrations.connection_governance.rate_limits
-              ),
+                  rate_limits,
+                  metadata,
 
-            metadata =
-              COALESCE(
-                $16::jsonb,
-                integrations.connection_governance.metadata
-              ),
+                  created_by_user_id,
+                  updated_by_user_id
+                )
+              VALUES (
+                $1,
+                $2,
+                $3,
 
-            updated_by_user_id =
-              $17
+                $4,
 
-          RETURNING *
-        `,
-        [
-          organizationId,
-          environmentId,
-          String(
-            integrationId
-          ),
-          provider,
+                COALESCE(
+                  $5,
+                  TRUE
+                ),
 
-          settings.enabled ??
-            null,
+                COALESCE(
+                  $6,
+                  TRUE
+                ),
 
-          settings.allowIngestion ??
-            null,
+                COALESCE(
+                  $7,
+                  TRUE
+                ),
 
-          settings.allowQueries ??
-            null,
+                COALESCE(
+                  $8,
+                  TRUE
+                ),
 
-          settings.allowResourceDiscovery ??
-            null,
+                COALESCE(
+                  $9,
+                  FALSE
+                ),
 
-          settings.allowExecution ??
-            null,
+                COALESCE(
+                  $10,
+                  'managed_only'
+                ),
 
-          settings.credentialAccessMode ??
-            null,
+                COALESCE(
+                  $11,
+                  TRUE
+                ),
 
-          settings.credentialRotationRequired ??
-            null,
+                COALESCE(
+                  $12,
+                  90
+                ),
 
-          settings.credentialRotationDays ??
-            null,
+                COALESCE(
+                  $13::jsonb,
+                  '[]'::jsonb
+                ),
 
-          settings.allowedCapabilities !==
-            undefined
-            ? JSON.stringify(
-                settings.allowedCapabilities
+                COALESCE(
+                  $14::jsonb,
+                  '[]'::jsonb
+                ),
+
+                COALESCE(
+                  $15::jsonb,
+                  '{}'::jsonb
+                ),
+
+                COALESCE(
+                  $16::jsonb,
+                  '{}'::jsonb
+                ),
+
+                $17,
+                $17
               )
-            : null,
 
-          settings.deniedCapabilities !==
-            undefined
-            ? JSON.stringify(
-                settings.deniedCapabilities
+              ON CONFLICT (
+                organization_id,
+                environment_id,
+                integration_id
               )
-            : null,
 
-          settings.rateLimits !==
-            undefined
-            ? JSON.stringify(
-                settings.rateLimits
-              )
-            : null,
+              DO UPDATE SET
+                provider =
+                  COALESCE(
+                    EXCLUDED.provider,
+                    integrations
+                      .connection_governance
+                      .provider
+                  ),
 
-          settings.metadata !==
-            undefined
-            ? JSON.stringify(
+                enabled =
+                  COALESCE(
+                    $5,
+                    integrations
+                      .connection_governance
+                      .enabled
+                  ),
+
+                allow_ingestion =
+                  COALESCE(
+                    $6,
+                    integrations
+                      .connection_governance
+                      .allow_ingestion
+                  ),
+
+                allow_queries =
+                  COALESCE(
+                    $7,
+                    integrations
+                      .connection_governance
+                      .allow_queries
+                  ),
+
+                allow_resource_discovery =
+                  COALESCE(
+                    $8,
+                    integrations
+                      .connection_governance
+                      .allow_resource_discovery
+                  ),
+
+                allow_execution =
+                  COALESCE(
+                    $9,
+                    integrations
+                      .connection_governance
+                      .allow_execution
+                  ),
+
+                credential_access_mode =
+                  COALESCE(
+                    $10,
+                    integrations
+                      .connection_governance
+                      .credential_access_mode
+                  ),
+
+                credential_rotation_required =
+                  COALESCE(
+                    $11,
+                    integrations
+                      .connection_governance
+                      .credential_rotation_required
+                  ),
+
+                credential_rotation_days =
+                  COALESCE(
+                    $12,
+                    integrations
+                      .connection_governance
+                      .credential_rotation_days
+                  ),
+
+                allowed_capabilities =
+                  COALESCE(
+                    $13::jsonb,
+                    integrations
+                      .connection_governance
+                      .allowed_capabilities
+                  ),
+
+                denied_capabilities =
+                  COALESCE(
+                    $14::jsonb,
+                    integrations
+                      .connection_governance
+                      .denied_capabilities
+                  ),
+
+                rate_limits =
+                  COALESCE(
+                    $15::jsonb,
+                    integrations
+                      .connection_governance
+                      .rate_limits
+                  ),
+
+                metadata =
+                  COALESCE(
+                    $16::jsonb,
+                    integrations
+                      .connection_governance
+                      .metadata
+                  ),
+
+                updated_by_user_id =
+                  $17
+
+              RETURNING *
+            `,
+            [
+              resolved
+                .organizationUuid,
+
+              resolved
+                .environmentUuid,
+
+              String(
+                integrationId
+              ),
+
+              provider
+                ? String(
+                    provider
+                  )
+                    .trim()
+                    .toLowerCase()
+                : null,
+
+              nullableBoolean(
+                settings.enabled
+              ),
+
+              nullableBoolean(
+                settings
+                  .allowIngestion
+              ),
+
+              nullableBoolean(
+                settings
+                  .allowQueries
+              ),
+
+              nullableBoolean(
+                settings
+                  .allowResourceDiscovery
+              ),
+
+              nullableBoolean(
+                settings
+                  .allowExecution
+              ),
+
+              settings
+                .credentialAccessMode ??
+              null,
+
+              nullableBoolean(
+                settings
+                  .credentialRotationRequired
+              ),
+
+              settings
+                .credentialRotationDays ??
+              null,
+
+              jsonOrNull(
+                settings
+                  .allowedCapabilities
+              ),
+
+              jsonOrNull(
+                settings
+                  .deniedCapabilities
+              ),
+
+              jsonOrNull(
+                settings
+                  .rateLimits
+              ),
+
+              jsonOrNull(
                 settings.metadata
-              )
-            : null,
+              ),
 
-          actorUserId,
-        ]
-      );
+              actorUserId,
+            ]
+          );
+
+
+        return result.rows[0];
+      }
+    );
+
 
   await auditRecord(
     "integration_governance_updated",
@@ -336,42 +481,54 @@ async function upsertGovernance({
           String(
             integrationId
           ),
+
+        executionAuthorized:
+          false,
       },
     }
   ).catch(
     () => {}
   );
 
-  return result.rows[0];
+
+  return governance;
 }
 
 
 async function assertCapabilityAllowed({
   organizationId,
+
   environmentId,
+
   integrationId,
+
   capability,
-}) {
+
+  scope =
+    null,
+} = {}) {
   const governance =
     await getGovernance({
       organizationId,
+
       environmentId,
+
       integrationId,
+
+      scope,
     });
 
-  /**
-   * Existing integrations without a governance row remain usable.
-   *
-   * The default behavior matches their previous semantics.
-   */
+
   if (
     !governance
   ) {
     return true;
   }
 
+
   if (
-    !governance.enabled
+    governance.enabled !==
+    true
   ) {
     throw createError(
       "Integration is disabled by tenant governance",
@@ -380,10 +537,16 @@ async function assertCapabilityAllowed({
     );
   }
 
+
   const denied =
-    governance
-      .denied_capabilities ||
-    [];
+    Array.isArray(
+      governance
+        .denied_capabilities
+    )
+      ? governance
+          .denied_capabilities
+      : [];
+
 
   if (
     denied.includes(
@@ -397,10 +560,16 @@ async function assertCapabilityAllowed({
     );
   }
 
+
   const allowed =
-    governance
-      .allowed_capabilities ||
-    [];
+    Array.isArray(
+      governance
+        .allowed_capabilities
+    )
+      ? governance
+          .allowed_capabilities
+      : [];
+
 
   if (
     allowed.length >
@@ -416,12 +585,65 @@ async function assertCapabilityAllowed({
     );
   }
 
+
   return true;
+}
+
+
+function requireFields(
+  input
+) {
+  for (
+    const field
+    of [
+      "organizationId",
+      "environmentId",
+      "integrationId",
+    ]
+  ) {
+    if (
+      !input?.[
+        field
+      ]
+    ) {
+      throw createError(
+        `${field} is required`,
+        400,
+        "INTEGRATION_GOVERNANCE_SCOPE_REQUIRED"
+      );
+    }
+  }
+}
+
+
+function nullableBoolean(
+  value
+) {
+  return (
+    typeof value ===
+    "boolean"
+  )
+    ? value
+    : null;
+}
+
+
+function jsonOrNull(
+  value
+) {
+  return value ===
+    undefined
+    ? null
+    : JSON.stringify(
+        value
+      );
 }
 
 
 module.exports = {
   getGovernance,
+
   upsertGovernance,
+
   assertCapabilityAllowed,
 };
