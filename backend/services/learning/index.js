@@ -8,6 +8,5 @@ module.exports = {
   confidenceService: require("./confidenceService"),
   confidenceWeightOptimizer: require("./confidenceWeightOptimizer"),
   memoryService: require("./memoryService"),
-  simulationService: require("./simulationService"),
   riskImpactSimulator: require("./riskImpactSimulator"),
 };

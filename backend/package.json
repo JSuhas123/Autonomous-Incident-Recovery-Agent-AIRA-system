@@ -1,7 +1,7 @@
 {
   "name": "autonomous-backend-incident-recovery-agent-backend",
   "version": "1.0.0",
-  "description": "Backend for autonomous incident detection and recovery simulation",
+  "description": "Backend for the AIRA autonomous incident detection and recovery platform",
   "main": "server.js",
   "bin": {
     "aira": "./cli/aira.js"
@@ -11,8 +11,6 @@
     "start:server": "node server.js",
     "dev": "nodemon server.js",
     "seed": "node scripts/seed-dev-data.js",
-    "simulate": "node run-simulation.js",
-    "simulate:clean": "rm -rf simulation/results/* && npm run simulate",
     "test": "jest --detectOpenHandles --forceExit",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Namespace
+
+metadata:
+  name: aira-reliability-lab
+
+  labels:
+    app.kubernetes.io/name: aira-reliability-lab
+
+    aira.reliability-lab: "true"
+
+    aira.phase: "21"
+
+    aira.safety-class: "LAB_ONLY"

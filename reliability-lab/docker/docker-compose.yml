@@ -1,0 +1,235 @@
+name: aira-reliability-lab
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: aira-lab-postgres
+
+    environment:
+      POSTGRES_DB: aira_lab
+      POSTGRES_USER: aira_lab
+      POSTGRES_PASSWORD: aira_lab_password
+
+    ports:
+      - "15433:5432"
+
+    tmpfs:
+      - /var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U aira_lab -d aira_lab"
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+
+    networks:
+      - reliability-lab
+
+
+  redis:
+    image: redis:7-alpine
+    container_name: aira-lab-redis
+
+    ports:
+      - "16380:6379"
+
+    tmpfs:
+      - /data
+
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no"
+      ]
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+
+    networks:
+      - reliability-lab
+
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: aira-lab-rabbitmq
+
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+    ports:
+      - "15673:5672"
+      - "25673:15672"
+
+    tmpfs:
+      - /var/lib/rabbitmq
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "rabbitmq-diagnostics",
+          "-q",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+
+    networks:
+      - reliability-lab
+
+
+  lab-api:
+    build:
+      context: ../apps/fixture
+
+    image: aira-reliability-fixture:21.6-v1
+    container_name: aira-lab-api
+
+    environment:
+      SERVICE_ROLE: api
+      PORT: 8080
+
+      AIRA_LAB_ID: aira-reliability-lab
+      AIRA_SAFETY_CLASS: LAB_ONLY
+
+      POSTGRES_URL: postgresql://aira_lab:aira_lab_password@postgres:5432/aira_lab
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_QUEUE: aira.reliability.orders
+
+    ports:
+      - "18080:8080"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      rabbitmq:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "-",
+          "http://127.0.0.1:8080/ready"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "application.api"
+
+    networks:
+      - reliability-lab
+
+
+  lab-worker:
+    image: aira-reliability-fixture:21.6-v1
+    container_name: aira-lab-worker
+
+    environment:
+      SERVICE_ROLE: worker
+      PORT: 8081
+
+      AIRA_LAB_ID: aira-reliability-lab
+      AIRA_SAFETY_CLASS: LAB_ONLY
+
+      POSTGRES_URL: postgresql://aira_lab:aira_lab_password@postgres:5432/aira_lab
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+      RABBITMQ_QUEUE: aira.reliability.orders
+
+    ports:
+      - "18081:8081"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+      rabbitmq:
+        condition: service_healthy
+
+      lab-api:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "-",
+          "http://127.0.0.1:8081/ready"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "application.worker"
+
+    networks:
+      - reliability-lab
+
+
+networks:
+
+  reliability-lab:
+    name: aira-reliability-lab
+    driver: bridge
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"

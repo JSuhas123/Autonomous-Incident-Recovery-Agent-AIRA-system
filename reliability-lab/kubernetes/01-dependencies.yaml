@@ -1,0 +1,182 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: postgres
+  namespace: aira-reliability-lab
+
+  labels:
+    app: postgres
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: postgres
+
+  template:
+
+    metadata:
+      labels:
+        app: postgres
+        aira.reliability-lab: "true"
+        aira.phase: "21"
+        aira.safety-class: "LAB_ONLY"
+
+    spec:
+
+      containers:
+
+        - name: postgres
+          image: postgres:16-alpine
+
+          env:
+
+            - name: POSTGRES_DB
+              value: aira_lab
+
+            - name: POSTGRES_USER
+              value: aira_lab
+
+            - name: POSTGRES_PASSWORD
+              value: aira_lab_password
+
+          ports:
+
+            - containerPort: 5432
+              name: postgres
+
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - aira_lab
+                - -d
+                - aira_lab
+
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 20
+
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - aira_lab
+                - -d
+                - aira_lab
+
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          resources:
+
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
+          volumeMounts:
+
+            - name: data
+              mountPath: /var/lib/postgresql/data
+
+      volumes:
+
+        - name: data
+          emptyDir: {}
+
+
+---
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: postgres
+  namespace: aira-reliability-lab
+
+  labels:
+    app: postgres
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+
+  selector:
+    app: postgres
+
+  ports:
+
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: redis
+  namespace: aira-reliability-lab
+
+  labels:
+    app: redis
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: redis
+
+  template:
+
+    metadata:
+      labels:
+        app: redis
+        aira.reliability-lab: "true"
+        aira.phase: "21"
+        aira.safety-class: "LAB_ONLY"
+
+    spec:
+
+      containers:
+
+        - name: redis
+          image: redis:7-alpine
+
+          args:
+            - redis-server
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+
+          ports:
+
+            - containerPort: 6379
+              name: redis
+
+          readinessProbe:
+            exec:
+              command:
+                - redis-cli

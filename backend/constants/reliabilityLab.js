@@ -1,0 +1,373 @@
+"use strict";
+
+/**
+ * ============================================================================
+ * AIRA PHASE 21
+ * RELIABILITY LAB — CANONICAL CONSTANTS
+ * ============================================================================
+ *
+ * Phase 21 owns:
+ *
+ * - controlled lab environments
+ * - failure injection
+ * - experiment orchestration
+ * - experiment ground truth
+ * - reliability measurement
+ * - experiment evidence
+ *
+ * Phase 21 DOES NOT:
+ *
+ * - authorize recovery execution
+ * - replace Phase 17 topology
+ * - create Phase 18 recovery knowledge
+ * - modify Phase 19 coverage directly
+ * - replace Phase 20 integrations
+ * - assign Phase 22 autonomy certification
+ * ============================================================================
+ */
+
+
+const RELIABILITY_LAB_CONTRACT_VERSION =
+  "21.0-v1";
+
+
+const RELIABILITY_EXPERIMENT_CONTRACT_VERSION =
+  "21.1-v1";
+
+
+const LAB_ENVIRONMENT_KIND =
+  Object.freeze({
+    DOCKER:
+      "DOCKER",
+
+    KIND:
+      "KIND",
+
+    K3D:
+      "K3D",
+
+    KUBERNETES:
+      "KUBERNETES",
+  });
+
+
+const LAB_ENVIRONMENT_STATUS =
+  Object.freeze({
+    ABSENT:
+      "ABSENT",
+
+    PROVISIONING:
+      "PROVISIONING",
+
+    READY:
+      "READY",
+
+    BASELINING:
+      "BASELINING",
+
+    AVAILABLE:
+      "AVAILABLE",
+
+    RUNNING_EXPERIMENT:
+      "RUNNING_EXPERIMENT",
+
+    RESETTING:
+      "RESETTING",
+
+    PROVISION_FAILED:
+      "PROVISION_FAILED",
+
+    DIRTY:
+      "DIRTY",
+
+    RESET_FAILED:
+      "RESET_FAILED",
+
+    UNHEALTHY:
+      "UNHEALTHY",
+  });
+
+
+const EXPERIMENT_RUN_STATUS =
+  Object.freeze({
+    CREATED:
+      "CREATED",
+
+    PREPARING:
+      "PREPARING",
+
+    BASELINING:
+      "BASELINING",
+
+    INJECTING:
+      "INJECTING",
+
+    FAILURE_ACTIVE:
+      "FAILURE_ACTIVE",
+
+    WAITING_FOR_DETECTION:
+      "WAITING_FOR_DETECTION",
+
+    WAITING_FOR_DIAGNOSIS:
+      "WAITING_FOR_DIAGNOSIS",
+
+    WAITING_FOR_RECOVERY:
+      "WAITING_FOR_RECOVERY",
+
+    VERIFYING:
+      "VERIFYING",
+
+    RESETTING:
+      "RESETTING",
+
+    COMPLETE:
+      "COMPLETE",
+
+    ABORTED:
+      "ABORTED",
+
+    FAILED:
+      "FAILED",
+  });
+
+
+const EXPERIMENT_OUTCOME =
+  Object.freeze({
+    PASSED:
+      "PASSED",
+
+    FAILED:
+      "FAILED",
+
+    INCONCLUSIVE:
+      "INCONCLUSIVE",
+
+    SAFE_REFUSAL:
+      "SAFE_REFUSAL",
+
+    HUMAN_REQUIRED:
+      "HUMAN_REQUIRED",
+
+    ABORTED:
+      "ABORTED",
+  });
+
+
+const FAILURE_DOMAIN =
+  Object.freeze({
+    KUBERNETES:
+      "KUBERNETES",
+
+    CONTAINER:
+      "CONTAINER",
+
+    DATABASE:
+      "DATABASE",
+
+    CACHE:
+      "CACHE",
+
+    MESSAGING:
+      "MESSAGING",
+
+    NETWORK:
+      "NETWORK",
+
+    DNS:
+      "DNS",
+
+    DEPENDENCY:
+      "DEPENDENCY",
+
+    RESOURCE_PRESSURE:
+      "RESOURCE_PRESSURE",
+
+    SECURITY:
+      "SECURITY",
+  });
+
+
+const FAILURE_TYPE =
+  Object.freeze({
+    POD_CRASH:
+      "POD_CRASH",
+
+    OOM:
+      "OOM",
+
+    CPU_SATURATION:
+      "CPU_SATURATION",
+
+    MEMORY_PRESSURE:
+      "MEMORY_PRESSURE",
+
+    NODE_FAILURE:
+      "NODE_FAILURE",
+
+    NETWORK_LATENCY:
+      "NETWORK_LATENCY",
+
+    NETWORK_DROP:
+      "NETWORK_DROP",
+
+    DNS_FAILURE:
+      "DNS_FAILURE",
+
+    DB_CONNECTION_EXHAUSTION:
+      "DB_CONNECTION_EXHAUSTION",
+
+    DB_UNAVAILABLE:
+      "DB_UNAVAILABLE",
+
+    DB_FAILOVER:
+      "DB_FAILOVER",
+
+    REDIS_UNAVAILABLE:
+      "REDIS_UNAVAILABLE",
+
+    KAFKA_BROKER_FAILURE:
+      "KAFKA_BROKER_FAILURE",
+
+    RABBITMQ_FAILURE:
+      "RABBITMQ_FAILURE",
+
+    BAD_DEPLOYMENT:
+      "BAD_DEPLOYMENT",
+
+    CERTIFICATE_EXPIRATION:
+      "CERTIFICATE_EXPIRATION",
+
+    DEPENDENCY_OUTAGE:
+      "DEPENDENCY_OUTAGE",
+
+    READINESS_FAILURE:
+      "READINESS_FAILURE",
+  });
+
+
+const EXPERIMENT_ASSERTION =
+  Object.freeze({
+    BASELINE_HEALTHY:
+      "BASELINE_HEALTHY",
+
+    FAILURE_INJECTED:
+      "FAILURE_INJECTED",
+
+    FAILURE_OBSERVABLE:
+      "FAILURE_OBSERVABLE",
+
+    DETECTED:
+      "DETECTED",
+
+    CORRELATED:
+      "CORRELATED",
+
+    DIAGNOSIS_CORRECT:
+      "DIAGNOSIS_CORRECT",
+
+    RECOVERY_SELECTION_CORRECT:
+      "RECOVERY_SELECTION_CORRECT",
+
+    PARAMETERS_CORRECT:
+      "PARAMETERS_CORRECT",
+
+    POLICY_RESPECTED:
+      "POLICY_RESPECTED",
+
+    APPROVAL_RESPECTED:
+      "APPROVAL_RESPECTED",
+
+    AUTHORIZATION_RESPECTED:
+      "AUTHORIZATION_RESPECTED",
+
+    EXECUTION_TARGET_CORRECT:
+      "EXECUTION_TARGET_CORRECT",
+
+    EXECUTION_CAPABILITY_CORRECT:
+      "EXECUTION_CAPABILITY_CORRECT",
+
+    NO_DUPLICATE_EXECUTION:
+      "NO_DUPLICATE_EXECUTION",
+
+    NO_CROSS_TENANT_ACTION:
+      "NO_CROSS_TENANT_ACTION",
+
+    NO_OUT_OF_LAB_MUTATION:
+      "NO_OUT_OF_LAB_MUTATION",
+
+    VERIFICATION_CORRECT:
+      "VERIFICATION_CORRECT",
+
+    ROLLBACK_CORRECT:
+      "ROLLBACK_CORRECT",
+
+    RESET_SUCCEEDED:
+      "RESET_SUCCEEDED",
+  });
+
+
+const LAB_SAFETY_CLASS =
+  Object.freeze({
+    LAB_ONLY:
+      "LAB_ONLY",
+  });
+
+
+const RELIABILITY_AUTHORITY =
+  Object.freeze({
+    EXPERIMENT_EVIDENCE:
+      "PHASE_21_POSTGRESQL_RELIABILITY_EVIDENCE",
+
+    RESOURCE_TOPOLOGY:
+      "PHASE_17_RESOURCE_GRAPH",
+
+    RECOVERY_KNOWLEDGE:
+      "PHASE_18_PRODUCTION_KNOWLEDGE",
+
+    COVERAGE:
+      "PHASE_19_KNOWLEDGE_COVERAGE",
+
+    INTEGRATIONS:
+      "PHASE_20_INTEGRATION_PLATFORM",
+
+    EXECUTION_AUTHORIZATION:
+      "AIRA_DETERMINISTIC_EXECUTION_AUTHORIZATION",
+
+    AUTONOMY_CERTIFICATION:
+      "PHASE_22_RECOVERY_CERTIFICATION",
+  });
+
+
+const TERMINAL_EXPERIMENT_STATUSES =
+  Object.freeze([
+    EXPERIMENT_RUN_STATUS.COMPLETE,
+    EXPERIMENT_RUN_STATUS.ABORTED,
+    EXPERIMENT_RUN_STATUS.FAILED,
+  ]);
+
+
+module.exports = {
+  RELIABILITY_LAB_CONTRACT_VERSION,
+
+  RELIABILITY_EXPERIMENT_CONTRACT_VERSION,
+
+  LAB_ENVIRONMENT_KIND,
+
+  LAB_ENVIRONMENT_STATUS,
+
+  EXPERIMENT_RUN_STATUS,
+
+  EXPERIMENT_OUTCOME,
+
+  FAILURE_DOMAIN,
+
+  FAILURE_TYPE,
+
+  EXPERIMENT_ASSERTION,
+
+  LAB_SAFETY_CLASS,
+
+  RELIABILITY_AUTHORITY,
+
+  TERMINAL_EXPERIMENT_STATUSES,
+};
