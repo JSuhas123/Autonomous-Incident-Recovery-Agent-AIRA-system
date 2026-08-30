@@ -1,77 +1,150 @@
 "use strict";
 
 /**
- * Canonical AIRA integration adapter contract.
+ * ============================================================================
+ * AIRA INTEGRATION ADAPTER CONTRACT
+ * PHASE 20 — INTEGRATION PLATFORM
+ * ============================================================================
  *
- * Every provider adapter exports an object containing:
+ * Canonical Phase 20 provider-facing operations:
  *
- * provider
- * capabilities
+ *   receiveSignals()
  *
- * getCapabilities()
+ *   queryMetrics()
+ *   queryLogs()
+ *   queryTraces()
  *
- * validateConfiguration()
- * testConnection()
- * getHealth()
+ *   discoverResources()
+ *   discoverRelationships()
  *
- * receiveEvent()
- * normalizeEvent()
- * sendNotification()
+ *   getChanges()
  *
- * discoverResources()
- * queryMetrics()
- * queryLogs()
- * queryTraces()
+ *   executeCapability()
  *
- * revoke()
+ *   sendNotification()
  *
- * Unsupported operations MUST throw UnsupportedOperationError.
+ *   healthCheck()
+ *
+ *
+ * BACKWARD COMPATIBILITY
+ * ----------------------
+ *
+ * Existing Phase 14-era adapters currently implement:
+ *
+ *   receiveEvent()
+ *   normalizeEvent()
+ *   getHealth()
+ *   revoke()
+ *
+ * These remain part of the adapter contract during Phase 20 migration.
+ *
+ * They will not be removed until their callers and providers have been
+ * migrated to the Phase 20 SDK.
+ *
+ *
+ * SAFETY
+ * ------
+ *
+ * Adapter capability never implies authorization.
+ *
+ * executeCapability() is only the deterministic technical provider boundary
+ * for an execution request which has already passed the appropriate AIRA
+ * policy / approval / authorization systems.
+ *
+ * An adapter must never decide that execution is authorized.
+ *
+ * Unsupported operations fail explicitly with UnsupportedOperationError.
+ * ============================================================================
  */
 
-const ADAPTER_CAPABILITIES =
-  Object.freeze([
-    "receive_events",
-    "normalize_events",
-    "send_notifications",
-    "get_health",
-    "discover_resources",
-    "query_metrics",
-    "query_logs",
-    "query_traces",
-    "revoke",
-  ]);
 
+const {
+  INTEGRATION_CAPABILITY,
+
+  INTEGRATION_CAPABILITIES,
+
+  INTEGRATION_OPERATION_CAPABILITY_MAP,
+} =
+  require(
+    "../../constants/integrationPlatform"
+  );
+
+
+const ADAPTER_CAPABILITIES =
+  INTEGRATION_CAPABILITIES;
+
+
+/*
+ * Existing method names are retained here so old adapters continue to
+ * describe the same persisted capabilities.
+ *
+ * Phase 20 introduces canonical aliases such as receiveSignals() and
+ * healthCheck() without changing existing stored capability values.
+ */
 const METHOD_CAPABILITY_MAP =
   Object.freeze({
+    receiveSignals:
+      INTEGRATION_CAPABILITY
+        .RECEIVE_SIGNALS,
+
     receiveEvent:
-      "receive_events",
+      INTEGRATION_CAPABILITY
+        .RECEIVE_SIGNALS,
 
     normalizeEvent:
-      "normalize_events",
+      INTEGRATION_CAPABILITY
+        .NORMALIZE_SIGNALS,
 
     sendNotification:
-      "send_notifications",
+      INTEGRATION_CAPABILITY
+        .SEND_NOTIFICATION,
+
+    healthCheck:
+      INTEGRATION_CAPABILITY
+        .HEALTH_CHECK,
 
     getHealth:
-      "get_health",
+      INTEGRATION_CAPABILITY
+        .HEALTH_CHECK,
 
     discoverResources:
-      "discover_resources",
+      INTEGRATION_CAPABILITY
+        .DISCOVER_RESOURCES,
+
+    discoverRelationships:
+      INTEGRATION_CAPABILITY
+        .DISCOVER_RELATIONSHIPS,
+
+    getChanges:
+      INTEGRATION_CAPABILITY
+        .GET_CHANGES,
+
+    executeCapability:
+      INTEGRATION_CAPABILITY
+        .EXECUTE_CAPABILITY,
 
     queryMetrics:
-      "query_metrics",
+      INTEGRATION_CAPABILITY
+        .QUERY_METRICS,
 
     queryLogs:
-      "query_logs",
+      INTEGRATION_CAPABILITY
+        .QUERY_LOGS,
 
     queryTraces:
-      "query_traces",
+      INTEGRATION_CAPABILITY
+        .QUERY_TRACES,
 
     revoke:
-      "revoke",
+      INTEGRATION_CAPABILITY
+        .REVOKE,
+
+    ...INTEGRATION_OPERATION_CAPABILITY_MAP,
   });
 
-class UnsupportedOperationError extends Error {
+
+class UnsupportedOperationError
+  extends Error {
   constructor(
     provider,
     method
@@ -80,22 +153,35 @@ class UnsupportedOperationError extends Error {
       `Adapter "${provider}" does not implement "${method}"`
     );
 
+
     this.name =
       "UnsupportedOperationError";
+
 
     this.code =
       "UNSUPPORTED_OPERATION";
 
+
     this.status =
       501;
+
 
     this.provider =
       provider;
 
+
     this.method =
       method;
+
+
+    /*
+     * Unsupported capability is not an authorization result.
+     */
+    this.executionAuthorized =
+      false;
   }
 }
+
 
 function unsupported(
   provider,
@@ -109,6 +195,7 @@ function unsupported(
   };
 }
 
+
 function unsupportedSync(
   provider,
   method
@@ -121,27 +208,32 @@ function unsupportedSync(
   };
 }
 
+
 function normalizeCapabilities(
   capabilities = []
 ) {
-  const unique =
-    [
-      ...new Set(
-        Array.isArray(
-          capabilities
-        )
-          ? capabilities
-          : []
-      ),
-    ];
+  const unique = [
+    ...new Set(
+      Array.isArray(
+        capabilities
+      )
+        ? capabilities
+        : []
+    ),
+  ];
+
 
   const invalid =
     unique.filter(
-      (capability) =>
-        !ADAPTER_CAPABILITIES.includes(
-          capability
-        )
+      (
+        capability
+      ) =>
+        !ADAPTER_CAPABILITIES
+          .includes(
+            capability
+          )
     );
+
 
   if (
     invalid.length >
@@ -159,12 +251,17 @@ function normalizeCapabilities(
 
         invalidCapabilities:
           invalid,
+
+        executionAuthorized:
+          false,
       }
     );
   }
 
+
   return unique;
 }
+
 
 function makeStubAdapter(
   provider,
@@ -175,11 +272,13 @@ function makeStubAdapter(
       capabilities
     );
 
+
   return {
     provider,
 
     capabilities:
       normalizedCapabilities,
+
 
     getCapabilities() {
       return [
@@ -187,11 +286,17 @@ function makeStubAdapter(
       ];
     },
 
+
+    // ========================================================================
+    // PROVIDER LIFECYCLE
+    // ========================================================================
+
     validateConfiguration:
       unsupported(
         provider,
         "validateConfiguration"
       ),
+
 
     testConnection:
       unsupported(
@@ -199,11 +304,33 @@ function makeStubAdapter(
         "testConnection"
       ),
 
+
+    // ========================================================================
+    // SIGNAL INGESTION
+    // ========================================================================
+
+    /*
+     * Canonical Phase 20 ingress method.
+     *
+     * Existing providers can continue implementing receiveEvent() until
+     * migrated in Phase 20.8.
+     */
+    receiveSignals:
+      unsupported(
+        provider,
+        "receiveSignals"
+      ),
+
+
+    /*
+     * Legacy compatibility method.
+     */
     receiveEvent:
       unsupported(
         provider,
         "receiveEvent"
       ),
+
 
     normalizeEvent:
       unsupportedSync(
@@ -211,17 +338,45 @@ function makeStubAdapter(
         "normalizeEvent"
       ),
 
+
+    // ========================================================================
+    // NOTIFICATIONS
+    // ========================================================================
+
     sendNotification:
       unsupported(
         provider,
         "sendNotification"
       ),
 
+
+    // ========================================================================
+    // HEALTH
+    // ========================================================================
+
+    /*
+     * Canonical Phase 20 health operation.
+     */
+    healthCheck:
+      unsupported(
+        provider,
+        "healthCheck"
+      ),
+
+
+    /*
+     * Existing compatibility operation.
+     */
     getHealth:
       unsupported(
         provider,
         "getHealth"
       ),
+
+
+    // ========================================================================
+    // RESOURCE / TOPOLOGY DISCOVERY
+    // ========================================================================
 
     discoverResources:
       unsupported(
@@ -229,11 +384,54 @@ function makeStubAdapter(
         "discoverResources"
       ),
 
+
+    discoverRelationships:
+      unsupported(
+        provider,
+        "discoverRelationships"
+      ),
+
+
+    getChanges:
+      unsupported(
+        provider,
+        "getChanges"
+      ),
+
+
+    // ========================================================================
+    // EXECUTION
+    // ========================================================================
+
+    /*
+     * IMPORTANT:
+     *
+     * Presence of this method means only:
+     *
+     *   "this provider may have a deterministic implementation for a
+     *    capability"
+     *
+     * It NEVER means:
+     *
+     *   "this provider may decide whether execution is permitted"
+     */
+    executeCapability:
+      unsupported(
+        provider,
+        "executeCapability"
+      ),
+
+
+    // ========================================================================
+    // TELEMETRY
+    // ========================================================================
+
     queryMetrics:
       unsupported(
         provider,
         "queryMetrics"
       ),
+
 
     queryLogs:
       unsupported(
@@ -241,11 +439,17 @@ function makeStubAdapter(
         "queryLogs"
       ),
 
+
     queryTraces:
       unsupported(
         provider,
         "queryTraces"
       ),
+
+
+    // ========================================================================
+    // REVOCATION
+    // ========================================================================
 
     revoke:
       unsupported(
@@ -254,6 +458,7 @@ function makeStubAdapter(
       ),
   };
 }
+
 
 function validateNormalizedEvent(
   event
@@ -276,7 +481,10 @@ function validateNormalizedEvent(
     };
   }
 
-  const errors = [];
+
+  const errors =
+    [];
+
 
   if (
     !event.provider
@@ -286,6 +494,7 @@ function validateNormalizedEvent(
     );
   }
 
+
   if (
     !event.eventType
   ) {
@@ -293,6 +502,7 @@ function validateNormalizedEvent(
       "eventType is required"
     );
   }
+
 
   if (
     !event.title
@@ -302,6 +512,7 @@ function validateNormalizedEvent(
     );
   }
 
+
   if (
     !event.severity
   ) {
@@ -310,6 +521,7 @@ function validateNormalizedEvent(
     );
   }
 
+
   if (
     !event.receivedAt
   ) {
@@ -317,6 +529,7 @@ function validateNormalizedEvent(
       "receivedAt is required"
     );
   }
+
 
   return {
     valid:
@@ -327,10 +540,13 @@ function validateNormalizedEvent(
   };
 }
 
+
 function validateAdapterContract(
   adapter
 ) {
-  const errors = [];
+  const errors =
+    [];
+
 
   if (
     !adapter ||
@@ -347,6 +563,7 @@ function validateAdapterContract(
     };
   }
 
+
   if (
     !adapter.provider ||
     typeof adapter.provider !==
@@ -357,30 +574,63 @@ function validateAdapterContract(
     );
   }
 
+
   try {
     normalizeCapabilities(
       adapter.capabilities
     );
-  } catch (error) {
+  } catch (
+    error
+  ) {
     errors.push(
       error.message
     );
   }
 
+
+  /*
+   * All adapters expose the same SDK surface.
+   *
+   * A provider that does not support an operation must expose the stub and
+   * fail with UnsupportedOperationError rather than silently omitting the
+   * method.
+   */
   const requiredMethods = [
     "getCapabilities",
+
     "validateConfiguration",
+
     "testConnection",
+
+    "receiveSignals",
+
     "receiveEvent",
+
     "normalizeEvent",
+
     "sendNotification",
+
+    "healthCheck",
+
     "getHealth",
+
     "discoverResources",
+
+    "discoverRelationships",
+
+    "getChanges",
+
+    "executeCapability",
+
     "queryMetrics",
+
     "queryLogs",
+
     "queryTraces",
+
     "revoke",
   ];
+
 
   for (
     const method
@@ -398,6 +648,7 @@ function validateAdapterContract(
     }
   }
 
+
   return {
     valid:
       errors.length ===
@@ -406,6 +657,7 @@ function validateAdapterContract(
     errors,
   };
 }
+
 
 module.exports = {
   ADAPTER_CAPABILITIES,
