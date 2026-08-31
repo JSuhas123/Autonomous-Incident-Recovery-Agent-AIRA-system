@@ -308,7 +308,7 @@ spec:
             - containerPort: 15672
               name: management
 
-                    startupProbe:
+          startupProbe:
             tcpSocket:
               port: amqp
 

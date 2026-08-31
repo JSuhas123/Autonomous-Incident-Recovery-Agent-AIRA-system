@@ -1,0 +1,492 @@
+{
+  "phase": "21.10D",
+  "title": "Recovery, Resilience & Capacity Report",
+  "reportVersion": "21.10D-report-v1",
+  "generatedAt": "2026-08-31T10:54:06.577Z",
+  "status": "PASS",
+  "certificationClass": "EVIDENCE_CONSOLIDATION",
+  "safetyClass": "LAB_ONLY",
+  "evidenceSources": {
+    "phase21_10B": {
+      "certificateVersion": "21.10B-final-v2",
+      "status": "PASS",
+      "liveCertified": true,
+      "frozen": true
+    },
+    "phase21_10C": {
+      "certificateVersion": "21.10C-final-v1",
+      "status": "PASS",
+      "liveCertified": true,
+      "frozen": true
+    }
+  },
+  "timing": {
+    "ttdMs": {
+      "name": "TTD",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "ttcMs": {
+      "name": "TTC",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "ttDiagnoseMs": {
+      "name": "TTDiagnose",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "ttDecisionMs": {
+      "name": "TTDecision",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "ttExecuteMs": {
+      "name": "TTExecute",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "ttvMs": {
+      "name": "TTV",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "mttrMs": {
+      "name": "MTTR",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "infrastructureRecoveryMs": {
+      "name": "Infrastructure Recovery Time",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "queueDrainMs": {
+      "name": "Queue Drain Time",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    },
+    "baselineRestorationMs": {
+      "name": "Baseline Restoration Time",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Required timestamps were not recorded"
+    }
+  },
+  "resilience": {
+    "degradationFactor": {
+      "name": "Degradation Factor",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Baseline and degraded snapshots are required"
+    },
+    "recoveryEfficiency": {
+      "name": "Recovery Efficiency",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Baseline and recovered snapshots are required"
+    },
+    "recoveryAmplification": {
+      "name": "Recovery Amplification",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Failure-work and recovery-work measurements are required"
+    },
+    "baselineRestored": {
+      "name": "Baseline Restored",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Boolean evidence was not recorded"
+    },
+    "dataLoss": {
+      "name": "Data Loss Count",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Count evidence was not recorded"
+    },
+    "duplicateProcessingRate": {
+      "name": "Duplicate Processing Rate",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Numerator and denominator were not both recorded"
+    },
+    "recoveryOutcome": {
+      "name": "Recovery Outcome",
+      "status": "NOT_MEASURED",
+      "value": null,
+      "unit": null,
+      "reason": "Recognized recovery outcome was not recorded"
+    }
+  },
+  "capacity": {
+    "providers": [
+      {
+        "provider": "webhook_incoming",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 2000,
+        "highestObservedSuccessfulRatePerSecond": 1998.6506,
+        "safeSustainedRatePerSecond": 1998.6506,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 2000,
+          "achievedRatePerSecond": 1998.6506,
+          "successfulRatePerSecond": 1998.6506,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "prometheus_alertmanager",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.6029,
+        "safeSustainedRatePerSecond": 4996.6029,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.6029,
+          "successfulRatePerSecond": 4996.6029,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "grafana_alerting",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.2687,
+        "safeSustainedRatePerSecond": 4996.2687,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.2687,
+          "successfulRatePerSecond": 4996.2687,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "opentelemetry",
+        "operation": "receive_event_postgres",
+        "pathClass": "AIRA_POSTGRES_OPERATIONAL_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.2674,
+        "safeSustainedRatePerSecond": 4996.2674,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.2674,
+          "successfulRatePerSecond": 4996.2674,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "webhook_outgoing",
+        "operation": "send_notification",
+        "pathClass": "REAL_HTTP_LAB_PATH",
+        "highestTestedOfferedRatePerSecond": 2000,
+        "highestObservedSuccessfulRatePerSecond": 1998.6675549633578,
+        "safeSustainedRatePerSecond": 1998.6675549633578,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 2000,
+          "achievedRatePerSecond": 1998.6675549633578,
+          "successfulRatePerSecond": 1998.6675549633578,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 4.1892,
+          "p95LatencyMs": 7.9643,
+          "p99LatencyMs": 13.0779,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "kubernetes",
+        "operation": "get_health",
+        "pathClass": "REAL_INFRASTRUCTURE_PATH",
+        "highestTestedOfferedRatePerSecond": 150,
+        "highestObservedSuccessfulRatePerSecond": 149.32059130954158,
+        "safeSustainedRatePerSecond": 124.81278082875686,
+        "degradationPoint": {
+          "targetRatePerSecond": 150,
+          "achievedRatePerSecond": 149.32059130954158,
+          "successfulRatePerSecond": 149.32059130954158,
+          "state": "SATURATED",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": null,
+          "p95LatencyMs": 281.8722,
+          "p99LatencyMs": 322.2483,
+          "failedRequests": null,
+          "rejectedRequests": null,
+          "timedOutRequests": null,
+          "rateLimitedRequests": null,
+          "generatorDroppedRequests": null
+        },
+        "saturationPoint": {
+          "targetRatePerSecond": 150,
+          "achievedRatePerSecond": 149.32059130954158,
+          "successfulRatePerSecond": 149.32059130954158,
+          "state": "SATURATED",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": null,
+          "p95LatencyMs": 281.8722,
+          "p99LatencyMs": 322.2483,
+          "failedRequests": null,
+          "rejectedRequests": null,
+          "timedOutRequests": null,
+          "rateLimitedRequests": null,
+          "generatorDroppedRequests": null
+        },
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 125,
+          "achievedRatePerSecond": 124.81278082875686,
+          "successfulRatePerSecond": 124.81278082875686,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 20.4936,
+          "p95LatencyMs": 66.6511,
+          "p99LatencyMs": 97.0802,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      }
+    ],
+    "providerCount": 6,
+    "allProvidersRecovered": true,
+    "claims": {
+      "measuredEnvelopeNotMaximum": true,
+      "productionSloClaimed": false,
+      "universalMaximumClaimed": false,
+      "externalProviderLimitClaimed": false
+    },
+    "summary": {
+      "providerCount": 6,
+      "allCertifiedProvidersRecovered": true,
+      "providersWithObservedDegradation": [
+        "kubernetes"
+      ],
+      "providersWithObservedBreakingPoint": [],
+      "providersWithNoObservedBreakingPoint": [
+        "webhook_incoming",
+        "prometheus_alertmanager",
+        "grafana_alerting",
+        "opentelemetry",
+        "webhook_outgoing",
+        "kubernetes"
+      ]
+    }
+  },
+  "tenancy": {
+    "tenantScales": [
+      1,
+      10,
+      25,
+      50,
+      100
+    ],
+    "scaleRuns": [
+      {
+        "tenantCount": 1,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "tenantInterferenceFactor": null,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 10,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "tenantInterferenceFactor": null,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 25,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "tenantInterferenceFactor": null,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 50,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "tenantInterferenceFactor": null,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 100,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "tenantInterferenceFactor": null,
+        "recoveryPassed": true
+      }
+    ],
+    "maximumTenantInterferenceFactor": null,
+    "boundaryViolations": 0,
+    "redisIdempotencyCollisions": 0,
+    "rabbitMqEnvelopeLeaks": 0,
+    "starvedControlTenants": 0,
+    "recoveryPassed": true,
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "summary": {
+      "isolationPassed": true,
+      "zeroCrossTenantBoundaryViolations": true,
+      "zeroRedisIdempotencyCollisions": true,
+      "zeroRabbitMqEnvelopeLeaks": true,
+      "zeroNoisyNeighborStarvation": true,
+      "recoveryPassed": true
+    }
+  },
+  "interpretation": {
+    "capacityEnvelopeIsMaximum": false,
+    "productionSloEstablished": false,
+    "externalProviderQuotaMeasured": false,
+    "missingMeasurementsInvented": false,
+    "notMeasuredValuesRemainNull": true,
+    "recoveryPassDoesNotGrantAuthority": true,
+    "tenantIsolationPassDoesNotGrantAuthority": true,
+    "reportAppliesToTestedLabEnvironment": true
+  },
+  "authority": {
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "canGrantExecutionAuthorization": false,
+    "canGrantAutonomy": false,
+    "canModifyProductionAuthority": false,
+    "phase21IsEvidenceOnly": true,
+    "phase22ConsumesEvidence": true
+  },
+  "finalResult": {
+    "pass": true,
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "frozen": false,
+    "reportGenerated": true,
+    "jsonGenerated": true,
+    "markdownGenerated": true
+  },
+  "generator": {
+    "version": "21.10D-generator-v1",
+    "sourceArtifacts": {
+      "phase21_10B": "phase21-10b-final-certification-2026-08-31T09-58-13-171Z.json",
+      "phase21_10C": "phase21-10c-final-certification-2026-08-31T10-43-27.929Z.json"
+    }
+  }
+}

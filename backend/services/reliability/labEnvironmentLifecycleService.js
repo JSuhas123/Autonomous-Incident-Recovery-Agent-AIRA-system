@@ -442,6 +442,33 @@ class LabEnvironmentLifecycleService {
     };
   }
 
+    async beginBaselining(
+    scope
+  ) {
+    return this.transition({
+      ...scope,
+
+      toStatus:
+        LAB_ENVIRONMENT_STATUS
+          .BASELINING,
+    });
+  }
+
+
+  async completeBaselining(
+    scope,
+    baseline
+  ) {
+    return this.transition({
+      ...scope,
+
+      toStatus:
+        LAB_ENVIRONMENT_STATUS
+          .AVAILABLE,
+
+      baseline,
+    });
+  }
 
   async beginExperiment(
     scope

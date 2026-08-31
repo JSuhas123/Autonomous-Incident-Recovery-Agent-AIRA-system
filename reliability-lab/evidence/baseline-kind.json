@@ -1,0 +1,152 @@
+﻿{
+    "baselineVersion":  "21.7-v1",
+    "phase":  21,
+    "labEnvironmentId":  "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+    "labKind":  "KIND",
+    "capturedAt":  "2026-08-31T12:54:29.3609737Z",
+    "healthy":  true,
+    "measurements":  {
+                         "CPU":  {
+                                     "status":  "OBSERVED",
+                                     "value":  0.021182729024984318,
+                                     "unit":  "cores",
+                                     "source":  "prometheus",
+                                     "observedAt":  "2026-08-31T12:54:29.3609737Z",
+                                     "metadata":  {
+
+                                                  },
+                                     "executionAuthorized":  false
+                                 },
+                         "MEMORY":  {
+                                        "status":  "OBSERVED",
+                                        "value":  125485056,
+                                        "unit":  "bytes",
+                                        "source":  "prometheus",
+                                        "observedAt":  "2026-08-31T12:54:29.3619728Z",
+                                        "metadata":  {
+
+                                                     },
+                                        "executionAuthorized":  false
+                                    },
+                         "LATENCY":  {
+                                         "status":  "OBSERVED",
+                                         "value":  9.21129430716916,
+                                         "unit":  "ms_p95",
+                                         "source":  "prometheus",
+                                         "observedAt":  "2026-08-31T12:54:29.3619728Z",
+                                         "metadata":  {
+
+                                                      },
+                                         "executionAuthorized":  false
+                                     },
+                         "ERROR_RATE":  {
+                                            "status":  "OBSERVED",
+                                            "value":  0,
+                                            "unit":  "ratio",
+                                            "source":  "prometheus",
+                                            "observedAt":  "2026-08-31T12:54:29.3619728Z",
+                                            "metadata":  {
+
+                                                         },
+                                            "executionAuthorized":  false
+                                        },
+                         "POD_STATE":  {
+                                           "status":  "OBSERVED",
+                                           "value":  true,
+                                           "unit":  "boolean",
+                                           "source":  "kubernetes/pods",
+                                           "observedAt":  "2026-08-31T12:54:29.3464116Z",
+                                           "metadata":  {
+
+                                                        },
+                                           "executionAuthorized":  false
+                                       },
+                         "RESTART_COUNT":  {
+                                               "status":  "OBSERVED",
+                                               "value":  17,
+                                               "unit":  "count",
+                                               "source":  "kubernetes/containerStatuses",
+                                               "observedAt":  "2026-08-31T12:54:29.3506493Z",
+                                               "metadata":  {
+
+                                                            },
+                                               "executionAuthorized":  false
+                                           },
+                         "DB_CONNECTIONS":  {
+                                                "status":  "OBSERVED",
+                                                "value":  3,
+                                                "unit":  "count",
+                                                "source":  "postgres.pg_stat_activity",
+                                                "observedAt":  "2026-08-31T12:54:29.3619728Z",
+                                                "metadata":  {
+
+                                                             },
+                                                "executionAuthorized":  false
+                                            },
+                         "QUEUE_DEPTH":  {
+                                             "status":  "OBSERVED",
+                                             "value":  0,
+                                             "unit":  "messages",
+                                             "source":  "rabbitmq",
+                                             "observedAt":  "2026-08-31T12:54:29.3619728Z",
+                                             "metadata":  {
+
+                                                          },
+                                             "executionAuthorized":  false
+                                         },
+                         "DEPENDENCY_HEALTH":  {
+                                                   "status":  "OBSERVED",
+                                                   "value":  true,
+                                                   "unit":  "boolean",
+                                                   "source":  "/dependency-health",
+                                                   "observedAt":  "2026-08-31T12:54:29.3634786Z",
+                                                   "metadata":  {
+
+                                                                },
+                                                   "executionAuthorized":  false
+                                               },
+                         "HEALTH":  {
+                                        "status":  "OBSERVED",
+                                        "value":  true,
+                                        "unit":  "boolean",
+                                        "source":  "/health",
+                                        "observedAt":  "2026-08-31T12:54:29.3634786Z",
+                                        "metadata":  {
+
+                                                     },
+                                        "executionAuthorized":  false
+                                    },
+                         "READINESS":  {
+                                           "status":  "OBSERVED",
+                                           "value":  true,
+                                           "unit":  "boolean",
+                                           "source":  "/ready",
+                                           "observedAt":  "2026-08-31T12:54:29.3634786Z",
+                                           "metadata":  {
+
+                                                        },
+                                           "executionAuthorized":  false
+                                       }
+                     },
+    "sourceReferences":  [
+                             {
+                                 "type":  "PROMETHEUS",
+                                 "ref":  "kubernetes://aira-reliability-lab/aira-reliability-lab/service/prometheus:9090",
+                                 "executionAuthorized":  false
+                             },
+                             {
+                                 "type":  "LAB_API",
+                                 "ref":  "http://localhost:18080",
+                                 "executionAuthorized":  false
+                             },
+                             {
+                                 "type":  "LAB_WORKER",
+                                 "ref":  "http://localhost:18081",
+                                 "executionAuthorized":  false
+                             }
+                         ],
+    "bulkTelemetryStored":  false,
+    "canonicalTelemetryAuthority":  "OBSERVABILITY_SYSTEMS",
+    "productionCertified":  false,
+    "executionAuthorized":  false
+}

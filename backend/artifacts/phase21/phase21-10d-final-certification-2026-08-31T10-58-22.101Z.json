@@ -1,0 +1,632 @@
+{
+  "phase": "21",
+  "subphase": "21.10D",
+  "title": "Recovery, Resilience & Capacity Report",
+  "certificateVersion": "21.10D-final-v1",
+  "generatedAt": "2026-08-31T10:58:22.099Z",
+  "status": "PASS",
+  "pass": true,
+  "liveCertified": true,
+  "frozen": true,
+  "certificationClass": "EVIDENCE_CONSOLIDATION_OF_LIVE_MACHINE_SPECIFIC_RESULTS",
+  "safetyClass": "LAB_ONLY",
+  "sourceEvidence": {
+    "reportJson": "phase21-10d-recovery-resilience-capacity-2026-08-31T10-54-06.580Z.json",
+    "reportMarkdown": "phase21-10d-recovery-resilience-capacity-2026-08-31T10-54-06.580Z.md",
+    "phase21_10B": {
+      "certificateVersion": "21.10B-final-v2",
+      "status": "PASS",
+      "liveCertified": true,
+      "frozen": true
+    },
+    "phase21_10C": {
+      "certificateVersion": "21.10C-final-v1",
+      "status": "PASS",
+      "liveCertified": true,
+      "frozen": true
+    }
+  },
+  "capacity": {
+    "providerCount": 6,
+    "allCertifiedProvidersRecovered": true,
+    "providersWithObservedDegradation": [
+      "kubernetes"
+    ],
+    "providersWithObservedBreakingPoint": [],
+    "providersWithNoObservedBreakingPoint": [
+      "webhook_incoming",
+      "prometheus_alertmanager",
+      "grafana_alerting",
+      "opentelemetry",
+      "webhook_outgoing",
+      "kubernetes"
+    ],
+    "providerResults": [
+      {
+        "provider": "webhook_incoming",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 2000,
+        "highestObservedSuccessfulRatePerSecond": 1998.6506,
+        "safeSustainedRatePerSecond": 1998.6506,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 2000,
+          "achievedRatePerSecond": 1998.6506,
+          "successfulRatePerSecond": 1998.6506,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "prometheus_alertmanager",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.6029,
+        "safeSustainedRatePerSecond": 4996.6029,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.6029,
+          "successfulRatePerSecond": 4996.6029,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "grafana_alerting",
+        "operation": "receive_event",
+        "pathClass": "AIRA_LOCAL_INGESTION_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.2687,
+        "safeSustainedRatePerSecond": 4996.2687,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.2687,
+          "successfulRatePerSecond": 4996.2687,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "opentelemetry",
+        "operation": "receive_event_postgres",
+        "pathClass": "AIRA_POSTGRES_OPERATIONAL_PATH",
+        "highestTestedOfferedRatePerSecond": 5000,
+        "highestObservedSuccessfulRatePerSecond": 4996.2674,
+        "safeSustainedRatePerSecond": 4996.2674,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 5000,
+          "achievedRatePerSecond": 4996.2674,
+          "successfulRatePerSecond": 4996.2674,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 0,
+          "p95LatencyMs": 1,
+          "p99LatencyMs": 2,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "webhook_outgoing",
+        "operation": "send_notification",
+        "pathClass": "REAL_HTTP_LAB_PATH",
+        "highestTestedOfferedRatePerSecond": 2000,
+        "highestObservedSuccessfulRatePerSecond": 1998.6675549633578,
+        "safeSustainedRatePerSecond": 1998.6675549633578,
+        "degradationPoint": null,
+        "saturationPoint": null,
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 2000,
+          "achievedRatePerSecond": 1998.6675549633578,
+          "successfulRatePerSecond": 1998.6675549633578,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 4.1892,
+          "p95LatencyMs": 7.9643,
+          "p99LatencyMs": 13.0779,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      },
+      {
+        "provider": "kubernetes",
+        "operation": "get_health",
+        "pathClass": "REAL_INFRASTRUCTURE_PATH",
+        "highestTestedOfferedRatePerSecond": 150,
+        "highestObservedSuccessfulRatePerSecond": 149.32059130954158,
+        "safeSustainedRatePerSecond": 124.81278082875686,
+        "degradationPoint": {
+          "targetRatePerSecond": 150,
+          "achievedRatePerSecond": 149.32059130954158,
+          "successfulRatePerSecond": 149.32059130954158,
+          "state": "SATURATED",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": null,
+          "p95LatencyMs": 281.8722,
+          "p99LatencyMs": 322.2483,
+          "failedRequests": null,
+          "rejectedRequests": null,
+          "timedOutRequests": null,
+          "rateLimitedRequests": null,
+          "generatorDroppedRequests": null
+        },
+        "saturationPoint": {
+          "targetRatePerSecond": 150,
+          "achievedRatePerSecond": 149.32059130954158,
+          "successfulRatePerSecond": 149.32059130954158,
+          "state": "SATURATED",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": null,
+          "p95LatencyMs": 281.8722,
+          "p99LatencyMs": 322.2483,
+          "failedRequests": null,
+          "rejectedRequests": null,
+          "timedOutRequests": null,
+          "rateLimitedRequests": null,
+          "generatorDroppedRequests": null
+        },
+        "breakingPoint": null,
+        "loadGeneratorLimit": null,
+        "highestHealthyStage": {
+          "targetRatePerSecond": 125,
+          "achievedRatePerSecond": 124.81278082875686,
+          "successfulRatePerSecond": 124.81278082875686,
+          "state": "HEALTHY",
+          "successRate": 1,
+          "errorRate": 0,
+          "p50LatencyMs": 20.4936,
+          "p95LatencyMs": 66.6511,
+          "p99LatencyMs": 97.0802,
+          "failedRequests": 0,
+          "rejectedRequests": 0,
+          "timedOutRequests": 0,
+          "rateLimitedRequests": 0,
+          "generatorDroppedRequests": 0
+        },
+        "recoveryPassed": true,
+        "productionCertified": false,
+        "executionAuthorized": false
+      }
+    ],
+    "measuredEnvelopeNotMaximum": true,
+    "productionSloEstablished": false,
+    "externalProviderQuotaClaimed": false
+  },
+  "tenancy": {
+    "tenantScales": [
+      1,
+      10,
+      25,
+      50,
+      100
+    ],
+    "boundaryViolations": 0,
+    "redisIdempotencyCollisions": 0,
+    "rabbitMqEnvelopeLeaks": 0,
+    "starvedControlTenants": 0,
+    "maximumTenantInterferenceFactor": null,
+    "recoveryPassed": true,
+    "pass": true
+  },
+  "recoveryMetrics": {
+    "timing": {
+      "ttdMs": {
+        "name": "TTD",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "ttcMs": {
+        "name": "TTC",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "ttDiagnoseMs": {
+        "name": "TTDiagnose",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "ttDecisionMs": {
+        "name": "TTDecision",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "ttExecuteMs": {
+        "name": "TTExecute",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "ttvMs": {
+        "name": "TTV",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "mttrMs": {
+        "name": "MTTR",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "infrastructureRecoveryMs": {
+        "name": "Infrastructure Recovery Time",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "queueDrainMs": {
+        "name": "Queue Drain Time",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      },
+      "baselineRestorationMs": {
+        "name": "Baseline Restoration Time",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Required timestamps were not recorded"
+      }
+    },
+    "resilience": {
+      "degradationFactor": {
+        "name": "Degradation Factor",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Baseline and degraded snapshots are required"
+      },
+      "recoveryEfficiency": {
+        "name": "Recovery Efficiency",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Baseline and recovered snapshots are required"
+      },
+      "recoveryAmplification": {
+        "name": "Recovery Amplification",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Failure-work and recovery-work measurements are required"
+      },
+      "baselineRestored": {
+        "name": "Baseline Restored",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Boolean evidence was not recorded"
+      },
+      "dataLoss": {
+        "name": "Data Loss Count",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Count evidence was not recorded"
+      },
+      "duplicateProcessingRate": {
+        "name": "Duplicate Processing Rate",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Numerator and denominator were not both recorded"
+      },
+      "recoveryOutcome": {
+        "name": "Recovery Outcome",
+        "status": "NOT_MEASURED",
+        "value": null,
+        "unit": null,
+        "reason": "Recognized recovery outcome was not recorded"
+      }
+    },
+    "missingMeasurementsInvented": false,
+    "notMeasuredValuesRemainNull": true
+  },
+  "interpretation": {
+    "evidenceAppliesToTestedLabEnvironment": true,
+    "universalMaximumClaimed": false,
+    "productionSloClaimed": false,
+    "externalProviderLimitClaimed": false,
+    "historicalEvidencePreserved": true,
+    "absentMeasurementIsNotFailure": true,
+    "absentMeasurementIsNotEstimated": true,
+    "reportDoesNotAuthorizeRecovery": true
+  },
+  "authority": {
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "canGrantExecutionAuthorization": false,
+    "canGrantAutonomy": false,
+    "canModifyProductionAuthority": false,
+    "canBypassPolicy": false,
+    "canBypassApproval": false,
+    "reliabilityEvidenceIsNonAuthorizing": true,
+    "phase21IsEvidenceOnly": true,
+    "phase22ConsumesEvidence": true
+  },
+  "validation": {
+    "pass": true,
+    "checkCount": 46,
+    "passedChecks": 46,
+    "failedChecks": 0,
+    "checks": [
+      {
+        "name": "JSON report exists",
+        "pass": true
+      },
+      {
+        "name": "Markdown report exists",
+        "pass": true
+      },
+      {
+        "name": "report phase is 21.10D",
+        "pass": true
+      },
+      {
+        "name": "report version is frozen contract",
+        "pass": true
+      },
+      {
+        "name": "generator version is frozen contract",
+        "pass": true
+      },
+      {
+        "name": "report status is PASS",
+        "pass": true
+      },
+      {
+        "name": "safety class is LAB_ONLY",
+        "pass": true
+      },
+      {
+        "name": "21.10B capacity certificate consumed",
+        "pass": true
+      },
+      {
+        "name": "21.10B source passed",
+        "pass": true
+      },
+      {
+        "name": "21.10B source was live certified",
+        "pass": true
+      },
+      {
+        "name": "21.10B source was frozen",
+        "pass": true
+      },
+      {
+        "name": "21.10C tenant certificate consumed",
+        "pass": true
+      },
+      {
+        "name": "21.10C source passed",
+        "pass": true
+      },
+      {
+        "name": "21.10C source was live certified",
+        "pass": true
+      },
+      {
+        "name": "21.10C source was frozen",
+        "pass": true
+      },
+      {
+        "name": "at least one certified provider exists",
+        "pass": true
+      },
+      {
+        "name": "all certified providers recovered",
+        "pass": true
+      },
+      {
+        "name": "capacity envelope is not claimed as maximum",
+        "pass": true
+      },
+      {
+        "name": "production SLO was not established",
+        "pass": true
+      },
+      {
+        "name": "external provider quota was not inferred",
+        "pass": true
+      },
+      {
+        "name": "missing measurements were not invented",
+        "pass": true
+      },
+      {
+        "name": "missing measurements remain null",
+        "pass": true
+      },
+      {
+        "name": "tenant isolation passed",
+        "pass": true
+      },
+      {
+        "name": "cross-tenant boundary violations are zero",
+        "pass": true
+      },
+      {
+        "name": "Redis tenant collisions are zero",
+        "pass": true
+      },
+      {
+        "name": "RabbitMQ envelope leaks are zero",
+        "pass": true
+      },
+      {
+        "name": "noisy-neighbor starvation is zero",
+        "pass": true
+      },
+      {
+        "name": "tenant recovery passed",
+        "pass": true
+      },
+      {
+        "name": "production certification remains false",
+        "pass": true
+      },
+      {
+        "name": "execution authorization remains false",
+        "pass": true
+      },
+      {
+        "name": "report cannot grant execution authorization",
+        "pass": true
+      },
+      {
+        "name": "report cannot grant autonomy",
+        "pass": true
+      },
+      {
+        "name": "report cannot modify production authority",
+        "pass": true
+      },
+      {
+        "name": "Phase 21 remains evidence only",
+        "pass": true
+      },
+      {
+        "name": "Phase 22 consumes evidence",
+        "pass": true
+      },
+      {
+        "name": "generated final result passed",
+        "pass": true
+      },
+      {
+        "name": "generated report itself is not yet frozen",
+        "pass": true
+      },
+      {
+        "name": "generated report remains non-production",
+        "pass": true
+      },
+      {
+        "name": "generated report remains non-authorizing",
+        "pass": true
+      },
+      {
+        "name": "JSON generation recorded",
+        "pass": true
+      },
+      {
+        "name": "Markdown generation recorded",
+        "pass": true
+      },
+      {
+        "name": "Markdown identifies Phase 21.10D",
+        "pass": true
+      },
+      {
+        "name": "Markdown states production certification false",
+        "pass": true
+      },
+      {
+        "name": "Markdown states execution authorization false",
+        "pass": true
+      },
+      {
+        "name": "Markdown rejects universal maximum interpretation",
+        "pass": true
+      },
+      {
+        "name": "Markdown preserves NOT_MEASURED semantics",
+        "pass": true
+      }
+    ]
+  },
+  "finalResult": {
+    "pass": true,
+    "status": "PASS",
+    "liveCertified": true,
+    "frozen": true,
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "phase22ConsumesEvidence": true
+  }
+}

@@ -185,9 +185,9 @@ describe(
 
 
     const workloads =
-      read(
-        "reliability-lab/kubernetes/02-workloads.yaml"
-      );
+  read(
+    "reliability-lab/kubernetes/02-fixture.yaml"
+  );
 
 
     test(
@@ -278,11 +278,25 @@ describe(
         );
 
 
-        expect(
-          dependencies
-        ).toContain(
-          "rabbitmq-diagnostics"
-        );
+       expect(
+  dependencies
+).toContain(
+  "startupProbe:"
+);
+
+
+expect(
+  dependencies
+).toContain(
+  "tcpSocket:"
+);
+
+
+expect(
+  dependencies
+).toContain(
+  "port: amqp"
+);
       }
     );
 
@@ -470,31 +484,30 @@ describe(
 
 
     test(
-      "lab lifecycle scripts exist",
-      () => {
-        expect(
-          fs.existsSync(
-            path.join(
-              ROOT,
-              "reliability-lab/scripts/docker-lab.ps1"
-            )
+  "lab lifecycle scripts exist",
+  () => {
+    for (
+      const script
+      of [
+        "docker-up.ps1",
+        "docker-down.ps1",
+        "kind-up.ps1",
+        "kind-down.ps1",
+      ]
+    ) {
+      expect(
+        fs.existsSync(
+          path.join(
+            ROOT,
+            "reliability-lab/scripts",
+            script
           )
-        ).toBe(
-          true
-        );
-
-
-        expect(
-          fs.existsSync(
-            path.join(
-              ROOT,
-              "reliability-lab/scripts/kind-lab.ps1"
-            )
-          )
-        ).toBe(
-          true
-        );
-      }
-    );
+        )
+      ).toBe(
+        true
+      );
+    }
+  }
+);
   }
 );

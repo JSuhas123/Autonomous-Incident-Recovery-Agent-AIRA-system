@@ -9,8 +9,17 @@ param(
 )
 
 
-$ErrorActionPreference =
-    "Stop"
+$ErrorActionPreference = "Stop"
+
+
+$Namespace = "aira-reliability-lab"
+$ClusterName = "aira-reliability-lab"
+$KubectlContext = "kind-$ClusterName"
+
+$ApiBase = "http://localhost:18080"
+$WorkerBase = "http://localhost:18081"
+
+$DockerPrometheusBase = "http://localhost:19090"
 
 
 Write-Host ""
@@ -21,17 +30,165 @@ Write-Host "==============================================="
 Write-Host ""
 
 
+function Assert-CommandExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command
+    )
+
+    if (
+        -not (
+            Get-Command `
+                $Command `
+                -ErrorAction SilentlyContinue
+        )
+    ) {
+        throw "Required command '$Command' was not found in PATH."
+    }
+}
+
+
+function Assert-LastExitCode {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Message
+    )
+
+    if (
+        $LASTEXITCODE -ne 0
+    ) {
+        throw $Message
+    }
+}
+
+
 function Invoke-JsonGet {
     param(
         [Parameter(Mandatory = $true)]
         [string]$Uri
     )
 
-
     return Invoke-RestMethod `
         -Method Get `
         -Uri $Uri `
         -TimeoutSec 10
+}
+
+
+function Assert-KindContext {
+    Assert-CommandExists `
+        -Command "kind"
+
+    Assert-CommandExists `
+        -Command "kubectl"
+
+
+    $Clusters =
+        @(
+            kind get clusters
+        )
+
+
+    Assert-LastExitCode `
+        "Unable to query kind clusters."
+
+
+    if (
+        $Clusters -notcontains
+        $ClusterName
+    ) {
+        throw "Required kind cluster '$ClusterName' does not exist."
+    }
+
+
+    $Contexts =
+        @(
+            kubectl config get-contexts -o name
+        )
+
+
+    Assert-LastExitCode `
+        "Unable to query kubectl contexts."
+
+
+    if (
+        $Contexts -notcontains
+        $KubectlContext
+    ) {
+        Write-Host "kind context missing. Exporting kubeconfig..."
+
+        kind export kubeconfig `
+            --name $ClusterName
+
+
+        Assert-LastExitCode `
+            "Unable to export kubeconfig for '$ClusterName'."
+
+
+        $Contexts =
+            @(
+                kubectl config get-contexts -o name
+            )
+
+
+        if (
+            $Contexts -notcontains
+            $KubectlContext
+        ) {
+            throw "kubectl context '$KubectlContext' is unavailable."
+        }
+    }
+
+
+    $NodeJson =
+        kubectl `
+            --context $KubectlContext `
+            get nodes `
+            -o json
+
+
+    Assert-LastExitCode `
+        "Unable to inspect kind Reliability Lab nodes."
+
+
+    $Nodes =
+        (
+            $NodeJson -join "`n"
+        ) |
+        ConvertFrom-Json
+
+
+    if (
+        -not $Nodes.items -or
+        $Nodes.items.Count -lt 1
+    ) {
+        throw "No Kubernetes nodes were found in '$KubectlContext'."
+    }
+
+
+    foreach (
+        $Node
+        in $Nodes.items
+    ) {
+        $Labels =
+            $Node.metadata.labels
+
+
+        if (
+            $Labels.'aira.reliability-lab' -ne
+            "true"
+        ) {
+            throw "Node '$($Node.metadata.name)' is not labelled as an AIRA Reliability Lab node."
+        }
+
+
+        if (
+            $Labels.'aira.safety-class' -ne
+            "LAB_ONLY"
+        ) {
+            throw "Node '$($Node.metadata.name)' does not have LAB_ONLY safety classification."
+        }
+    }
 }
 
 
@@ -42,21 +199,88 @@ function Invoke-PrometheusQuery {
     )
 
 
-    $encoded =
+    $Encoded =
         [System.Uri]::EscapeDataString(
             $Query
         )
 
 
-    $response =
-        Invoke-RestMethod `
-            -Method Get `
-            -Uri "http://localhost:19090/api/v1/query?query=$encoded" `
-            -TimeoutSec 10
+    if (
+        $Mode -eq
+        "docker"
+    ) {
+        $Uri =
+            "$DockerPrometheusBase/api/v1/query?query=$Encoded"
+
+
+        try {
+            $Response =
+                Invoke-RestMethod `
+                    -Method Get `
+                    -Uri $Uri `
+                    -TimeoutSec 10
+        }
+        catch {
+            throw "Unable to query Docker Reliability Lab Prometheus: $($_.Exception.Message)"
+        }
+    }
+    else {
+        #
+        # PHASE 21 HARDENING:
+        #
+        # Query Prometheus through the Kubernetes API service proxy.
+        #
+        # This deliberately avoids:
+        # - PowerShell -> kubectl -> node -e quoting
+        # - dependency on curl/wget inside the fixture image
+        # - localhost Prometheus port assumptions
+        # - temporary port-forward processes
+        #
+
+        $ProxyPath =
+            "/api/v1/namespaces/$Namespace/services/http:prometheus:9090/proxy/api/v1/query?query=$Encoded"
+
+
+        $ResponseText =
+            kubectl `
+                --context $KubectlContext `
+                get `
+                --raw $ProxyPath
+
+
+        Assert-LastExitCode `
+            "Unable to query Prometheus through the Kubernetes API service proxy."
+
+
+        if (
+            [string]::IsNullOrWhiteSpace(
+                $ResponseText
+            )
+        ) {
+            throw "Prometheus returned an empty response."
+        }
+
+
+        try {
+            $Response =
+                $ResponseText |
+                ConvertFrom-Json
+        }
+        catch {
+            throw "Prometheus returned invalid JSON: $($_.Exception.Message)"
+        }
+    }
 
 
     if (
-        $response.status -ne
+        $null -eq $Response
+    ) {
+        throw "Prometheus query returned no response object."
+    }
+
+
+    if (
+        $Response.status -ne
         "success"
     ) {
         throw "Prometheus query failed: $Query"
@@ -64,19 +288,48 @@ function Invoke-PrometheusQuery {
 
 
     if (
-        -not $response.data.result -or
-        $response.data.result.Count -eq 0
+        $null -eq $Response.data
+    ) {
+        throw "Prometheus response contains no data object."
+    }
+
+
+    if (
+        -not $Response.data.result -or
+        $Response.data.result.Count -eq 0
     ) {
         return $null
     }
 
 
-    return [double](
-        $response
-            .data
-            .result[0]
-            .value[1]
-    )
+    $RawValue =
+        $Response.data.result[0].value[1]
+
+
+    if (
+        $null -eq $RawValue
+    ) {
+        return $null
+    }
+
+
+    $ParsedValue =
+        0.0
+
+
+    if (
+        -not [double]::TryParse(
+            [string]$RawValue,
+            [System.Globalization.NumberStyles]::Float,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            [ref]$ParsedValue
+        )
+    ) {
+        throw "Prometheus returned non-numeric value '$RawValue' for query: $Query"
+    }
+
+
+    return $ParsedValue
 }
 
 
@@ -91,17 +344,13 @@ function New-ObservedMeasurement {
 
 
     return [ordered]@{
-        status =
-            "OBSERVED"
+        status = "OBSERVED"
 
-        value =
-            $Value
+        value = $Value
 
-        unit =
-            $Unit
+        unit = $Unit
 
-        source =
-            $Source
+        source = $Source
 
         observedAt =
             (
@@ -110,11 +359,9 @@ function New-ObservedMeasurement {
                 "o"
             )
 
-        metadata =
-            @{}
+        metadata = @{}
 
-        executionAuthorized =
-            $false
+        executionAuthorized = $false
     }
 }
 
@@ -126,73 +373,133 @@ function New-NotApplicableMeasurement {
 
 
     return [ordered]@{
-        status =
-            "NOT_APPLICABLE"
+        status = "NOT_APPLICABLE"
 
-        value =
-            $null
+        value = $null
 
-        unit =
-            $null
+        unit = $null
 
-        source =
-            $Source
+        source = $Source
 
-        observedAt =
-            $null
+        observedAt = $null
 
-        metadata =
-            @{}
+        metadata = @{}
 
-        executionAuthorized =
-            $false
+        executionAuthorized = $false
     }
 }
 
 
-Write-Host "[1/8] Checking API and worker health..."
+function Get-RabbitQueueDepth {
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Output
+    )
 
 
-$apiHealth =
-    Invoke-JsonGet `
-        -Uri "http://localhost:18080/health"
+    $QueueDepth = 0
 
 
-$workerHealth =
-    Invoke-JsonGet `
-        -Uri "http://localhost:18081/health"
+    foreach (
+        $Line
+        in $Output
+    ) {
+        $Text =
+            [string]$Line
+
+
+        if (
+            $Text -match
+            '^"?aira\.reliability\.orders"?,(\d+)$'
+        ) {
+            $QueueDepth =
+                [int]$Matches[1]
+
+            break
+        }
+    }
+
+
+    return $QueueDepth
+}
 
 
 if (
-    $apiHealth.status -ne
+    $Mode -eq
+    "kind"
+) {
+    Write-Host "[0/9] Verifying canonical kind cluster/context..."
+
+    Assert-KindContext
+
+    Write-Host "PASS"
+    Write-Host "Context: $KubectlContext"
+}
+
+
+Write-Host "[1/9] Checking API and worker health..."
+
+
+$ApiHealth =
+    Invoke-JsonGet `
+        -Uri "$ApiBase/health"
+
+
+$WorkerHealth =
+    Invoke-JsonGet `
+        -Uri "$WorkerBase/health"
+
+
+if (
+    $ApiHealth.status -ne
         "UP" -or
-    $workerHealth.status -ne
+    $WorkerHealth.status -ne
         "UP"
 ) {
     throw "Reliability Lab health baseline is not healthy."
 }
 
 
-Write-Host "PASS"
-
-
-Write-Host "[2/8] Checking readiness..."
-
-
-$apiReady =
-    Invoke-JsonGet `
-        -Uri "http://localhost:18080/ready"
-
-
-$workerReady =
-    Invoke-JsonGet `
-        -Uri "http://localhost:18081/ready"
+if (
+    $ApiHealth.executionAuthorized -ne
+        $false -or
+    $WorkerHealth.executionAuthorized -ne
+        $false
+) {
+    throw "Reliability Lab health response unexpectedly authorizes execution."
+}
 
 
 if (
-    $apiReady.ready -ne
+    $ApiHealth.safetyClass -ne
+        "LAB_ONLY" -or
+    $WorkerHealth.safetyClass -ne
+        "LAB_ONLY"
+) {
+    throw "Reliability Lab health response is not LAB_ONLY."
+}
+
+
+Write-Host "PASS"
+
+
+Write-Host "[2/9] Checking readiness..."
+
+
+$ApiReady =
+    Invoke-JsonGet `
+        -Uri "$ApiBase/ready"
+
+
+$WorkerReady =
+    Invoke-JsonGet `
+        -Uri "$WorkerBase/ready"
+
+
+if (
+    $ApiReady.ready -ne
         $true -or
-    $workerReady.ready -ne
+    $WorkerReady.ready -ne
         $true
 ) {
     throw "Reliability Lab readiness baseline is not healthy."
@@ -202,50 +509,52 @@ if (
 Write-Host "PASS"
 
 
-Write-Host "[3/8] Checking dependency health..."
+Write-Host "[3/9] Checking dependency health..."
 
 
-$apiDependencies =
+$ApiDependencies =
     Invoke-JsonGet `
-        -Uri "http://localhost:18080/dependency-health"
+        -Uri "$ApiBase/dependency-health"
 
 
-$workerDependencies =
+$WorkerDependencies =
     Invoke-JsonGet `
-        -Uri "http://localhost:18081/dependency-health"
+        -Uri "$WorkerBase/dependency-health"
 
 
-$dependencyValues =
+$DependencyValues =
     @(
-        $apiDependencies.dependencies.postgres,
-        $apiDependencies.dependencies.redis,
-        $apiDependencies.dependencies.rabbitmq,
-        $workerDependencies.dependencies.postgres,
-        $workerDependencies.dependencies.redis,
-        $workerDependencies.dependencies.rabbitmq
+        $ApiDependencies.dependencies.postgres,
+        $ApiDependencies.dependencies.redis,
+        $ApiDependencies.dependencies.rabbitmq,
+        $WorkerDependencies.dependencies.postgres,
+        $WorkerDependencies.dependencies.redis,
+        $WorkerDependencies.dependencies.rabbitmq
     )
 
 
-$dependenciesHealthy =
+$DependenciesHealthy =
     $true
 
 
 foreach (
-    $dependency
-    in $dependencyValues
+    $Dependency
+    in $DependencyValues
 ) {
     if (
-        $dependency -ne
+        $Dependency -ne
         $true
     ) {
-        $dependenciesHealthy =
+        $DependenciesHealthy =
             $false
+
+        break
     }
 }
 
 
 if (
-    -not $dependenciesHealthy
+    -not $DependenciesHealthy
 ) {
     throw "Dependency baseline is unhealthy."
 }
@@ -254,29 +563,28 @@ if (
 Write-Host "PASS"
 
 
-Write-Host "[4/8] Collecting Prometheus CPU/memory..."
+Write-Host "[4/9] Collecting Prometheus CPU/memory..."
 
 
-$cpu =
+$Cpu =
     Invoke-PrometheusQuery `
         -Query 'sum(rate(process_cpu_user_seconds_total{service=~"aira-lab-(api|worker)"}[1m]) + rate(process_cpu_system_seconds_total{service=~"aira-lab-(api|worker)"}[1m]))'
 
 
 if (
-    $null -eq $cpu
+    $null -eq $Cpu
 ) {
-    $cpu =
-        0
+    $Cpu = 0
 }
 
 
-$memory =
+$Memory =
     Invoke-PrometheusQuery `
         -Query 'sum(process_resident_memory_bytes{service=~"aira-lab-(api|worker)"})'
 
 
 if (
-    $null -eq $memory
+    $null -eq $Memory
 ) {
     throw "Memory metric is unavailable."
 }
@@ -285,292 +593,337 @@ if (
 Write-Host "PASS"
 
 
-Write-Host "[5/8] Collecting latency and error rate..."
+Write-Host "[5/9] Collecting latency and error rate..."
 
 
-$latencySeconds =
+$LatencySeconds =
     Invoke-PrometheusQuery `
         -Query 'histogram_quantile(0.95, sum by (le) (rate(aira_lab_http_request_duration_seconds_bucket[5m])))'
 
 
 if (
-    $null -eq $latencySeconds
+    $null -eq $LatencySeconds
 ) {
-    $latencySeconds =
-        0
+    $LatencySeconds = 0
 }
 
 
-$errorRate =
+$ErrorRate =
     Invoke-PrometheusQuery `
         -Query 'sum(rate(aira_lab_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(aira_lab_http_requests_total[5m])), 0.000001)'
 
 
 if (
-    $null -eq $errorRate
+    $null -eq $ErrorRate
 ) {
-    $errorRate =
-        0
+    $ErrorRate = 0
 }
 
 
 Write-Host "PASS"
 
 
-Write-Host "[6/8] Collecting database connections and queue depth..."
+Write-Host "[6/9] Collecting database connections and queue depth..."
 
 
-$dbConnections =
-    0
-
-
-$queueDepth =
-    0
+$DbConnections = 0
+$QueueDepth = 0
 
 
 if (
     $Mode -eq
     "docker"
 ) {
-    $dbOutput =
-        docker exec `
-            aira-lab-postgres `
-            psql `
-            -U aira_lab `
-            -d aira_lab `
-            -t `
-            -A `
-            -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname='aira_lab';"
-
-
-    if (
-        $LASTEXITCODE -ne
-        0
-    ) {
-        throw "Unable to collect PostgreSQL connection baseline."
-    }
-
-
-    $dbConnections =
-        [int](
-            $dbOutput.Trim()
+    $DbOutput =
+        @(
+            docker exec `
+                aira-lab-postgres `
+                psql `
+                -U aira_lab `
+                -d aira_lab `
+                -t `
+                -A `
+                -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname='aira_lab';"
         )
 
 
-    $queueOutput =
-        docker exec `
-            aira-lab-rabbitmq `
-            rabbitmqctl `
-            list_queues `
-            name `
-            messages `
-            --formatter csv
+    Assert-LastExitCode `
+        "Unable to collect PostgreSQL connection baseline."
+
+
+    $DbText =
+        (
+            $DbOutput -join ""
+        ).Trim()
 
 
     if (
-        $LASTEXITCODE -ne
-        0
+        -not (
+            $DbText -match
+            '^\d+$'
+        )
     ) {
-        throw "Unable to collect RabbitMQ queue baseline."
+        throw "PostgreSQL returned an invalid connection count: '$DbText'."
     }
 
 
-    $queueDepth =
-        0
+    $DbConnections =
+        [int]$DbText
 
 
-    foreach (
-        $line
-        in $queueOutput
-    ) {
-        if (
-            $line -match
-            '^"aira\.reliability\.orders",(\d+)$'
-        ) {
-            $queueDepth =
-                [int]$Matches[1]
-        }
-    }
+    $QueueOutput =
+        @(
+            docker exec `
+                aira-lab-rabbitmq `
+                rabbitmqctl `
+                list_queues `
+                name `
+                messages `
+                --formatter csv
+        )
+
+
+    Assert-LastExitCode `
+        "Unable to collect RabbitMQ queue baseline."
+
+
+    $QueueDepth =
+        Get-RabbitQueueDepth `
+            -Output $QueueOutput
 }
 else {
-    $postgresPod =
-        kubectl get pods `
-            -n aira-reliability-lab `
+    $PostgresPod =
+        kubectl `
+            --context $KubectlContext `
+            get pods `
+            -n $Namespace `
             -l app=postgres `
             -o jsonpath='{.items[0].metadata.name}'
 
 
+    Assert-LastExitCode `
+        "Unable to locate PostgreSQL pod."
+
+
     if (
-        $LASTEXITCODE -ne
-        0 -or
-        -not $postgresPod
+        [string]::IsNullOrWhiteSpace(
+            $PostgresPod
+        )
     ) {
         throw "Unable to locate PostgreSQL pod."
     }
 
 
-    $dbOutput =
-        kubectl exec `
-            -n aira-reliability-lab `
-            $postgresPod `
-            -- `
-            psql `
-            -U aira_lab `
-            -d aira_lab `
-            -t `
-            -A `
-            -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname='aira_lab';"
-
-
-    if (
-        $LASTEXITCODE -ne
-        0
-    ) {
-        throw "Unable to collect PostgreSQL connection baseline."
-    }
-
-
-    $dbConnections =
-        [int](
-            $dbOutput.Trim()
+    $DbOutput =
+        @(
+            kubectl `
+                --context $KubectlContext `
+                exec `
+                -n $Namespace `
+                $PostgresPod `
+                -- `
+                psql `
+                -U aira_lab `
+                -d aira_lab `
+                -t `
+                -A `
+                -c "SELECT COUNT(*) FROM pg_stat_activity WHERE datname='aira_lab';"
         )
 
 
-    $rabbitPod =
-        kubectl get pods `
-            -n aira-reliability-lab `
+    Assert-LastExitCode `
+        "Unable to collect PostgreSQL connection baseline."
+
+
+    $DbText =
+        (
+            $DbOutput -join ""
+        ).Trim()
+
+
+    if (
+        -not (
+            $DbText -match
+            '^\d+$'
+        )
+    ) {
+        throw "PostgreSQL returned an invalid connection count: '$DbText'."
+    }
+
+
+    $DbConnections =
+        [int]$DbText
+
+
+    $RabbitPod =
+        kubectl `
+            --context $KubectlContext `
+            get pods `
+            -n $Namespace `
             -l app=rabbitmq `
             -o jsonpath='{.items[0].metadata.name}'
 
 
+    Assert-LastExitCode `
+        "Unable to locate RabbitMQ pod."
+
+
     if (
-        $LASTEXITCODE -ne
-        0 -or
-        -not $rabbitPod
+        [string]::IsNullOrWhiteSpace(
+            $RabbitPod
+        )
     ) {
         throw "Unable to locate RabbitMQ pod."
     }
 
 
-    $queueOutput =
-        kubectl exec `
-            -n aira-reliability-lab `
-            $rabbitPod `
-            -- `
-            rabbitmqctl `
-            list_queues `
-            name `
-            messages `
-            --formatter csv
+    $QueueOutput =
+        @(
+            kubectl `
+                --context $KubectlContext `
+                exec `
+                -n $Namespace `
+                $RabbitPod `
+                -- `
+                rabbitmqctl `
+                list_queues `
+                name `
+                messages `
+                --formatter csv
+        )
 
 
-    if (
-        $LASTEXITCODE -ne
-        0
-    ) {
-        throw "Unable to collect RabbitMQ queue baseline."
-    }
+    Assert-LastExitCode `
+        "Unable to collect RabbitMQ queue baseline."
 
 
-    foreach (
-        $line
-        in $queueOutput
-    ) {
-        if (
-            $line -match
-            '^"aira\.reliability\.orders",(\d+)$'
-        ) {
-            $queueDepth =
-                [int]$Matches[1]
-        }
-    }
+    $QueueDepth =
+        Get-RabbitQueueDepth `
+            -Output $QueueOutput
 }
 
 
 Write-Host "PASS"
 
 
-Write-Host "[7/8] Collecting workload state..."
+Write-Host "[7/9] Collecting workload state..."
 
 
 if (
     $Mode -eq
     "kind"
 ) {
-    $podJson =
-        kubectl get pods `
-            -n aira-reliability-lab `
-            -o json |
+    $PodJson =
+        kubectl `
+            --context $KubectlContext `
+            get pods `
+            -n $Namespace `
+            -o json
+
+
+    Assert-LastExitCode `
+        "Unable to inspect Kubernetes pod baseline."
+
+
+    $Pods =
+        (
+            $PodJson -join "`n"
+        ) |
         ConvertFrom-Json
 
 
-    $allPodsReady =
-        $true
+    if (
+        -not $Pods.items -or
+        $Pods.items.Count -eq 0
+    ) {
+        throw "Reliability Lab namespace contains no pods."
+    }
 
 
-    $restartCount =
-        0
+    $AllPodsReady = $true
+    $RestartCount = 0
 
 
     foreach (
-        $pod
-        in $podJson.items
+        $Pod
+        in $Pods.items
     ) {
-        foreach (
-            $condition
-            in $pod.status.conditions
+        if (
+            $Pod.status.phase -ne
+            "Running"
         ) {
-            if (
-                $condition.type -eq
-                    "Ready" -and
-                $condition.status -ne
-                    "True"
-            ) {
-                $allPodsReady =
-                    $false
-            }
+            $AllPodsReady = $false
+        }
+
+
+        $ReadyCondition =
+            $Pod.status.conditions |
+            Where-Object {
+                $_.type -eq "Ready"
+            } |
+            Select-Object -First 1
+
+
+        if (
+            $null -eq $ReadyCondition -or
+            $ReadyCondition.status -ne
+            "True"
+        ) {
+            $AllPodsReady = $false
         }
 
 
         foreach (
-            $containerStatus
-            in $pod.status.containerStatuses
+            $ContainerStatus
+            in @(
+                $Pod.status.containerStatuses
+            )
         ) {
-            $restartCount +=
-                [int](
-                    $containerStatus.restartCount
-                )
+            if (
+                $null -ne $ContainerStatus
+            ) {
+                if (
+                    $ContainerStatus.ready -ne
+                    $true
+                ) {
+                    $AllPodsReady = $false
+                }
+
+
+                $RestartCount +=
+                    [int]$ContainerStatus.restartCount
+            }
         }
     }
 
 
     if (
-        -not $allPodsReady
+        -not $AllPodsReady
     ) {
         throw "Kubernetes pod baseline is not ready."
     }
 
 
-    $podStateMeasurement =
+    $PodStateMeasurement =
         New-ObservedMeasurement `
             -Value $true `
             -Unit "boolean" `
             -Source "kubernetes/pods"
 
 
-    $restartMeasurement =
+    $RestartMeasurement =
         New-ObservedMeasurement `
-            -Value $restartCount `
+            -Value $RestartCount `
             -Unit "count" `
             -Source "kubernetes/containerStatuses"
 }
 else {
-    $podStateMeasurement =
+    $PodStateMeasurement =
         New-NotApplicableMeasurement `
             -Source "DOCKER_NOT_APPLICABLE"
 
 
-    $restartMeasurement =
+    $RestartMeasurement =
         New-NotApplicableMeasurement `
             -Source "DOCKER_NOT_APPLICABLE"
 }
@@ -579,19 +932,70 @@ else {
 Write-Host "PASS"
 
 
-Write-Host "[8/8] Building baseline artifact..."
+Write-Host "[8/9] Verifying lab safety boundary..."
 
 
-$baseline =
+if (
+    $ApiHealth.safetyClass -ne
+        "LAB_ONLY" -or
+    $WorkerHealth.safetyClass -ne
+        "LAB_ONLY"
+) {
+    throw "Reliability Lab safety classification is invalid."
+}
+
+
+if (
+    $ApiHealth.executionAuthorized -ne
+        $false -or
+    $WorkerHealth.executionAuthorized -ne
+        $false
+) {
+    throw "Reliability Lab unexpectedly authorizes execution."
+}
+
+
+Write-Host "PASS"
+
+
+Write-Host "[9/9] Building baseline artifact..."
+
+
+if (
+    [string]::IsNullOrWhiteSpace(
+        $env:PHASE21_LAB_ENVIRONMENT_ID
+    )
+) {
+    $CanonicalLabEnvironmentId =
+        "aira-reliability-lab-$Mode"
+}
+else {
+    $CanonicalLabEnvironmentId =
+        $env:PHASE21_LAB_ENVIRONMENT_ID
+}
+
+
+if (
+    $Mode -eq
+    "kind"
+) {
+    $PrometheusReference =
+        "kubernetes://$ClusterName/$Namespace/service/prometheus:9090"
+}
+else {
+    $PrometheusReference =
+        $DockerPrometheusBase
+}
+
+
+$Baseline =
     [ordered]@{
-        baselineVersion =
-            "21.7-v1"
+        baselineVersion = "21.7-v1"
 
-        phase =
-            21
+        phase = 21
 
         labEnvironmentId =
-            "aira-reliability-lab-$Mode"
+            $CanonicalLabEnvironmentId
 
         labKind =
             $Mode.ToUpper()
@@ -603,27 +1007,26 @@ $baseline =
                 "o"
             )
 
-        healthy =
-            $true
+        healthy = $true
 
         measurements =
             [ordered]@{
                 CPU =
                     New-ObservedMeasurement `
-                        -Value $cpu `
+                        -Value $Cpu `
                         -Unit "cores" `
                         -Source "prometheus"
 
                 MEMORY =
                     New-ObservedMeasurement `
-                        -Value $memory `
+                        -Value $Memory `
                         -Unit "bytes" `
                         -Source "prometheus"
 
                 LATENCY =
                     New-ObservedMeasurement `
                         -Value (
-                            $latencySeconds *
+                            $LatencySeconds *
                             1000
                         ) `
                         -Unit "ms_p95" `
@@ -631,31 +1034,31 @@ $baseline =
 
                 ERROR_RATE =
                     New-ObservedMeasurement `
-                        -Value $errorRate `
+                        -Value $ErrorRate `
                         -Unit "ratio" `
                         -Source "prometheus"
 
                 POD_STATE =
-                    $podStateMeasurement
+                    $PodStateMeasurement
 
                 RESTART_COUNT =
-                    $restartMeasurement
+                    $RestartMeasurement
 
                 DB_CONNECTIONS =
                     New-ObservedMeasurement `
-                        -Value $dbConnections `
+                        -Value $DbConnections `
                         -Unit "count" `
                         -Source "postgres.pg_stat_activity"
 
                 QUEUE_DEPTH =
                     New-ObservedMeasurement `
-                        -Value $queueDepth `
+                        -Value $QueueDepth `
                         -Unit "messages" `
                         -Source "rabbitmq"
 
                 DEPENDENCY_HEALTH =
                     New-ObservedMeasurement `
-                        -Value $dependenciesHealthy `
+                        -Value $DependenciesHealthy `
                         -Unit "boolean" `
                         -Source "/dependency-health"
 
@@ -675,33 +1078,30 @@ $baseline =
         sourceReferences =
             @(
                 [ordered]@{
-                    type =
-                        "PROMETHEUS"
+                    type = "PROMETHEUS"
 
                     ref =
-                        "http://localhost:19090"
+                        $PrometheusReference
 
                     executionAuthorized =
                         $false
                 },
 
                 [ordered]@{
-                    type =
-                        "LAB_API"
+                    type = "LAB_API"
 
                     ref =
-                        "http://localhost:18080"
+                        $ApiBase
 
                     executionAuthorized =
                         $false
                 },
 
                 [ordered]@{
-                    type =
-                        "LAB_WORKER"
+                    type = "LAB_WORKER"
 
                     ref =
-                        "http://localhost:18081"
+                        $WorkerBase
 
                     executionAuthorized =
                         $false
@@ -714,6 +1114,9 @@ $baseline =
         canonicalTelemetryAuthority =
             "OBSERVABILITY_SYSTEMS"
 
+        productionCertified =
+            $false
+
         executionAuthorized =
             $false
     }
@@ -724,7 +1127,7 @@ if (
         $OutputPath
     )
 ) {
-    $evidenceDirectory =
+    $EvidenceDirectory =
         Join-Path `
             $PSScriptRoot `
             "..\evidence"
@@ -733,28 +1136,28 @@ if (
     New-Item `
         -ItemType Directory `
         -Force `
-        -Path $evidenceDirectory |
+        -Path $EvidenceDirectory |
         Out-Null
 
 
     $OutputPath =
         Join-Path `
-            $evidenceDirectory `
+            $EvidenceDirectory `
             "baseline-$Mode.json"
 }
 
 
-$resolvedOutput =
+$ResolvedOutput =
     [System.IO.Path]::GetFullPath(
         $OutputPath
     )
 
 
-$baseline |
+$Baseline |
     ConvertTo-Json `
         -Depth 20 |
     Set-Content `
-        -Path $resolvedOutput `
+        -Path $ResolvedOutput `
         -Encoding UTF8
 
 
@@ -765,9 +1168,11 @@ Write-Host " PHASE 21.7 BASELINE CAPTURE PASSED"
 Write-Host "==============================================="
 Write-Host ""
 Write-Host "Output:"
-Write-Host " $resolvedOutput"
+Write-Host " $ResolvedOutput"
 Write-Host ""
 Write-Host "Verified:"
+Write-Host " - canonical kind context where applicable"
+Write-Host " - LAB_ONLY safety boundary"
 Write-Host " - health/readiness"
 Write-Host " - dependency health"
 Write-Host " - CPU"
@@ -779,5 +1184,6 @@ Write-Host " - RabbitMQ queue depth"
 Write-Host " - Kubernetes pod state where applicable"
 Write-Host " - Kubernetes restart count where applicable"
 Write-Host " - executionAuthorized=false"
+Write-Host " - productionCertified=false"
 Write-Host " - bulk telemetry remains external"
 Write-Host ""

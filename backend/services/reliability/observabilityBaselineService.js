@@ -257,9 +257,36 @@ class ObservabilityBaselineService {
     );
 
 
+        let baseliningEnvironment =
+      environment;
+
+
+    if (
+      environment.status ===
+        "READY"
+    ) {
+      baseliningEnvironment =
+        await this
+          .lifecycleService
+          .beginBaselining(
+            scope
+          );
+    }
+    else if (
+      environment.status !==
+        "BASELINING"
+    ) {
+      throw baselineError(
+        "BASELINE_LIFECYCLE_STATE_INVALID",
+        `Reliability Lab baseline capture requires READY or BASELINING status, received ${environment.status}`
+      );
+    }
+
+
     const measurements =
       await collect({
-        environment,
+        environment:
+          baseliningEnvironment,
 
         scope,
 
@@ -303,7 +330,7 @@ class ObservabilityBaselineService {
     const updatedEnvironment =
       await this
         .lifecycleService
-        .completeReset(
+        .completeBaselining(
           scope,
           baseline
         );

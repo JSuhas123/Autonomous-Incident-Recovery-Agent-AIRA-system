@@ -1,0 +1,204 @@
+{
+  "phase": "21.10C",
+  "name": "Multi-Tenant Chaos & Isolation Certification",
+  "certificateVersion": "21.10C-final-v1",
+  "createdAt": "2026-08-31T10:43:27.926Z",
+  "status": "PASS",
+  "pass": true,
+  "liveCertified": true,
+  "frozen": true,
+  "certificationClass": "LIVE_MACHINE_SPECIFIC",
+  "safetyClass": "LAB_ONLY",
+  "sourceEvidence": {
+    "artifact": "phase21-10c-live-certification-2026-08-31T10-37-22-732Z.json",
+    "absolutePath": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA\\backend\\artifacts\\phase21\\phase21-10c-live-certification-2026-08-31T10-37-22-732Z.json",
+    "sourceCreatedAt": null,
+    "sourceStatus": "PASS"
+  },
+  "postgresIsolation": {
+    "live": true,
+    "forceRlsCanary": true,
+    "protectedTable": "resources.resources",
+    "certificationRole": "aira_rls_certifier",
+    "sourceCanSeeTarget": false,
+    "targetCanSeeSelf": true,
+    "sessionScopeCorrect": true,
+    "crossTenantVisibilityLeak": false,
+    "pass": true
+  },
+  "redisIsolation": {
+    "live": true,
+    "tenantScopedIdempotency": true,
+    "collisions": 0,
+    "pass": true
+  },
+  "rabbitMqIsolation": {
+    "live": true,
+    "tenantEnvelopeIsolation": true,
+    "envelopeLeaks": 0,
+    "pass": true
+  },
+  "multiTenant": {
+    "live": true,
+    "tenantScales": [
+      1,
+      10,
+      25,
+      50,
+      100
+    ],
+    "scaleRuns": [
+      {
+        "tenantCount": 1,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 10,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 25,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 50,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "recoveryPassed": true
+      },
+      {
+        "tenantCount": 100,
+        "pass": true,
+        "boundaryViolations": 0,
+        "starvedControls": 0,
+        "recoveryPassed": true
+      }
+    ],
+    "boundaryViolations": 0,
+    "starvedControlTenants": 0,
+    "recoveryPassed": true,
+    "maximumObservedInterferenceFactor": null,
+    "maximumObservedInterferenceIsProductionSlo": false,
+    "maximumObservedInterferenceIsUniversalLimit": false,
+    "pass": true
+  },
+  "measuredClaims": {
+    "tenantScalesTested": [
+      1,
+      10,
+      25,
+      50,
+      100
+    ],
+    "zeroCrossTenantBoundaryViolationsObserved": true,
+    "zeroRedisIdempotencyCollisionsObserved": true,
+    "zeroRabbitMqEnvelopeLeaksObserved": true,
+    "zeroNoisyNeighborControlStarvationObserved": true,
+    "recoveryPassedAtAllTestedScales": true,
+    "claimsApplyToObservedLabRunOnly": true,
+    "universalCapacityClaimed": false,
+    "productionSloClaimed": false
+  },
+  "authority": {
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "canGrantExecutionAuthorization": false,
+    "canGrantAutonomy": false,
+    "canModifyProductionAuthority": false,
+    "canBypassPolicy": false,
+    "canBypassApproval": false,
+    "phase21IsEvidenceOnly": true,
+    "phase22ConsumesEvidence": true
+  },
+  "validation": {
+    "pass": true,
+    "checks": [
+      {
+        "name": "live artifact reports PASS",
+        "pass": true
+      },
+      {
+        "name": "PostgreSQL isolation probe passed",
+        "pass": true
+      },
+      {
+        "name": "PostgreSQL source tenant cannot see target",
+        "pass": true
+      },
+      {
+        "name": "PostgreSQL target tenant can see self",
+        "pass": true
+      },
+      {
+        "name": "PostgreSQL session scope was correct",
+        "pass": true
+      },
+      {
+        "name": "Redis idempotency isolation passed",
+        "pass": true
+      },
+      {
+        "name": "Redis idempotency collisions are zero",
+        "pass": true
+      },
+      {
+        "name": "RabbitMQ tenant envelope isolation passed",
+        "pass": true
+      },
+      {
+        "name": "RabbitMQ envelope leaks are zero",
+        "pass": true
+      },
+      {
+        "name": "all required tenant scales were tested",
+        "pass": true
+      },
+      {
+        "name": "all tenant scale runs passed",
+        "pass": true
+      },
+      {
+        "name": "cross-tenant boundary violations are zero",
+        "pass": true
+      },
+      {
+        "name": "noisy-neighbor starvation is zero",
+        "pass": true
+      },
+      {
+        "name": "recovery passed",
+        "pass": true
+      },
+      {
+        "name": "safety class is LAB_ONLY",
+        "pass": true
+      },
+      {
+        "name": "production certification remains false",
+        "pass": true
+      },
+      {
+        "name": "execution authorization remains false",
+        "pass": true
+      }
+    ]
+  },
+  "finalResult": {
+    "pass": true,
+    "status": "PASS",
+    "liveCertified": true,
+    "frozen": true,
+    "productionCertified": false,
+    "executionAuthorized": false
+  }
+}

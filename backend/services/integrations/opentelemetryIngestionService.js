@@ -3,522 +3,45 @@
 const crypto =
   require("node:crypto");
 
-const mongoose =
-  require("../../persistence/operational/mongooseCompat");
-
-const SIGNAL_TYPES = [
-  "log",
-  "metric",
-  "trace",
-];
-
-const otelSignalSchema =
-  new mongoose.Schema(
-    {
-      // ======================================================================
-      // OWNERSHIP
-      // ======================================================================
-
-      organizationId: {
-        type:
-          mongoose.Schema.Types.ObjectId,
-
-        ref:
-          "Organization",
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      environmentId: {
-        type:
-          mongoose.Schema.Types.ObjectId,
-
-        ref:
-          "Environment",
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      tenantId: {
-        type:
-          String,
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      integrationId: {
-        type:
-          mongoose.Schema.Types.ObjectId,
-
-        ref:
-          "IntegrationConnection",
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      provider: {
-        type:
-          String,
-
-        default:
-          "opentelemetry",
-
-        immutable:
-          true,
-      },
-
-      // ======================================================================
-      // SIGNAL IDENTITY
-      // ======================================================================
-
-      signalType: {
-        type:
-          String,
-
-        enum:
-          SIGNAL_TYPES,
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      signalId: {
-        type:
-          String,
-
-        required:
-          true,
-      },
-
-      payloadHash: {
-        type:
-          String,
-
-        required:
-          true,
-      },
-
-      serviceName: {
-        type:
-          String,
-
-        trim:
-          true,
-
-        default:
-          null,
-
-        index:
-          true,
-      },
-
-      // ======================================================================
-      // CORRELATION
-      // ======================================================================
-
-      traceId: {
-        type:
-          String,
-
-        default:
-          null,
-
-        index:
-          true,
-      },
-
-      spanId: {
-        type:
-          String,
-
-        default:
-          null,
-
-        index:
-          true,
-      },
-
-      parentSpanId: {
-        type:
-          String,
-
-        default:
-          null,
-      },
-
-      // ======================================================================
-      // COMMON SIGNAL DATA
-      // ======================================================================
-
-      name: {
-        type:
-          String,
-
-        default:
-          null,
-
-        index:
-          true,
-      },
-
-      severity: {
-        type:
-          String,
-
-        enum: [
-          "debug",
-          "info",
-          "warning",
-          "error",
-          "critical",
-          "unknown",
-        ],
-
-        default:
-          "unknown",
-
-        index:
-          true,
-      },
-
-      timestamp: {
-        type:
-          Date,
-
-        required:
-          true,
-
-        index:
-          true,
-      },
-
-      observedAt: {
-        type:
-          Date,
-
-        default:
-          Date.now,
-      },
-
-      attributes: {
-        type:
-          mongoose.Schema.Types.Mixed,
-
-        default:
-          {},
-      },
-
-      resourceAttributes: {
-        type:
-          mongoose.Schema.Types.Mixed,
-
-        default:
-          {},
-      },
-
-      scope: {
-        name: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        version: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-      },
-
-      // ======================================================================
-      // LOG
-      // ======================================================================
-
-      log: {
-        body: {
-          type:
-            mongoose.Schema.Types.Mixed,
-
-          default:
-            null,
-        },
-
-        severityText: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        severityNumber: {
-          type:
-            Number,
-
-          default:
-            null,
-        },
-      },
-
-      // ======================================================================
-      // METRIC
-      // ======================================================================
-
-      metric: {
-        metricType: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        unit: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        description: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        value: {
-          type:
-            mongoose.Schema.Types.Mixed,
-
-          default:
-            null,
-        },
-
-        aggregationTemporality: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-
-        isMonotonic: {
-          type:
-            Boolean,
-
-          default:
-            null,
-        },
-      },
-
-      // ======================================================================
-      // TRACE
-      // ======================================================================
-
-      span: {
-        kind: {
-          type:
-            mongoose.Schema.Types.Mixed,
-
-          default:
-            null,
-        },
-
-        startTime: {
-          type:
-            Date,
-
-          default:
-            null,
-        },
-
-        endTime: {
-          type:
-            Date,
-
-          default:
-            null,
-        },
-
-        durationMs: {
-          type:
-            Number,
-
-          default:
-            null,
-        },
-
-        statusCode: {
-          type:
-            mongoose.Schema.Types.Mixed,
-
-          default:
-            null,
-        },
-
-        statusMessage: {
-          type:
-            String,
-
-          default:
-            null,
-        },
-      },
-    },
-    {
-      timestamps:
-        true,
-
-      versionKey:
-        false,
-    }
+const PostgresOpenTelemetrySignalRepository =
+  require(
+    "../../persistence/postgres/PostgresOpenTelemetrySignalRepository"
   );
 
-// ============================================================================
-// INDEXES
-// ============================================================================
-
-otelSignalSchema.index(
-  {
-    organizationId:
-      1,
-
-    environmentId:
-      1,
-
-    integrationId:
-      1,
-
-    signalId:
-      1,
-  },
-  {
-    unique:
-      true,
-
-    name:
-      "unique_otel_signal_per_integration",
-  }
-);
-
-otelSignalSchema.index({
-  organizationId:
-    1,
-
-  environmentId:
-    1,
-
-  signalType:
-    1,
-
-  timestamp:
-    -1,
-});
-
-otelSignalSchema.index({
-  organizationId:
-    1,
-
-  environmentId:
-    1,
-
-  serviceName:
-    1,
-
-  signalType:
-    1,
-
-  timestamp:
-    -1,
-});
-
-otelSignalSchema.index({
-  organizationId:
-    1,
-
-  environmentId:
-    1,
-
-  traceId:
-    1,
-});
-
-const OpenTelemetrySignal =
-  mongoose.models
-    .OpenTelemetrySignal ||
-  mongoose.model(
-    "OpenTelemetrySignal",
-    otelSignalSchema,
-    "opentelemetry_signals"
-  );
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-function hashPayload(
-  value
-) {
+function hashPayload(value) {
   return crypto
-    .createHash(
-      "sha256"
-    )
+    .createHash("sha256")
     .update(
-      JSON.stringify(
-        value
-      )
+      JSON.stringify(value)
     )
-    .digest(
-      "hex"
-    );
+    .digest("hex");
 }
 
-function normalizeAttributes(
-  attributes
-) {
+
+function normalizeAttributes(attributes) {
   if (
-    !Array.isArray(
-      attributes
-    )
+    !Array.isArray(attributes)
   ) {
     if (
       attributes &&
-      typeof attributes ===
-        "object"
+      typeof attributes === "object"
     ) {
-      return attributes;
+      return {
+        ...attributes,
+      };
     }
 
     return {};
   }
 
+
   const result = {};
+
 
   for (
     const attribute
@@ -531,6 +54,7 @@ function normalizeAttributes(
       continue;
     }
 
+
     result[
       attribute.key
     ] =
@@ -539,29 +63,28 @@ function normalizeAttributes(
       );
   }
 
+
   return result;
 }
 
-function unwrapOtelValue(
-  value
-) {
+
+function unwrapOtelValue(value) {
   if (
-    value ===
-      null ||
-    value ===
-      undefined
+    value === null ||
+    value === undefined
   ) {
     return null;
   }
 
+
   if (
-    typeof value !==
-    "object"
+    typeof value !== "object"
   ) {
     return value;
   }
 
-  const keys = [
+
+  const scalarKeys = [
     "stringValue",
     "boolValue",
     "intValue",
@@ -569,19 +92,19 @@ function unwrapOtelValue(
     "bytesValue",
   ];
 
+
   for (
     const key
-    of keys
+    of scalarKeys
   ) {
     if (
       value[key] !==
       undefined
     ) {
-      return value[
-        key
-      ];
+      return value[key];
     }
   }
+
 
   if (
     Array.isArray(
@@ -597,6 +120,7 @@ function unwrapOtelValue(
       );
   }
 
+
   if (
     Array.isArray(
       value.kvlistValue
@@ -610,21 +134,23 @@ function unwrapOtelValue(
     );
   }
 
+
   return value;
 }
 
-function nanoToDate(
-  value
-) {
+
+function nanoToDate(value) {
   if (!value) {
     return new Date();
   }
+
 
   try {
     const nanos =
       BigInt(
         String(value)
       );
+
 
     return new Date(
       Number(
@@ -634,9 +160,8 @@ function nanoToDate(
     );
   } catch {
     const parsed =
-      new Date(
-        value
-      );
+      new Date(value);
+
 
     return Number.isNaN(
       parsed.getTime()
@@ -645,6 +170,7 @@ function nanoToDate(
       : parsed;
   }
 }
+
 
 function durationMs(
   start,
@@ -657,14 +183,17 @@ function durationMs(
     return null;
   }
 
-  const diff =
+
+  const difference =
     end.getTime() -
     start.getTime();
 
-  return diff >= 0
-    ? diff
+
+  return difference >= 0
+    ? difference
     : null;
 }
+
 
 function extractServiceName(
   resourceAttributes
@@ -680,16 +209,17 @@ function extractServiceName(
   );
 }
 
-function severityFromLog(
-  record
-) {
+
+function severityFromLog(record) {
   const text =
     String(
-      record.severityText ||
+      record
+        ?.severityText ||
       ""
     )
       .trim()
       .toLowerCase();
+
 
   if (
     text.includes(
@@ -702,6 +232,7 @@ function severityFromLog(
     return "critical";
   }
 
+
   if (
     text.includes(
       "error"
@@ -710,6 +241,7 @@ function severityFromLog(
     return "error";
   }
 
+
   if (
     text.includes(
       "warn"
@@ -717,6 +249,7 @@ function severityFromLog(
   ) {
     return "warning";
   }
+
 
   if (
     text.includes(
@@ -729,14 +262,17 @@ function severityFromLog(
     return "debug";
   }
 
+
   if (text) {
     return "info";
   }
 
+
   return "unknown";
 }
 
-function getScope(
+
+function getInstrumentationScope(
   scope
 ) {
   return {
@@ -750,14 +286,28 @@ function getScope(
   };
 }
 
+
 // ============================================================================
 // SERVICE
 // ============================================================================
 
 class OpenTelemetryIngestionService {
-  _scope(
-    context
+  constructor(
+    options = {}
   ) {
+    this.repository =
+      options.repository ||
+      new PostgresOpenTelemetrySignalRepository(
+        options
+      );
+  }
+
+
+  // ==========================================================================
+  // CONTEXT
+  // ==========================================================================
+
+  _scope(context) {
     if (
       !context
         ?.organizationId ||
@@ -775,9 +325,13 @@ class OpenTelemetryIngestionService {
         {
           code:
             "OTEL_CONTEXT_REQUIRED",
+
+          executionAuthorized:
+            false,
         }
       );
     }
+
 
     return {
       organizationId:
@@ -794,17 +348,17 @@ class OpenTelemetryIngestionService {
     };
   }
 
+
   // ==========================================================================
   // NORMALIZATION
   // ==========================================================================
 
-  normalizePayload(
-    payload
-  ) {
+  normalizePayload(payload) {
     if (
       !payload ||
       typeof payload !==
-        "object"
+        "object" ||
+      Array.isArray(payload)
     ) {
       throw Object.assign(
         new Error(
@@ -813,32 +367,37 @@ class OpenTelemetryIngestionService {
         {
           code:
             "OTEL_PAYLOAD_INVALID",
+
+          executionAuthorized:
+            false,
         }
       );
     }
 
+
     return [
-      ...this
-        .normalizeLogs(
-          payload
-        ),
+      ...this.normalizeLogs(
+        payload
+      ),
 
-      ...this
-        .normalizeMetrics(
-          payload
-        ),
+      ...this.normalizeMetrics(
+        payload
+      ),
 
-      ...this
-        .normalizeTraces(
-          payload
-        ),
+      ...this.normalizeTraces(
+        payload
+      ),
     ];
   }
 
-  normalizeLogs(
-    payload
-  ) {
+
+  // ==========================================================================
+  // LOGS
+  // ==========================================================================
+
+  normalizeLogs(payload) {
     const result = [];
+
 
     const resourceLogs =
       Array.isArray(
@@ -847,44 +406,63 @@ class OpenTelemetryIngestionService {
         ? payload.resourceLogs
         : [];
 
+
     for (
       const resourceLog
       of resourceLogs
     ) {
       const resourceAttributes =
         normalizeAttributes(
-          resourceLog.resource
+          resourceLog
+            ?.resource
             ?.attributes
         );
+
 
       const serviceName =
         extractServiceName(
           resourceAttributes
         );
 
+
       const scopeLogs =
-        resourceLog.scopeLogs ||
-        resourceLog
-          .instrumentationLibraryLogs ||
-        [];
+        Array.isArray(
+          resourceLog
+            ?.scopeLogs
+        )
+          ? resourceLog
+              .scopeLogs
+          : Array.isArray(
+              resourceLog
+                ?.instrumentationLibraryLogs
+            )
+            ? resourceLog
+                .instrumentationLibraryLogs
+            : [];
+
 
       for (
         const scopeLog
         of scopeLogs
       ) {
         const scope =
-          getScope(
-            scopeLog.scope ||
+          getInstrumentationScope(
             scopeLog
-              .instrumentationLibrary
+              ?.scope ||
+            scopeLog
+              ?.instrumentationLibrary
           );
+
 
         const records =
           Array.isArray(
-            scopeLog.logRecords
+            scopeLog
+              ?.logRecords
           )
-            ? scopeLog.logRecords
+            ? scopeLog
+                .logRecords
             : [];
+
 
         for (
           const record
@@ -892,31 +470,39 @@ class OpenTelemetryIngestionService {
         ) {
           const timestamp =
             nanoToDate(
-              record.timeUnixNano ||
               record
-                .observedTimeUnixNano
+                ?.timeUnixNano ||
+              record
+                ?.observedTimeUnixNano
             );
+
 
           const attributes =
             normalizeAttributes(
-              record.attributes
+              record
+                ?.attributes
             );
+
 
           const body =
             unwrapOtelValue(
-              record.body
+              record
+                ?.body
             );
+
 
           const rawIdentity = {
             signalType:
               "log",
 
             traceId:
-              record.traceId ||
+              record
+                ?.traceId ||
               null,
 
             spanId:
-              record.spanId ||
+              record
+                ?.spanId ||
               null,
 
             timestamp:
@@ -927,6 +513,7 @@ class OpenTelemetryIngestionService {
 
             attributes,
           };
+
 
           result.push({
             signalType:
@@ -948,11 +535,16 @@ class OpenTelemetryIngestionService {
             serviceName,
 
             traceId:
-              record.traceId ||
+              record
+                ?.traceId ||
               null,
 
             spanId:
-              record.spanId ||
+              record
+                ?.spanId ||
+              null,
+
+            parentSpanId:
               null,
 
             name:
@@ -968,6 +560,9 @@ class OpenTelemetryIngestionService {
 
             timestamp,
 
+            observedAt:
+              new Date(),
+
             attributes,
 
             resourceAttributes,
@@ -979,12 +574,12 @@ class OpenTelemetryIngestionService {
 
               severityText:
                 record
-                  .severityText ||
+                  ?.severityText ||
                 null,
 
               severityNumber:
                 record
-                  .severityNumber ??
+                  ?.severityNumber ??
                 null,
             },
           });
@@ -992,13 +587,18 @@ class OpenTelemetryIngestionService {
       }
     }
 
+
     return result;
   }
 
-  normalizeMetrics(
-    payload
-  ) {
+
+  // ==========================================================================
+  // METRICS
+  // ==========================================================================
+
+  normalizeMetrics(payload) {
     const result = [];
+
 
     const resourceMetrics =
       Array.isArray(
@@ -1007,56 +607,80 @@ class OpenTelemetryIngestionService {
         ? payload.resourceMetrics
         : [];
 
+
     for (
       const resourceMetric
       of resourceMetrics
     ) {
       const resourceAttributes =
         normalizeAttributes(
-          resourceMetric.resource
+          resourceMetric
+            ?.resource
             ?.attributes
         );
+
 
       const serviceName =
         extractServiceName(
           resourceAttributes
         );
 
+
       const scopeMetrics =
-        resourceMetric
-          .scopeMetrics ||
-        resourceMetric
-          .instrumentationLibraryMetrics ||
-        [];
+        Array.isArray(
+          resourceMetric
+            ?.scopeMetrics
+        )
+          ? resourceMetric
+              .scopeMetrics
+          : Array.isArray(
+              resourceMetric
+                ?.instrumentationLibraryMetrics
+            )
+            ? resourceMetric
+                .instrumentationLibraryMetrics
+            : [];
+
 
       for (
         const scopeMetric
         of scopeMetrics
       ) {
         const scope =
-          getScope(
-            scopeMetric.scope ||
+          getInstrumentationScope(
             scopeMetric
-              .instrumentationLibrary
+              ?.scope ||
+            scopeMetric
+              ?.instrumentationLibrary
           );
 
+
         const metrics =
-          scopeMetric.metrics ||
-          [];
+          Array.isArray(
+            scopeMetric
+              ?.metrics
+          )
+            ? scopeMetric
+                .metrics
+            : [];
+
 
         for (
           const metric
           of metrics
         ) {
           const metricData =
-            this
-              .getMetricData(
-                metric
-              );
+            this.getMetricData(
+              metric
+            );
 
-          if (!metricData) {
+
+          if (
+            !metricData
+          ) {
             continue;
           }
+
 
           for (
             const point
@@ -1065,13 +689,17 @@ class OpenTelemetryIngestionService {
           ) {
             const timestamp =
               nanoToDate(
-                point.timeUnixNano
+                point
+                  ?.timeUnixNano
               );
+
 
             const attributes =
               normalizeAttributes(
-                point.attributes
+                point
+                  ?.attributes
               );
+
 
             const value =
               this
@@ -1080,12 +708,15 @@ class OpenTelemetryIngestionService {
                   metricData.type
                 );
 
+
             const rawIdentity = {
               signalType:
                 "metric",
 
               name:
-                metric.name,
+                metric
+                  ?.name ||
+                null,
 
               serviceName,
 
@@ -1097,6 +728,7 @@ class OpenTelemetryIngestionService {
 
               value,
             };
+
 
             result.push({
               signalType:
@@ -1117,14 +749,27 @@ class OpenTelemetryIngestionService {
 
               serviceName,
 
+              traceId:
+                null,
+
+              spanId:
+                null,
+
+              parentSpanId:
+                null,
+
               name:
-                metric.name ||
+                metric
+                  ?.name ||
                 null,
 
               severity:
                 "unknown",
 
               timestamp,
+
+              observedAt:
+                new Date(),
 
               attributes,
 
@@ -1137,24 +782,26 @@ class OpenTelemetryIngestionService {
                   metricData.type,
 
                 unit:
-                  metric.unit ||
+                  metric
+                    ?.unit ||
                   null,
 
                 description:
-                  metric.description ||
+                  metric
+                    ?.description ||
                   null,
 
                 value,
 
                 aggregationTemporality:
                   metricData
-                    .data
+                    ?.data
                     ?.aggregationTemporality ??
                   null,
 
                 isMonotonic:
                   metricData
-                    .data
+                    ?.data
                     ?.isMonotonic ??
                   null,
               },
@@ -1164,12 +811,21 @@ class OpenTelemetryIngestionService {
       }
     }
 
+
     return result;
   }
 
-  getMetricData(
-    metric
-  ) {
+
+  getMetricData(metric) {
+    if (
+      !metric ||
+      typeof metric !==
+        "object"
+    ) {
+      return null;
+    }
+
+
     const types = [
       [
         "gauge",
@@ -1197,6 +853,7 @@ class OpenTelemetryIngestionService {
       ],
     ];
 
+
     for (
       const [
         field,
@@ -1205,80 +862,95 @@ class OpenTelemetryIngestionService {
       of types
     ) {
       if (
-        metric[field]
+        !metric[field]
       ) {
-        return {
-          type,
-
-          data:
-            metric[field],
-
-          dataPoints:
-            Array.isArray(
-              metric[field]
-                .dataPoints
-            )
-              ? metric[field]
-                  .dataPoints
-              : [],
-        };
+        continue;
       }
+
+
+      return {
+        type,
+
+        data:
+          metric[field],
+
+        dataPoints:
+          Array.isArray(
+            metric[field]
+              ?.dataPoints
+          )
+            ? metric[field]
+                .dataPoints
+            : [],
+      };
     }
+
 
     return null;
   }
+
 
   extractMetricValue(
     point,
     type
   ) {
     if (
-      point.asDouble !==
+      point
+        ?.asDouble !==
       undefined
     ) {
       return point.asDouble;
     }
 
+
     if (
-      point.asInt !==
+      point
+        ?.asInt !==
       undefined
     ) {
       return point.asInt;
     }
 
+
     if (
       type ===
-      "histogram" ||
+        "histogram" ||
       type ===
-      "exponential_histogram"
+        "exponential_histogram"
     ) {
       return {
         count:
-          point.count ??
+          point
+            ?.count ??
           null,
 
         sum:
-          point.sum ??
+          point
+            ?.sum ??
           null,
 
         min:
-          point.min ??
+          point
+            ?.min ??
           null,
 
         max:
-          point.max ??
+          point
+            ?.max ??
           null,
 
         bucketCounts:
-          point.bucketCounts ||
+          point
+            ?.bucketCounts ||
           null,
 
         explicitBounds:
           point
-            .explicitBounds ||
+            ?.explicitBounds ||
           null,
       };
     }
+
 
     if (
       type ===
@@ -1286,27 +958,34 @@ class OpenTelemetryIngestionService {
     ) {
       return {
         count:
-          point.count ??
+          point
+            ?.count ??
           null,
 
         sum:
-          point.sum ??
+          point
+            ?.sum ??
           null,
 
         quantileValues:
           point
-            .quantileValues ||
+            ?.quantileValues ||
           [],
       };
     }
 
+
     return null;
   }
 
-  normalizeTraces(
-    payload
-  ) {
+
+  // ==========================================================================
+  // TRACES
+  // ==========================================================================
+
+  normalizeTraces(payload) {
     const result = [];
+
 
     const resourceSpans =
       Array.isArray(
@@ -1315,45 +994,63 @@ class OpenTelemetryIngestionService {
         ? payload.resourceSpans
         : [];
 
+
     for (
       const resourceSpan
       of resourceSpans
     ) {
       const resourceAttributes =
         normalizeAttributes(
-          resourceSpan.resource
+          resourceSpan
+            ?.resource
             ?.attributes
         );
+
 
       const serviceName =
         extractServiceName(
           resourceAttributes
         );
 
+
       const scopeSpans =
-        resourceSpan
-          .scopeSpans ||
-        resourceSpan
-          .instrumentationLibrarySpans ||
-        [];
+        Array.isArray(
+          resourceSpan
+            ?.scopeSpans
+        )
+          ? resourceSpan
+              .scopeSpans
+          : Array.isArray(
+              resourceSpan
+                ?.instrumentationLibrarySpans
+            )
+            ? resourceSpan
+                .instrumentationLibrarySpans
+            : [];
+
 
       for (
         const scopeSpan
         of scopeSpans
       ) {
         const scope =
-          getScope(
-            scopeSpan.scope ||
+          getInstrumentationScope(
             scopeSpan
-              .instrumentationLibrary
+              ?.scope ||
+            scopeSpan
+              ?.instrumentationLibrary
           );
+
 
         const spans =
           Array.isArray(
-            scopeSpan.spans
+            scopeSpan
+              ?.spans
           )
-            ? scopeSpan.spans
+            ? scopeSpan
+                .spans
             : [];
+
 
         for (
           const span
@@ -1362,32 +1059,42 @@ class OpenTelemetryIngestionService {
           const startTime =
             nanoToDate(
               span
-                .startTimeUnixNano
+                ?.startTimeUnixNano
             );
 
+
           const endTime =
-            span.endTimeUnixNano
+            span
+              ?.endTimeUnixNano
               ? nanoToDate(
                   span
                     .endTimeUnixNano
                 )
               : null;
 
+
           const attributes =
             normalizeAttributes(
-              span.attributes
+              span
+                ?.attributes
             );
+
 
           const rawIdentity = {
             signalType:
               "trace",
 
             traceId:
-              span.traceId,
+              span
+                ?.traceId ||
+              null,
 
             spanId:
-              span.spanId,
+              span
+                ?.spanId ||
+              null,
           };
+
 
           result.push({
             signalType:
@@ -1409,30 +1116,35 @@ class OpenTelemetryIngestionService {
             serviceName,
 
             traceId:
-              span.traceId ||
+              span
+                ?.traceId ||
               null,
 
             spanId:
-              span.spanId ||
+              span
+                ?.spanId ||
               null,
 
             parentSpanId:
               span
-                .parentSpanId ||
+                ?.parentSpanId ||
               null,
 
             name:
-              span.name ||
+              span
+                ?.name ||
               null,
 
             severity:
-              this
-                .spanSeverity(
-                  span
-                ),
+              this.spanSeverity(
+                span
+              ),
 
             timestamp:
               startTime,
+
+            observedAt:
+              new Date(),
 
             attributes,
 
@@ -1442,7 +1154,8 @@ class OpenTelemetryIngestionService {
 
             span: {
               kind:
-                span.kind ??
+                span
+                  ?.kind ??
                 null,
 
               startTime,
@@ -1456,12 +1169,14 @@ class OpenTelemetryIngestionService {
                 ),
 
               statusCode:
-                span.status
+                span
+                  ?.status
                   ?.code ??
                 null,
 
               statusMessage:
-                span.status
+                span
+                  ?.status
                   ?.message ||
                 null,
             },
@@ -1470,184 +1185,152 @@ class OpenTelemetryIngestionService {
       }
     }
 
+
     return result;
   }
 
-  spanSeverity(
-    span
-  ) {
+
+  spanSeverity(span) {
     const code =
-      span.status
+      span
+        ?.status
         ?.code;
 
+
     if (
-      code ===
-      2 ||
+      code === 2 ||
       String(
         code
-      ).toUpperCase() ===
-      "STATUS_CODE_ERROR"
+      )
+        .toUpperCase() ===
+        "STATUS_CODE_ERROR"
     ) {
       return "error";
     }
 
+
     return "info";
   }
 
+
   // ==========================================================================
-  // PERSISTENCE
+  // POSTGRESQL PERSISTENCE
   // ==========================================================================
 
   async ingest(
-  context,
-  payload
-) {
-  const scope =
-    this._scope(
-      context
-    );
+    context,
+    payload
+  ) {
+    const scope =
+      this._scope(
+        context
+      );
 
-  const normalized =
-    this
-      .normalizePayload(
+
+    const normalized =
+      this.normalizePayload(
         payload
       );
 
-  const result = {
-    accepted:
-      0,
 
-    duplicates:
-      0,
+    const result = {
+      accepted:
+        0,
 
-    signals: [],
-  };
+      duplicates:
+        0,
 
-  for (
-    const signal
-    of normalized
-  ) {
-    const filter = {
-      organizationId:
-        scope.organizationId,
+      signals: [],
 
-      environmentId:
-        scope.environmentId,
-
-      integrationId:
-        scope.integrationId,
-
-      signalId:
-        signal.signalId,
+      executionAuthorized:
+        false,
     };
 
-    try {
-      /*
-       * First perform an atomic upsert using the raw
-       * MongoDB result so we know whether an insert
-       * actually occurred.
-       */
-      const writeResult =
-        await OpenTelemetrySignal
-          .updateOne(
-            filter,
 
-            {
-              $setOnInsert: {
-                ...scope,
+    for (
+      const signal
+      of normalized
+    ) {
+      try {
+        const persistenceResult =
+          await this
+            .repository
+            .insertIfAbsent({
+              organizationId:
+                scope
+                  .organizationId,
 
-                provider:
-                  "opentelemetry",
+              environmentId:
+                scope
+                  .environmentId,
 
-                ...signal,
-              },
-            },
+              tenantId:
+                scope
+                  .tenantId,
 
-            {
-              upsert:
-                true,
+              integrationId:
+                scope
+                  .integrationId,
 
-              setDefaultsOnInsert:
-                true,
-            }
-          );
+              signal,
+            });
 
-      /*
-       * MongoDB reports an upsertedId only when this
-       * operation created the record.
-       */
-      if (
-        writeResult.upsertedCount ===
-          1 ||
-        writeResult.upsertedId
-      ) {
-        const inserted =
-          await OpenTelemetrySignal
-            .findOne(
-              filter
-            )
-            .lean();
 
-        if (!inserted) {
-          throw Object.assign(
-            new Error(
-              "Inserted OpenTelemetry signal could not be reloaded"
-            ),
-            {
-              code:
-                "OTEL_SIGNAL_RELOAD_FAILED",
-            }
-          );
+        if (
+          persistenceResult
+            ?.inserted ===
+          true
+        ) {
+          result.accepted +=
+            1;
+
+
+          if (
+            persistenceResult
+              .signal
+          ) {
+            result
+              .signals
+              .push(
+                persistenceResult
+                  .signal
+              );
+          }
+
+
+          continue;
         }
 
-        result.accepted +=
-          1;
 
-        result.signals.push(
-          inserted
-        );
-
-        continue;
-      }
-
-      /*
-       * Matched an existing signal.
-       */
-      result.duplicates +=
-        1;
-    } catch (error) {
-      /*
-       * Concurrent insert race protection when the
-       * database unique index is also active.
-       */
-      if (
-        error?.code ===
-        11000
-      ) {
         result.duplicates +=
           1;
+      } catch (
+        error
+      ) {
+        throw Object.assign(
+          new Error(
+            `Failed to persist OpenTelemetry signal: ${error.message}`
+          ),
 
-        continue;
+          {
+            code:
+              error.code ||
+              "OTEL_SIGNAL_PERSISTENCE_FAILED",
+
+            executionAuthorized:
+              false,
+
+            cause:
+              error,
+          }
+        );
       }
-
-      throw Object.assign(
-        new Error(
-          `Failed to persist OpenTelemetry signal: ${error.message}`
-        ),
-        {
-          code:
-            error.code ||
-            "OTEL_SIGNAL_PERSISTENCE_FAILED",
-
-          cause:
-            error,
-        }
-      );
     }
+
+
+    return result;
   }
 
-  return result;
-}
 
   // ==========================================================================
   // QUERIES
@@ -1657,148 +1340,121 @@ class OpenTelemetryIngestionService {
     context,
     query = {}
   ) {
-    return this
-      .querySignals(
-        context,
-        "log",
-        query
-      );
+    return this.querySignals(
+      context,
+      "log",
+      query
+    );
   }
+
 
   async queryMetrics(
     context,
     query = {}
   ) {
-    return this
-      .querySignals(
-        context,
-        "metric",
-        query
-      );
+    return this.querySignals(
+      context,
+      "metric",
+      query
+    );
   }
+
 
   async queryTraces(
     context,
     query = {}
   ) {
-    return this
-      .querySignals(
-        context,
-        "trace",
-        query
-      );
+    return this.querySignals(
+      context,
+      "trace",
+      query
+    );
   }
+
 
   async querySignals(
     context,
     signalType,
-    query
+    query = {}
   ) {
     const scope =
       this._scope(
         context
       );
 
-    const filter = {
-      ...scope,
 
-      signalType,
-    };
+    return this
+      .repository
+      .querySignals({
+        organizationId:
+          scope
+            .organizationId,
 
-    if (
-      query.serviceName
-    ) {
-      filter.serviceName =
-        query.serviceName;
-    }
+        environmentId:
+          scope
+            .environmentId,
 
-    if (
-      query.traceId
-    ) {
-      filter.traceId =
-        query.traceId;
-    }
+        tenantId:
+          scope
+            .tenantId,
 
-    if (
-      query.name
-    ) {
-      filter.name =
-        query.name;
-    }
+        integrationId:
+          scope
+            .integrationId,
 
-    if (
-      query.severity
-    ) {
-      filter.severity =
-        query.severity;
-    }
+        signalType,
 
-    if (
-      query.from ||
-      query.to
-    ) {
-      filter.timestamp =
-        {};
+        serviceName:
+          query
+            ?.serviceName ||
+          null,
 
-      if (
-        query.from
-      ) {
-        filter.timestamp
-          .$gte =
-          new Date(
-            query.from
-          );
-      }
+        traceId:
+          query
+            ?.traceId ||
+          null,
 
-      if (
-        query.to
-      ) {
-        filter.timestamp
-          .$lte =
-          new Date(
-            query.to
-          );
-      }
-    }
+        name:
+          query
+            ?.name ||
+          null,
 
-    const limit =
-      Math.min(
-        Math.max(
-          Number.parseInt(
-            query.limit,
-            10
-          ) ||
+        severity:
+          query
+            ?.severity ||
+          null,
+
+        from:
+          query
+            ?.from ||
+          null,
+
+        to:
+          query
+            ?.to ||
+          null,
+
+        limit:
+          query
+            ?.limit ||
           100,
-          1
-        ),
-        1000
-      );
-
-    return OpenTelemetrySignal
-      .find(
-        filter
-      )
-      .sort({
-        timestamp:
-          -1,
-      })
-      .limit(
-        limit
-      )
-      .lean();
+      });
   }
 }
+
+
+// ============================================================================
+// SINGLETON
+// ============================================================================
 
 const service =
   new OpenTelemetryIngestionService();
 
+
 module.exports =
   service;
+
 
 module.exports
   .OpenTelemetryIngestionService =
   OpenTelemetryIngestionService;
-
-module.exports
-  .OpenTelemetrySignal =
-  OpenTelemetrySignal;

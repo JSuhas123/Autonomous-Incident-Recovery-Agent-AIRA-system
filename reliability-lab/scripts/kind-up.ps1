@@ -45,6 +45,10 @@ $ClusterName =
     "aira-reliability-lab"
 
 
+$KubectlContext =
+    "kind-$ClusterName"
+
+
 $FixtureImage =
     "aira-reliability-fixture:21.6-v1"
 
@@ -68,6 +72,124 @@ function Assert-LastExitCode {
 }
 
 
+function Assert-CommandExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Command
+    )
+
+
+    if (
+        -not (
+            Get-Command `
+                $Command `
+                -ErrorAction SilentlyContinue
+        )
+    ) {
+        throw "$Command was not found in PATH."
+    }
+}
+
+
+function Ensure-KindContext {
+    $Contexts =
+        @(
+            kubectl config get-contexts -o name
+        )
+
+
+    Assert-LastExitCode `
+        "Unable to query kubectl contexts."
+
+
+    if (
+        $Contexts -notcontains
+        $KubectlContext
+    ) {
+        Write-Host "Exporting kubeconfig for $ClusterName..."
+
+
+        kind export kubeconfig `
+            --name $ClusterName
+
+
+        Assert-LastExitCode `
+            "Unable to export kubeconfig for kind cluster '$ClusterName'."
+
+
+        $Contexts =
+            @(
+                kubectl config get-contexts -o name
+            )
+
+
+        if (
+            $Contexts -notcontains
+            $KubectlContext
+        ) {
+            throw "Required kubectl context '$KubectlContext' is unavailable."
+        }
+    }
+}
+
+
+function Assert-CanonicalLabCluster {
+    $NodeJson =
+        kubectl `
+            --context $KubectlContext `
+            get nodes `
+            -o json
+
+
+    Assert-LastExitCode `
+        "Unable to inspect Reliability Lab Kubernetes nodes."
+
+
+    $Nodes =
+        (
+            $NodeJson -join "`n"
+        ) |
+        ConvertFrom-Json
+
+
+    if (
+        -not $Nodes.items -or
+        $Nodes.items.Count -lt 1
+    ) {
+        throw "Reliability Lab kind cluster has no Kubernetes nodes."
+    }
+
+
+    foreach (
+        $Node
+        in $Nodes.items
+    ) {
+        $Labels =
+            $Node.metadata.labels
+
+
+        if (
+            $Labels.'aira.reliability-lab' -ne
+            "true"
+        ) {
+            throw "Refusing to continue: node '$($Node.metadata.name)' is not an AIRA Reliability Lab node."
+        }
+
+
+        if (
+            $Labels.'aira.safety-class' -ne
+            "LAB_ONLY"
+        ) {
+            throw "Refusing to continue: node '$($Node.metadata.name)' is not LAB_ONLY."
+        }
+    }
+
+
+    Write-Host "Verified kubectl context: $KubectlContext"
+    Write-Host "Verified Reliability Lab node labels."
+}
+
+
 function Wait-ForDeployment {
     param(
         [Parameter(Mandatory = $true)]
@@ -80,7 +202,9 @@ function Wait-ForDeployment {
     Write-Host "Waiting for deployment/$Deployment..."
 
 
-    kubectl rollout status `
+    kubectl `
+        --context $KubectlContext `
+        rollout status `
         "deployment/$Deployment" `
         -n $Namespace `
         "--timeout=${TimeoutSeconds}s"
@@ -106,15 +230,8 @@ foreach (
         "kubectl"
     )
 ) {
-    if (
-        -not (
-            Get-Command `
-                $Command `
-                -ErrorAction SilentlyContinue
-        )
-    ) {
-        throw "$Command was not found in PATH."
-    }
+    Assert-CommandExists `
+        -Command $Command
 }
 
 
@@ -140,7 +257,7 @@ if (
     $ExistingClusters -notcontains
     $ClusterName
 ) {
-    Write-Host "[1/7] Creating kind cluster..."
+    Write-Host "[1/8] Creating kind cluster..."
 
 
     kind create cluster `
@@ -152,11 +269,21 @@ if (
         "kind cluster creation failed."
 }
 else {
-    Write-Host "[1/7] kind cluster already exists."
+    Write-Host "[1/8] kind cluster already exists."
 }
 
 
-Write-Host "[2/7] Building deterministic fixture image..."
+Write-Host "[2/8] Verifying canonical Kubernetes context..."
+
+
+Ensure-KindContext
+Assert-CanonicalLabCluster
+
+
+Write-Host "PASS"
+
+
+Write-Host "[3/8] Building deterministic fixture image..."
 
 
 docker build `
@@ -168,7 +295,7 @@ Assert-LastExitCode `
     "Fixture Docker image build failed."
 
 
-Write-Host "[3/7] Loading fixture image into kind..."
+Write-Host "[4/8] Loading fixture image into kind..."
 
 
 kind load docker-image `
@@ -180,10 +307,12 @@ Assert-LastExitCode `
     "Loading fixture image into kind failed."
 
 
-Write-Host "[4/7] Creating Reliability Lab namespace..."
+Write-Host "[5/8] Creating Reliability Lab namespace..."
 
 
-kubectl apply `
+kubectl `
+    --context $KubectlContext `
+    apply `
     -f $NamespaceManifest
 
 
@@ -191,10 +320,12 @@ Assert-LastExitCode `
     "Namespace deployment failed."
 
 
-Write-Host "[5/7] Deploying dependencies..."
+Write-Host "[6/8] Deploying dependencies..."
 
 
-kubectl apply `
+kubectl `
+    --context $KubectlContext `
+    apply `
     -f $DependenciesManifest
 
 
@@ -217,10 +348,12 @@ Wait-ForDeployment `
     -TimeoutSeconds 240
 
 
-Write-Host "[6/7] Deploying deterministic fixture..."
+Write-Host "[7/8] Deploying deterministic fixture..."
 
 
-kubectl apply `
+kubectl `
+    --context $KubectlContext `
+    apply `
     -f $FixtureManifest
 
 
@@ -238,10 +371,12 @@ Wait-ForDeployment `
     -TimeoutSeconds 180
 
 
-Write-Host "[7/7] Deploying observability..."
+Write-Host "[8/8] Deploying observability..."
 
 
-kubectl apply `
+kubectl `
+    --context $KubectlContext `
+    apply `
     -f $ObservabilityManifest
 
 
@@ -259,81 +394,120 @@ Wait-ForDeployment `
     -TimeoutSeconds 180
 
 
-$NotReadyPods =
-    @(
-        kubectl get pods `
-            -n $Namespace `
-            --field-selector=status.phase!=Running `
-            -o name
-    )
+$PodJson =
+    kubectl `
+        --context $KubectlContext `
+        get pods `
+        -n $Namespace `
+        -o json
 
 
 Assert-LastExitCode `
     "Unable to inspect Reliability Lab pod state."
 
 
-if (
-    $NotReadyPods.Count -gt 0
-) {
-    Write-Host ""
-    Write-Host "Pods not in Running phase:"
-
-
-    $NotReadyPods |
-        ForEach-Object {
-            Write-Host " - $_"
-        }
-
-
-    throw "Reliability Lab contains non-running pods."
-}
-
-
-$PodJson =
-    kubectl get pods `
-        -n $Namespace `
-        -o json
-
-
-Assert-LastExitCode `
-    "Unable to inspect Reliability Lab readiness."
-
-
 $Pods =
-    $PodJson |
+    (
+        $PodJson -join "`n"
+    ) |
     ConvertFrom-Json
+
+
+if (
+    -not $Pods.items -or
+    $Pods.items.Count -eq 0
+) {
+    throw "Reliability Lab namespace contains no pods."
+}
 
 
 foreach (
     $Pod
     in $Pods.items
 ) {
-    $Ready =
-        $false
-
-
-    foreach (
-        $Condition
-        in $Pod.status.conditions
+    if (
+        $Pod.status.phase -ne
+        "Running"
     ) {
-        if (
-            $Condition.type -eq "Ready" -and
-            $Condition.status -eq "True"
-        ) {
-            $Ready =
-                $true
-
-
-            break
-        }
+        throw "Pod '$($Pod.metadata.name)' is not Running. phase=$($Pod.status.phase)"
     }
+
+
+    $ReadyCondition =
+        $Pod.status.conditions |
+        Where-Object {
+            $_.type -eq "Ready"
+        } |
+        Select-Object -First 1
 
 
     if (
-        -not $Ready
+        $null -eq $ReadyCondition -or
+        $ReadyCondition.status -ne
+        "True"
     ) {
-        throw "Pod $($Pod.metadata.name) is running but not Ready."
+        throw "Pod '$($Pod.metadata.name)' is running but not Ready."
     }
+
+
+    foreach (
+        $ContainerStatus
+        in @(
+            $Pod.status.containerStatuses
+        )
+    ) {
+        if (
+            $null -ne $ContainerStatus -and
+            $ContainerStatus.ready -ne
+            $true
+        ) {
+            throw "Container '$($ContainerStatus.name)' in pod '$($Pod.metadata.name)' is not Ready."
+        }
+    }
+}
+
+
+$ApiEndpoints =
+    kubectl `
+        --context $KubectlContext `
+        get endpoints `
+        lab-api `
+        -n $Namespace `
+        -o jsonpath='{.subsets[*].addresses[*].ip}'
+
+
+Assert-LastExitCode `
+    "Unable to verify lab-api endpoints."
+
+
+if (
+    [string]::IsNullOrWhiteSpace(
+        $ApiEndpoints
+    )
+) {
+    throw "lab-api has no Ready Kubernetes endpoint."
+}
+
+
+$WorkerEndpoints =
+    kubectl `
+        --context $KubectlContext `
+        get endpoints `
+        lab-worker `
+        -n $Namespace `
+        -o jsonpath='{.subsets[*].addresses[*].ip}'
+
+
+Assert-LastExitCode `
+    "Unable to verify lab-worker endpoints."
+
+
+if (
+    [string]::IsNullOrWhiteSpace(
+        $WorkerEndpoints
+    )
+) {
+    throw "lab-worker has no Ready Kubernetes endpoint."
 }
 
 
@@ -343,11 +517,16 @@ Write-Host " KUBERNETES RELIABILITY LAB IS READY"
 Write-Host "==============================================="
 Write-Host ""
 Write-Host "Verified:"
+Write-Host " - explicit kubectl context: $KubectlContext"
+Write-Host " - Reliability Lab node labels"
+Write-Host " - LAB_ONLY Kubernetes safety classification"
 Write-Host " - PostgreSQL ready"
 Write-Host " - Redis ready"
 Write-Host " - RabbitMQ ready"
 Write-Host " - lab-api ready"
 Write-Host " - lab-worker ready"
+Write-Host " - lab-api endpoint exists"
+Write-Host " - lab-worker endpoint exists"
 Write-Host " - OpenTelemetry Collector ready"
 Write-Host " - Prometheus ready"
 Write-Host ""

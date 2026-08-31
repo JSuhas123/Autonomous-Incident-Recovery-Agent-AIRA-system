@@ -1,18 +1,26 @@
 "use strict";
 
 const crypto =
-  require("node:crypto");
+  require(
+    "node:crypto"
+  );
 
 const https =
-  require("node:https");
+  require(
+    "node:https"
+  );
 
 const http =
-  require("node:http");
+  require(
+    "node:http"
+  );
 
 const {
   URL,
 } =
-  require("node:url");
+  require(
+    "node:url"
+  );
 
 const {
   makeStubAdapter,
@@ -28,12 +36,15 @@ const {
     "../../../utils/ssrfGuard"
   );
 
+
 const PROVIDER =
   "webhook_outgoing";
+
 
 const CAPABILITIES = [
   "send_notifications",
 ];
+
 
 const METHOD_ALLOW =
   new Set([
@@ -42,16 +53,35 @@ const METHOD_ALLOW =
     "PATCH",
   ]);
 
+
+const LOOPBACK_HOSTS =
+  new Set([
+    "localhost",
+    "127.0.0.1",
+    "::1",
+  ]);
+
+
+// ============================================================================
+// ADAPTER
+// ============================================================================
+
 const adapter = {
   ...makeStubAdapter(
     PROVIDER,
     CAPABILITIES
   ),
 
+
+  // ==========================================================================
+  // CONFIGURATION
+  // ==========================================================================
+
   async validateConfiguration(
     config = {}
   ) {
     const errors = [];
+
 
     if (
       !config ||
@@ -71,6 +101,7 @@ const adapter = {
       };
     }
 
+
     if (
       !config.targetUrl
     ) {
@@ -84,6 +115,7 @@ const adapter = {
             config.targetUrl
           );
 
+
         if (
           ![
             "http:",
@@ -95,19 +127,38 @@ const adapter = {
           errors.push(
             "targetUrl must use http or https"
           );
-        }
+        } else {
+          try {
+            await assertTargetAllowed(
+              url,
+              {
+                nonSecretConfig:
+                  config,
 
-        try {
-          assertSafeHost(
-            url.hostname
-          );
-        } catch (
-          error
-        ) {
-          errors.push(
-            error.message ||
-            "targetUrl points to an unsafe host"
-          );
+                metadata: {
+                  reliabilityLab:
+                    config
+                      .reliabilityLab ===
+                    true,
+
+                  safetyClass:
+                    config
+                      .safetyClass ||
+                    null,
+
+                  production:
+                    false,
+                },
+              }
+            );
+          } catch (
+            error
+          ) {
+            errors.push(
+              error.message ||
+              "targetUrl points to an unsafe host"
+            );
+          }
         }
       } catch {
         errors.push(
@@ -115,6 +166,7 @@ const adapter = {
         );
       }
     }
+
 
     if (
       config.method &&
@@ -128,6 +180,7 @@ const adapter = {
         "method must be POST, PUT, or PATCH"
       );
     }
+
 
     if (
       config.customHeaders !==
@@ -146,6 +199,7 @@ const adapter = {
       );
     }
 
+
     return {
       valid:
         errors.length ===
@@ -155,6 +209,11 @@ const adapter = {
     };
   },
 
+
+  // ==========================================================================
+  // CONNECTION TEST
+  // ==========================================================================
+
   async testConnection(
     connection
   ) {
@@ -162,26 +221,33 @@ const adapter = {
       targetUrl,
     } =
       connection
-        .nonSecretConfig ??
+        ?.nonSecretConfig ??
       {};
+
 
     if (!targetUrl) {
       return {
         success:
           false,
 
+        provider:
+          PROVIDER,
+
         detail:
           "No targetUrl configured",
       };
     }
 
+
     try {
       const startedAt =
         Date.now();
 
+
       const response =
         await post(
           targetUrl,
+
           {
             test:
               true,
@@ -189,16 +255,24 @@ const adapter = {
             source:
               "aira",
 
+            phase:
+              "21.10B",
+
             timestamp:
               new Date()
                 .toISOString(),
           },
+
           connection
         );
+
 
       return {
         success:
           true,
+
+        provider:
+          PROVIDER,
 
         latencyMs:
           Date.now() -
@@ -206,6 +280,9 @@ const adapter = {
 
         detail:
           `Webhook endpoint returned HTTP ${response.statusCode}`,
+
+        executionAuthorized:
+          false,
       };
     } catch (
       error
@@ -214,11 +291,29 @@ const adapter = {
         success:
           false,
 
+        provider:
+          PROVIDER,
+
+        latencyMs:
+          null,
+
         detail:
           error.message,
+
+        code:
+          error.code ||
+          "WEBHOOK_CONNECTION_FAILED",
+
+        executionAuthorized:
+          false,
       };
     }
   },
+
+
+  // ==========================================================================
+  // HEALTH
+  // ==========================================================================
 
   async getHealth(
     connection
@@ -228,6 +323,7 @@ const adapter = {
         .testConnection(
           connection
         );
+
 
     return {
       status:
@@ -241,8 +337,16 @@ const adapter = {
 
       detail:
         result.detail,
+
+      executionAuthorized:
+        false,
     };
   },
+
+
+  // ==========================================================================
+  // NOTIFICATION
+  // ==========================================================================
 
   async sendNotification(
     connection,
@@ -252,20 +356,26 @@ const adapter = {
       targetUrl,
     } =
       connection
-        .nonSecretConfig ??
+        ?.nonSecretConfig ??
       {};
+
 
     if (!targetUrl) {
       throw Object.assign(
         new Error(
           "No targetUrl configured"
         ),
+
         {
           code:
             "WEBHOOK_TARGET_URL_MISSING",
+
+          executionAuthorized:
+            false,
         }
       );
     }
+
 
     const result =
       await post(
@@ -274,14 +384,23 @@ const adapter = {
         connection
       );
 
+
     return {
       success:
         true,
 
       statusCode:
         result.statusCode,
+
+      executionAuthorized:
+        false,
     };
   },
+
+
+  // ==========================================================================
+  // REVOCATION
+  // ==========================================================================
 
   async revoke() {
     return {
@@ -290,9 +409,17 @@ const adapter = {
 
       remoteRevocationRequired:
         false,
+
+      executionAuthorized:
+        false,
     };
   },
 };
+
+
+// ============================================================================
+// REQUEST
+// ============================================================================
 
 async function post(
   targetUrl,
@@ -304,22 +431,59 @@ async function post(
     method = "POST",
   } =
     connection
-      .nonSecretConfig ??
+      ?.nonSecretConfig ??
     {};
+
 
   const parsed =
     new URL(
       targetUrl
     );
 
-  assertSafeHost(
-    parsed.hostname
+
+  if (
+    ![
+      "http:",
+      "https:",
+    ].includes(
+      parsed.protocol
+    )
+  ) {
+    throw Object.assign(
+      new Error(
+        "Webhook target must use HTTP or HTTPS"
+      ),
+
+      {
+        code:
+          "WEBHOOK_PROTOCOL_NOT_ALLOWED",
+
+        executionAuthorized:
+          false,
+      }
+    );
+  }
+
+
+  /*
+   * IMPORTANT:
+   *
+   * The SSRF guard is asynchronous because DNS resolution is
+   * part of the safety decision.
+   *
+   * It MUST be awaited before opening the socket.
+   */
+  await assertTargetAllowed(
+    parsed,
+    connection
   );
+
 
   const normalizedMethod =
     String(
       method
     ).toUpperCase();
+
 
   if (
     !METHOD_ALLOW.has(
@@ -330,17 +494,23 @@ async function post(
       new Error(
         "Unsupported webhook method"
       ),
+
       {
         code:
           "WEBHOOK_METHOD_NOT_ALLOWED",
+
+        executionAuthorized:
+          false,
       }
     );
   }
+
 
   const payload =
     JSON.stringify(
       body
     );
+
 
   const headers = {
     "Content-Type":
@@ -351,12 +521,16 @@ async function post(
         payload
       ),
 
+    "Connection":
+      "keep-alive",
+
     ...customHeaders,
   };
 
+
   /*
-   * Never permit user-configured secret/auth headers
-   * through nonSecretConfig.
+   * Authentication material must never be supplied through
+   * nonSecretConfig.
    */
   for (
     const key
@@ -375,9 +549,11 @@ async function post(
     }
   }
 
+
   const secret =
     connection
       ?._decryptedSecret;
+
 
   if (secret) {
     const signature =
@@ -393,17 +569,20 @@ async function post(
           "hex"
         );
 
+
     headers[
       "X-AIRA-Signature"
     ] =
       `sha256=${signature}`;
   }
 
+
   const transport =
     parsed.protocol ===
     "https:"
       ? https
       : http;
+
 
   return new Promise(
     (
@@ -436,41 +615,58 @@ async function post(
 
             headers,
           },
-          (response) => {
+
+          (
+            response
+          ) => {
             let responseBytes =
               0;
 
+
             response.on(
               "data",
-              (chunk) => {
+
+              (
+                chunk
+              ) => {
                 responseBytes +=
                   chunk.length;
 
-                /*
-                 * Never allow a webhook test/notification to
-                 * buffer an unlimited remote response.
-                 */
+
                 if (
                   responseBytes >
                   1024 *
                     1024
                 ) {
                   response.destroy(
-                    new Error(
-                      "Webhook response exceeded maximum size"
+                    Object.assign(
+                      new Error(
+                        "Webhook response exceeded maximum size"
+                      ),
+
+                      {
+                        code:
+                          "WEBHOOK_RESPONSE_TOO_LARGE",
+
+                        executionAuthorized:
+                          false,
+                      }
                     )
                   );
                 }
               }
             );
 
+
             response.on(
               "end",
+
               () => {
                 const statusCode =
                   response
                     .statusCode ??
                   0;
+
 
                 if (
                   statusCode <
@@ -483,54 +679,249 @@ async function post(
                       new Error(
                         `HTTP ${statusCode}`
                       ),
+
                       {
                         statusCode,
 
                         code:
-                          "WEBHOOK_REMOTE_ERROR",
+                          statusCode ===
+                          429
+                            ? "WEBHOOK_RATE_LIMITED"
+                            : "WEBHOOK_REMOTE_ERROR",
+
+                        executionAuthorized:
+                          false,
                       }
                     )
                   );
                 }
 
+
                 return resolve({
                   statusCode,
+
+                  executionAuthorized:
+                    false,
                 });
               }
             );
           }
         );
 
+
       request.on(
         "error",
-        reject
-      );
 
-      request.setTimeout(
-        10000,
-        () => {
-          request.destroy(
+        (
+          error
+        ) => {
+          reject(
             Object.assign(
-              new Error(
-                "Request timed out"
-              ),
+              error,
+
               {
-                code:
-                  "WEBHOOK_REQUEST_TIMEOUT",
+                executionAuthorized:
+                  false,
               }
             )
           );
         }
       );
 
+
+      request.setTimeout(
+        10000,
+
+        () => {
+          request.destroy(
+            Object.assign(
+              new Error(
+                "Request timed out"
+              ),
+
+              {
+                code:
+                  "WEBHOOK_REQUEST_TIMEOUT",
+
+                executionAuthorized:
+                  false,
+              }
+            )
+          );
+        }
+      );
+
+
       request.write(
         payload
       );
+
 
       request.end();
     }
   );
 }
+
+
+// ============================================================================
+// SSRF + RELIABILITY LAB SAFETY
+// ============================================================================
+
+async function assertTargetAllowed(
+  parsed,
+  connection
+) {
+  if (
+    isExplicitReliabilityLabLoopback(
+      parsed,
+      connection
+    )
+  ) {
+    return;
+  }
+
+
+  await assertSafeHost(
+    parsed.hostname
+  );
+}
+
+
+function isExplicitReliabilityLabLoopback(
+  parsed,
+  connection
+) {
+  const config =
+    connection
+      ?.nonSecretConfig ||
+    {};
+
+
+  const metadata =
+    connection
+      ?.metadata ||
+    {};
+
+
+  const hostname =
+    String(
+      parsed.hostname ||
+      ""
+    )
+      .replace(
+        /^\[|\]$/g,
+        ""
+      )
+      .toLowerCase();
+
+
+  /*
+   * Production can NEVER use this exception.
+   */
+  if (
+    String(
+      process.env.NODE_ENV ||
+      ""
+    )
+      .toLowerCase() ===
+    "production"
+  ) {
+    return false;
+  }
+
+
+  /*
+   * The process itself must explicitly be running as the
+   * Reliability Lab.
+   */
+  if (
+    String(
+      process.env
+        .AIRA_RELIABILITY_LAB ||
+      ""
+    )
+      .toLowerCase() !==
+    "true"
+  ) {
+    return false;
+  }
+
+
+  /*
+   * The connection must independently identify itself as
+   * LAB_ONLY.
+   */
+  if (
+    config
+      .reliabilityLabLoopback !==
+      true ||
+    config
+      .reliabilityLab !==
+      true ||
+    String(
+      config
+        .safetyClass ||
+      ""
+    )
+      .toUpperCase() !==
+      "LAB_ONLY"
+  ) {
+    return false;
+  }
+
+
+  if (
+    metadata
+      .reliabilityLab !==
+      true ||
+    String(
+      metadata
+        .safetyClass ||
+      ""
+    )
+      .toUpperCase() !==
+      "LAB_ONLY" ||
+    metadata
+      .production ===
+      true
+  ) {
+    return false;
+  }
+
+
+  /*
+   * Even the lab exception permits ONLY loopback.
+   * Private networks such as 10/8, 172.16/12 and 192.168/16
+   * remain prohibited.
+   */
+  if (
+    !LOOPBACK_HOSTS.has(
+      hostname
+    )
+  ) {
+    return false;
+  }
+
+
+  return true;
+}
+
+
+// ============================================================================
+// TEST INTROSPECTION
+// ============================================================================
+
+adapter.assertTargetAllowed =
+  assertTargetAllowed;
+
+
+adapter.isExplicitReliabilityLabLoopback =
+  isExplicitReliabilityLabLoopback;
+
+
+// ============================================================================
+// EXPORT
+// ============================================================================
 
 module.exports =
   adapter;
