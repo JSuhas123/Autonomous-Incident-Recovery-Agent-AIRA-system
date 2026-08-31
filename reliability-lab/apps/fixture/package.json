@@ -2,10 +2,14 @@
   "name": "aira-reliability-lab-fixture",
   "version": "21.6.0",
   "private": true,
-  "description": "Deterministic AIRA Reliability Lab workload fixture",
+  "description": "Deterministic workload fixture for the AIRA Phase 21 Reliability Lab",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
     "amqplib": "^0.10.8",

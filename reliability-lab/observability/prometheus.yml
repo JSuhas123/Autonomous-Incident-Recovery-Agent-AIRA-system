@@ -1,0 +1,42 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+
+  - job_name: aira-reliability-lab-api
+
+    static_configs:
+      - targets:
+          - lab-api:8080
+
+        labels:
+          aira_reliability_lab: "true"
+          aira_phase: "21"
+          aira_safety_class: "LAB_ONLY"
+          service_role: "api"
+
+
+  - job_name: aira-reliability-lab-worker
+
+    static_configs:
+      - targets:
+          - lab-worker:8081
+
+        labels:
+          aira_reliability_lab: "true"
+          aira_phase: "21"
+          aira_safety_class: "LAB_ONLY"
+          service_role: "worker"
+
+
+  - job_name: aira-reliability-lab-otel-collector
+
+    static_configs:
+      - targets:
+          - otel-collector:8889
+
+        labels:
+          aira_reliability_lab: "true"
+          aira_phase: "21"
+          aira_safety_class: "LAB_ONLY"

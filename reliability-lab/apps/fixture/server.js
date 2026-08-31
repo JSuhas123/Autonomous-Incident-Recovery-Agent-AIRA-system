@@ -2,24 +2,30 @@
 
 /**
  * ============================================================================
- * AIRA PHASE 21.6
+ * AIRA — PHASE 21.6
  * DETERMINISTIC RELIABILITY LAB FIXTURE
  * ============================================================================
  *
- * This application exists only inside the AIRA Reliability Lab.
+ * This workload exists ONLY inside the AIRA Reliability Lab.
  *
- * It deliberately contains NO failure injection endpoints.
+ * It provides deterministic infrastructure behavior that later Phase-21
+ * experiments can break externally.
  *
- * Failure injection belongs to the separate Phase 21 Failure Injection Engine
- * and may only operate after the LAB_ONLY safety boundary is implemented.
+ * IMPORTANT:
+ *
+ * - This application contains NO failure-injection endpoints.
+ * - This application does NOT authorize execution.
+ * - Ground truth is NOT exposed to AIRA.
+ * - Failure injection belongs to Phase 21.9.
+ * - LAB_ONLY enforcement for injectors belongs to Phase 21.10.
  *
  * Roles:
  *
  *   api
- *      exposes an HTTP API and creates deterministic order events.
+ *     Creates and reads deterministic orders.
  *
  *   worker
- *      consumes RabbitMQ order events and marks the order processed.
+ *     Consumes RabbitMQ order messages and marks orders processed.
  *
  * Dependencies:
  *
@@ -27,60 +33,24 @@
  *   Redis
  *   RabbitMQ
  *
- * Endpoints:
- *
- *   GET  /health
- *   GET  /ready
- *   GET  /state
- *   GET  /metrics
- *
- * API role:
- *
- *   POST /orders
- *   GET  /orders/:id
- *
  * ============================================================================
  */
 
+const crypto = require("node:crypto");
 
-const crypto =
-  require(
-    "node:crypto"
-  );
-
-
-const express =
-  require(
-    "express"
-  );
-
+const express = require("express");
 
 const {
   Pool,
-} =
-  require(
-    "pg"
-  );
-
+} = require("pg");
 
 const {
   createClient,
-} =
-  require(
-    "redis"
-  );
+} = require("redis");
 
+const amqp = require("amqplib");
 
-const amqp =
-  require(
-    "amqplib"
-  );
-
-
-const client =
-  require(
-    "prom-client"
-  );
+const client = require("prom-client");
 
 
 /*
@@ -89,11 +59,9 @@ const client =
  * ============================================================================
  */
 
-
 const SERVICE_ROLE =
   String(
-    process.env
-      .SERVICE_ROLE ||
+    process.env.SERVICE_ROLE ||
     "api"
   )
     .trim()
@@ -109,7 +77,7 @@ if (
   )
 ) {
   throw new Error(
-    `Unsupported Reliability Lab SERVICE_ROLE "${SERVICE_ROLE}"`
+    `Unsupported SERVICE_ROLE "${SERVICE_ROLE}".`
   );
 }
 
@@ -118,8 +86,7 @@ const PORT =
   Number(
     process.env.PORT ||
     (
-      SERVICE_ROLE ===
-      "worker"
+      SERVICE_ROLE === "worker"
         ? 8081
         : 8080
     )
@@ -127,57 +94,49 @@ const PORT =
 
 
 const POSTGRES_URL =
-  process.env
-    .POSTGRES_URL ||
+  process.env.POSTGRES_URL ||
   "postgresql://aira_lab:aira_lab_password@postgres:5432/aira_lab";
 
 
 const REDIS_URL =
-  process.env
-    .REDIS_URL ||
+  process.env.REDIS_URL ||
   "redis://redis:6379";
 
 
 const RABBITMQ_URL =
-  process.env
-    .RABBITMQ_URL ||
+  process.env.RABBITMQ_URL ||
   "amqp://guest:guest@rabbitmq:5672";
 
 
 const RABBITMQ_QUEUE =
-  process.env
-    .RABBITMQ_QUEUE ||
+  process.env.RABBITMQ_QUEUE ||
   "aira.reliability.orders";
 
 
 const LAB_ID =
-  process.env
-    .AIRA_LAB_ID ||
+  process.env.AIRA_LAB_ID ||
   "aira-reliability-lab";
 
 
 const SAFETY_CLASS =
-  process.env
-    .AIRA_SAFETY_CLASS ||
+  process.env.AIRA_SAFETY_CLASS ||
   "LAB_ONLY";
 
 
 if (
-  SAFETY_CLASS !==
-  "LAB_ONLY"
+  SAFETY_CLASS !== "LAB_ONLY"
 ) {
   throw new Error(
-    "Reliability Lab fixture requires AIRA_SAFETY_CLASS=LAB_ONLY"
+    "Reliability Lab fixture requires AIRA_SAFETY_CLASS=LAB_ONLY."
   );
 }
 
 
 /*
  * ============================================================================
- * STATE
+ * RUNTIME STATE
  * ============================================================================
  */
-
 
 const startedAt =
   new Date();
@@ -221,26 +180,29 @@ const state = {
 
 /*
  * ============================================================================
- * METRICS
+ * PROMETHEUS
  * ============================================================================
  */
-
 
 const registry =
   new client.Registry();
 
 
+registry.setDefaultLabels({
+  service:
+    `aira-lab-${SERVICE_ROLE}`,
+
+  reliability_lab:
+    "true",
+
+  phase:
+    "21",
+});
+
+
 client.collectDefaultMetrics({
   register:
     registry,
-
-  labels: {
-    service:
-      `aira-lab-${SERVICE_ROLE}`,
-
-    reliability_lab:
-      "true",
-  },
 });
 
 
@@ -250,13 +212,62 @@ const httpRequests =
       "aira_lab_http_requests_total",
 
     help:
-      "HTTP requests received by the AIRA Reliability Lab fixture.",
+      "HTTP requests received by a Reliability Lab fixture service.",
 
     labelNames: [
-      "service",
       "method",
       "route",
       "status",
+    ],
+
+    registers: [
+      registry,
+    ],
+  });
+
+
+const httpDuration =
+  new client.Histogram({
+    name:
+      "aira_lab_http_request_duration_seconds",
+
+    help:
+      "Reliability Lab HTTP request duration.",
+
+    labelNames: [
+      "method",
+      "route",
+    ],
+
+    buckets: [
+      0.005,
+      0.01,
+      0.025,
+      0.05,
+      0.1,
+      0.25,
+      0.5,
+      1,
+      2,
+      5,
+    ],
+
+    registers: [
+      registry,
+    ],
+  });
+
+
+const dependencyHealth =
+  new client.Gauge({
+    name:
+      "aira_lab_dependency_healthy",
+
+    help:
+      "Dependency health where 1 means healthy and 0 means unhealthy.",
+
+    labelNames: [
+      "dependency",
     ],
 
     registers: [
@@ -271,7 +282,7 @@ const ordersCreated =
       "aira_lab_orders_created_total",
 
     help:
-      "Orders created by the deterministic Reliability Lab fixture.",
+      "Orders created by the Reliability Lab API.",
 
     registers: [
       registry,
@@ -293,23 +304,57 @@ const ordersProcessed =
   });
 
 
-const dependencyHealth =
-  new client.Gauge({
+/*
+ * ============================================================================
+ * ERROR STATE
+ * ============================================================================
+ */
+
+function recordError(
+  error
+) {
+  const normalized =
+    error instanceof Error
+      ? error
+      : new Error(
+          String(
+            error
+          )
+        );
+
+
+  state.lastError = {
     name:
-      "aira_lab_dependency_healthy",
+      normalized.name,
 
-    help:
-      "Dependency health where 1 is healthy and 0 is unhealthy.",
+    message:
+      normalized.message,
 
-    labelNames: [
-      "service",
-      "dependency",
-    ],
+    at:
+      new Date()
+        .toISOString(),
+  };
 
-    registers: [
-      registry,
-    ],
-  });
+
+  console.error(
+    JSON.stringify({
+      level:
+        "error",
+
+      service:
+        `aira-lab-${SERVICE_ROLE}`,
+
+      labId:
+        LAB_ID,
+
+      message:
+        normalized.message,
+
+      at:
+        state.lastError.at,
+    })
+  );
+}
 
 
 /*
@@ -317,7 +362,6 @@ const dependencyHealth =
  * POSTGRESQL
  * ============================================================================
  */
-
 
 const postgres =
   new Pool({
@@ -341,8 +385,7 @@ postgres.on(
   (
     error
   ) => {
-    state
-      .postgresConnected =
+    state.postgresConnected =
       false;
 
     recordError(
@@ -355,19 +398,13 @@ postgres.on(
 async function initialiseDatabase() {
   await postgres.query(
     `
-      CREATE TABLE IF NOT EXISTS
-        lab_orders (
-          id TEXT PRIMARY KEY,
-
-          description TEXT NOT NULL,
-
-          status TEXT NOT NULL,
-
-          created_at TIMESTAMPTZ NOT NULL
-            DEFAULT NOW(),
-
-          processed_at TIMESTAMPTZ
-        )
+      CREATE TABLE IF NOT EXISTS lab_orders (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        processed_at TIMESTAMPTZ
+      )
     `
   );
 
@@ -383,26 +420,25 @@ async function initialiseDatabase() {
  * ============================================================================
  */
 
-
 const redis =
   createClient({
     url:
       REDIS_URL,
 
     socket: {
-      reconnectStrategy:
-        (
-          retries
-        ) =>
-          Math.min(
-            250 *
-              (
-                retries +
-                1
-              ),
+      reconnectStrategy(
+        retries
+      ) {
+        return Math.min(
+          250 *
+            (
+              retries +
+              1
+            ),
 
-            2000
-          ),
+          2000
+        );
+      },
     },
   });
 
@@ -443,12 +479,27 @@ redis.on(
 );
 
 
+async function ensureRedis() {
+  if (
+    !redis.isOpen
+  ) {
+    await redis.connect();
+  }
+
+
+  await redis.ping();
+
+
+  state.redisConnected =
+    true;
+}
+
+
 /*
  * ============================================================================
  * RABBITMQ
  * ============================================================================
  */
-
 
 let rabbitConnection =
   null;
@@ -462,99 +513,18 @@ let rabbitReconnectTimer =
   null;
 
 
-async function connectRabbitMQ() {
-  if (
-    rabbitChannel
-  ) {
-    return rabbitChannel;
-  }
+function clearRabbitState() {
+  state.rabbitmqConnected =
+    false;
 
+  state.workerConsuming =
+    false;
 
-  try {
-    rabbitConnection =
-      await amqp.connect(
-        RABBITMQ_URL
-      );
+  rabbitChannel =
+    null;
 
-
-    rabbitConnection.on(
-      "error",
-
-      (
-        error
-      ) => {
-        recordError(
-          error
-        );
-      }
-    );
-
-
-    rabbitConnection.on(
-      "close",
-
-      () => {
-        state
-          .rabbitmqConnected =
-          false;
-
-        state
-          .workerConsuming =
-          false;
-
-        rabbitConnection =
-          null;
-
-        rabbitChannel =
-          null;
-
-        scheduleRabbitReconnect();
-      }
-    );
-
-
-    rabbitChannel =
-      await rabbitConnection
-        .createChannel();
-
-
-    await rabbitChannel
-      .assertQueue(
-        RABBITMQ_QUEUE,
-        {
-          durable:
-            false,
-        }
-      );
-
-
-    state.rabbitmqConnected =
-      true;
-
-
-    if (
-      SERVICE_ROLE ===
-      "worker"
-    ) {
-      await beginConsumer();
-    }
-
-
-    return rabbitChannel;
-  } catch (
-    error
-  ) {
-    state.rabbitmqConnected =
-      false;
-
-    recordError(
-      error
-    );
-
-    scheduleRabbitReconnect();
-
-    throw error;
-  }
+  rabbitConnection =
+    null;
 }
 
 
@@ -589,17 +559,92 @@ function scheduleRabbitReconnect() {
 }
 
 
+async function connectRabbitMQ() {
+  if (
+    rabbitChannel
+  ) {
+    return rabbitChannel;
+  }
+
+
+  try {
+    rabbitConnection =
+      await amqp.connect(
+        RABBITMQ_URL
+      );
+
+
+    rabbitConnection.on(
+      "error",
+
+      (
+        error
+      ) => {
+        recordError(
+          error
+        );
+      }
+    );
+
+
+    rabbitConnection.on(
+      "close",
+
+      () => {
+        clearRabbitState();
+
+        scheduleRabbitReconnect();
+      }
+    );
+
+
+    rabbitChannel =
+      await rabbitConnection
+        .createChannel();
+
+
+    await rabbitChannel.assertQueue(
+      RABBITMQ_QUEUE,
+      {
+        durable:
+          false,
+      }
+    );
+
+
+    state.rabbitmqConnected =
+      true;
+
+
+    if (
+      SERVICE_ROLE === "worker"
+    ) {
+      await beginConsumer();
+    }
+
+
+    return rabbitChannel;
+  } catch (
+    error
+  ) {
+    clearRabbitState();
+
+    scheduleRabbitReconnect();
+
+    throw error;
+  }
+}
+
+
 /*
  * ============================================================================
  * WORKER
  * ============================================================================
  */
 
-
 async function beginConsumer() {
   if (
-    SERVICE_ROLE !==
-      "worker" ||
+    SERVICE_ROLE !== "worker" ||
     !rabbitChannel ||
     state.workerConsuming
   ) {
@@ -607,96 +652,103 @@ async function beginConsumer() {
   }
 
 
-  await rabbitChannel
-    .consume(
-      RABBITMQ_QUEUE,
+  await rabbitChannel.consume(
+    RABBITMQ_QUEUE,
 
-      async (
-        message
-      ) => {
+    async (
+      message
+    ) => {
+      if (
+        !message
+      ) {
+        return;
+      }
+
+
+      try {
+        const payload =
+          JSON.parse(
+            message.content
+              .toString(
+                "utf8"
+              )
+          );
+
+
         if (
-          !message
+          !payload.orderId
         ) {
-          return;
+          throw new Error(
+            "RabbitMQ order message missing orderId."
+          );
         }
 
 
-        try {
-          const payload =
-            JSON.parse(
-              message.content
-                .toString(
-                  "utf8"
-                )
-            );
+        await postgres.query(
+          `
+            UPDATE lab_orders
+
+            SET
+              status = 'PROCESSED',
+              processed_at = NOW()
+
+            WHERE
+              id = $1
+          `,
+          [
+            payload.orderId,
+          ]
+        );
 
 
-          await postgres.query(
-            `
-              UPDATE
-                lab_orders
-
-              SET
-                status =
-                  'PROCESSED',
-
-                processed_at =
-                  NOW()
-
-              WHERE
-                id =
-                  $1
-            `,
-            [
-              payload.orderId,
-            ]
-          );
+        await ensureRedis();
 
 
-          await redis.set(
-            `order:${payload.orderId}:status`,
-
-            "PROCESSED",
-
-            {
-              EX:
-                3600,
-            }
-          );
+        await redis.set(
+          `order:${payload.orderId}:status`,
+          "PROCESSED",
+          {
+            EX:
+              3600,
+          }
+        );
 
 
-          state
-            .lastProcessedOrderId =
-            payload.orderId;
+        state.lastProcessedOrderId =
+          payload.orderId;
 
 
-          ordersProcessed.inc();
+        ordersProcessed.inc();
 
 
-          rabbitChannel.ack(
-            message
-          );
-        } catch (
+        rabbitChannel.ack(
+          message
+        );
+      } catch (
+        error
+      ) {
+        recordError(
           error
+        );
+
+
+        if (
+          rabbitChannel
         ) {
-          recordError(
-            error
-          );
-
-
           rabbitChannel.nack(
             message,
             false,
             true
           );
         }
-      },
-
-      {
-        noAck:
-          false,
       }
-    );
+    },
+
+    {
+      noAck:
+        false,
+    }
+  );
 
 
   state.workerConsuming =
@@ -710,31 +762,17 @@ async function beginConsumer() {
  * ============================================================================
  */
 
-
-async function checkDependencies() {
-  const result = {
-    postgres:
-      false,
-
-    redis:
-      false,
-
-    rabbitmq:
-      false,
-  };
-
-
+async function checkPostgres() {
   try {
     await postgres.query(
       "SELECT 1"
     );
 
 
-    result.postgres =
-      true;
-
     state.postgresConnected =
       true;
+
+    return true;
   } catch (
     error
   ) {
@@ -744,25 +782,17 @@ async function checkDependencies() {
     recordError(
       error
     );
+
+    return false;
   }
+}
 
 
+async function checkRedis() {
   try {
-    if (
-      !redis.isOpen
-    ) {
-      await redis.connect();
-    }
+    await ensureRedis();
 
-
-    await redis.ping();
-
-
-    result.redis =
-      true;
-
-    state.redisConnected =
-      true;
+    return true;
   } catch (
     error
   ) {
@@ -772,26 +802,62 @@ async function checkDependencies() {
     recordError(
       error
     );
+
+    return false;
   }
+}
 
 
+async function checkRabbitMQ() {
   try {
     await connectRabbitMQ();
 
 
-    result.rabbitmq =
+    state.rabbitmqConnected =
       Boolean(
         rabbitChannel
       );
 
-    state.rabbitmqConnected =
-      result.rabbitmq;
+
+    return state.rabbitmqConnected;
   } catch (
     error
   ) {
     state.rabbitmqConnected =
       false;
+
+    recordError(
+      error
+    );
+
+    return false;
   }
+}
+
+
+async function checkDependencies() {
+  const [
+    postgresHealthy,
+    redisHealthy,
+    rabbitmqHealthy,
+  ] =
+    await Promise.all([
+      checkPostgres(),
+      checkRedis(),
+      checkRabbitMQ(),
+    ]);
+
+
+  const result = {
+    postgres:
+      postgresHealthy,
+
+    redis:
+      redisHealthy,
+
+    rabbitmq:
+      rabbitmqHealthy,
+  };
 
 
   state.lastDependencyCheckAt =
@@ -810,9 +876,6 @@ async function checkDependencies() {
   ) {
     dependencyHealth.set(
       {
-        service:
-          SERVICE_ROLE,
-
         dependency,
       },
 
@@ -839,10 +902,9 @@ async function checkDependencies() {
 
 /*
  * ============================================================================
- * HTTP APPLICATION
+ * EXPRESS APPLICATION
  * ============================================================================
  */
-
 
 const app =
   express();
@@ -867,24 +929,29 @@ app.use(
     res,
     next
   ) => {
-    const started =
-      Date.now();
+    const endTimer =
+      httpDuration.startTimer({
+        method:
+          req.method,
+
+        route:
+          req.path,
+      });
 
 
     res.on(
       "finish",
 
       () => {
-        httpRequests.inc({
-          service:
-            SERVICE_ROLE,
+        endTimer();
 
+
+        httpRequests.inc({
           method:
             req.method,
 
           route:
-            req.route
-              ?.path ||
+            req.route?.path ||
             req.path,
 
           status:
@@ -892,15 +959,6 @@ app.use(
               res.statusCode
             ),
         });
-
-
-        res.setHeader?.(
-          "x-aira-lab-duration-ms",
-          String(
-            Date.now() -
-            started
-          )
-        );
       }
     );
 
@@ -909,6 +967,12 @@ app.use(
   }
 );
 
+
+/*
+ * ============================================================================
+ * HEALTH
+ * ============================================================================
+ */
 
 app.get(
   "/health",
@@ -924,20 +988,25 @@ app.get(
       status:
         "UP",
 
+      role:
+        SERVICE_ROLE,
+
+      labId:
+        LAB_ID,
+
       lab:
         true,
 
       safetyClass:
         SAFETY_CLASS,
 
+      startedAt:
+        startedAt.toISOString(),
+
       uptimeSeconds:
         Math.floor(
           process.uptime()
         ),
-
-      startedAt:
-        startedAt
-          .toISOString(),
 
       executionAuthorized:
         false,
@@ -958,8 +1027,7 @@ app.get(
 
 
     const workerReady =
-      SERVICE_ROLE !==
-        "worker" ||
+      SERVICE_ROLE !== "worker" ||
       state.workerConsuming;
 
 
@@ -978,15 +1046,16 @@ app.get(
         service:
           `aira-lab-${SERVICE_ROLE}`,
 
+        role:
+          SERVICE_ROLE,
+
         ready,
 
         dependencies,
 
         workerConsuming:
-          SERVICE_ROLE ===
-            "worker"
-            ? state
-                .workerConsuming
+          SERVICE_ROLE === "worker"
+            ? state.workerConsuming
             : null,
 
         executionAuthorized:
@@ -997,7 +1066,37 @@ app.get(
 
 
 app.get(
-  "/state",
+  "/dependency-health",
+
+  async (
+    req,
+    res
+  ) => {
+    const dependencies =
+      await checkDependencies();
+
+
+    res
+      .status(
+        dependencies.healthy
+          ? 200
+          : 503
+      )
+      .json({
+        service:
+          `aira-lab-${SERVICE_ROLE}`,
+
+        dependencies,
+
+        executionAuthorized:
+          false,
+      });
+  }
+);
+
+
+app.get(
+  "/debug/state",
 
   async (
     req,
@@ -1010,6 +1109,9 @@ app.get(
     res.json({
       service:
         `aira-lab-${SERVICE_ROLE}`,
+
+      role:
+        SERVICE_ROLE,
 
       labId:
         LAB_ID,
@@ -1051,7 +1153,7 @@ app.get(
     );
 
 
-    res.end(
+    res.send(
       await registry.metrics()
     );
   }
@@ -1064,235 +1166,308 @@ app.get(
  * ============================================================================
  */
 
+app.post(
+  "/orders",
 
-if (
-  SERVICE_ROLE ===
-  "api"
-) {
-  app.post(
-    "/orders",
-
-    async (
-      req,
-      res,
-      next
-    ) => {
-      try {
-        const description =
-          String(
-            req.body
-              ?.description ||
-            "Reliability Lab deterministic order"
-          )
-            .trim()
-            .slice(
-              0,
-              500
-            );
-
-
-        const orderId =
-          `lab_order_${crypto.randomUUID()}`;
-
-
-        await postgres.query(
-          `
-            INSERT INTO
-              lab_orders (
-                id,
-                description,
-                status
-              )
-
-            VALUES (
-              $1,
-              $2,
-              'CREATED'
-            )
-          `,
-          [
-            orderId,
-
-            description,
-          ]
-        );
-
-
-        await redis.set(
-          `order:${orderId}:status`,
-
-          "CREATED",
-
-          {
-            EX:
-              3600,
-          }
-        );
-
-
-        const channel =
-          await connectRabbitMQ();
-
-
-        channel.sendToQueue(
-          RABBITMQ_QUEUE,
-
-          Buffer.from(
-            JSON.stringify({
-              eventType:
-                "order.created",
-
-              orderId,
-
-              createdAt:
-                new Date()
-                  .toISOString(),
-            })
-          ),
-
-          {
-            persistent:
-              false,
-
-            contentType:
-              "application/json",
-          }
-        );
-
-
-        ordersCreated.inc();
-
-
-        res
-          .status(
-            202
-          )
-          .json({
-            orderId,
-
-            status:
-              "CREATED",
-
-            executionAuthorized:
-              false,
-          });
-      } catch (
-        error
-      ) {
-        next(
-          error
-        );
-      }
-    }
-  );
-
-
-  app.get(
-    "/orders/:orderId",
-
-    async (
-      req,
-      res,
-      next
-    ) => {
-      try {
-        const result =
-          await postgres.query(
-            `
-              SELECT
-                id,
-                description,
-                status,
-                created_at,
-                processed_at
-
-              FROM
-                lab_orders
-
-              WHERE
-                id =
-                  $1
-
-              LIMIT 1
-            `,
-            [
-              req.params
-                .orderId,
-            ]
-          );
-
-
-        if (
-          !result.rows[0]
-        ) {
-          return res
-            .status(
-              404
-            )
-            .json({
-              error:
-                "ORDER_NOT_FOUND",
-
-              executionAuthorized:
-                false,
-            });
-        }
-
-
-        return res.json({
-          order:
-            result.rows[0],
+  async (
+    req,
+    res
+  ) => {
+    if (
+      SERVICE_ROLE !== "api"
+    ) {
+      return res
+        .status(
+          404
+        )
+        .json({
+          error:
+            "NOT_AVAILABLE_FOR_ROLE",
 
           executionAuthorized:
             false,
         });
-      } catch (
-        error
-      ) {
-        return next(
-          error
-        );
-      }
     }
-  );
-}
 
 
-/*
- * ============================================================================
- * ERROR HANDLER
- * ============================================================================
- */
+    const description =
+      typeof req.body?.description === "string"
+        ? req.body.description.trim()
+        : "";
 
 
-app.use(
-  (
-    error,
-    req,
-    res,
-    next
-  ) => {
-    recordError(
+    if (
+      !description
+    ) {
+      return res
+        .status(
+          400
+        )
+        .json({
+          error:
+            "DESCRIPTION_REQUIRED",
+
+          executionAuthorized:
+            false,
+        });
+    }
+
+
+    if (
+      description.length > 256
+    ) {
+      return res
+        .status(
+          400
+        )
+        .json({
+          error:
+            "DESCRIPTION_TOO_LONG",
+
+          maximumLength:
+            256,
+
+          executionAuthorized:
+            false,
+        });
+    }
+
+
+    try {
+      const dependencies =
+        await checkDependencies();
+
+
+      if (
+        !dependencies.healthy
+      ) {
+        return res
+          .status(
+            503
+          )
+          .json({
+            error:
+              "DEPENDENCY_UNAVAILABLE",
+
+            dependencies,
+
+            executionAuthorized:
+              false,
+          });
+      }
+
+
+      const orderId =
+        crypto.randomUUID();
+
+
+      await postgres.query(
+        `
+          INSERT INTO lab_orders (
+            id,
+            description,
+            status
+          )
+
+          VALUES (
+            $1,
+            $2,
+            'CREATED'
+          )
+        `,
+        [
+          orderId,
+          description,
+        ]
+      );
+
+
+      await redis.set(
+        `order:${orderId}:status`,
+        "CREATED",
+        {
+          EX:
+            3600,
+        }
+      );
+
+
+      await rabbitChannel.sendToQueue(
+        RABBITMQ_QUEUE,
+        Buffer.from(
+          JSON.stringify({
+            orderId,
+            createdAt:
+              new Date()
+                .toISOString(),
+          }),
+          "utf8"
+        ),
+        {
+          persistent:
+            false,
+
+          contentType:
+            "application/json",
+        }
+      );
+
+
+      ordersCreated.inc();
+
+
+      return res
+        .status(
+          201
+        )
+        .json({
+          id:
+            orderId,
+
+          description,
+
+          status:
+            "CREATED",
+
+          executionAuthorized:
+            false,
+        });
+    } catch (
       error
-    );
+    ) {
+      recordError(
+        error
+      );
 
 
+      return res
+        .status(
+          503
+        )
+        .json({
+          error:
+            "ORDER_CREATION_FAILED",
+
+          message:
+            error.message,
+
+          executionAuthorized:
+            false,
+        });
+    }
+  }
+);
+
+
+app.get(
+  "/orders/:id",
+
+  async (
+    req,
     res
-      .status(
-        503
-      )
-      .json({
-        error:
-          "LAB_DEPENDENCY_OPERATION_FAILED",
+  ) => {
+    if (
+      SERVICE_ROLE !== "api"
+    ) {
+      return res
+        .status(
+          404
+        )
+        .json({
+          error:
+            "NOT_AVAILABLE_FOR_ROLE",
 
-        message:
-          safeError(
-            error
-          ),
+          executionAuthorized:
+            false,
+        });
+    }
+
+
+    try {
+      const result =
+        await postgres.query(
+          `
+            SELECT
+              id,
+              description,
+              status,
+              created_at,
+              processed_at
+
+            FROM lab_orders
+
+            WHERE
+              id = $1
+          `,
+          [
+            req.params.id,
+          ]
+        );
+
+
+      if (
+        result.rowCount === 0
+      ) {
+        return res
+          .status(
+            404
+          )
+          .json({
+            error:
+              "ORDER_NOT_FOUND",
+
+            executionAuthorized:
+              false,
+          });
+      }
+
+
+      const order =
+        result.rows[0];
+
+
+      return res.json({
+        id:
+          order.id,
+
+        description:
+          order.description,
+
+        status:
+          order.status,
+
+        createdAt:
+          order.created_at,
+
+        processedAt:
+          order.processed_at,
 
         executionAuthorized:
           false,
       });
+    } catch (
+      error
+    ) {
+      recordError(
+        error
+      );
+
+
+      return res
+        .status(
+          503
+        )
+        .json({
+          error:
+            "ORDER_LOOKUP_FAILED",
+
+          message:
+            error.message,
+
+          executionAuthorized:
+            false,
+        });
+    }
   }
 );
 
@@ -1303,97 +1478,50 @@ app.use(
  * ============================================================================
  */
 
-
-async function start() {
-  await retry(
-    initialiseDatabase,
-
-    30,
-    1000
-  );
-
-
-  await retry(
-    async () => {
-      if (
-        !redis.isOpen
-      ) {
-        await redis.connect();
-      }
-
-
-      await redis.ping();
-    },
-
-    30,
-    1000
-  );
-
-
-  await retry(
-    connectRabbitMQ,
-
-    30,
-    1000
-  );
-
-
-  app.listen(
-    PORT,
-    "0.0.0.0",
-
-    () => {
-      console.log(
-        JSON.stringify({
-          event:
-            "aira_reliability_fixture_started",
-
-          serviceRole:
-            SERVICE_ROLE,
-
-          port:
-            PORT,
-
-          labId:
-            LAB_ID,
-
-          safetyClass:
-            SAFETY_CLASS,
-
-          executionAuthorized:
-            false,
-        })
-      );
-    }
-  );
-}
-
-
-/*
- * ============================================================================
- * HELPERS
- * ============================================================================
- */
-
-
-async function retry(
-  operation,
-  attempts,
-  delayMs
-) {
-  let lastError =
-    null;
+async function initialiseDependencies() {
+  let lastError = null;
 
 
   for (
-    let attempt =
-      1;
-    attempt <=
-      attempts;
-    attempt++
+    let attempt = 1;
+    attempt <= 30;
+    attempt += 1
   ) {
     try {
-      return await operation();
+      await initialiseDatabase();
+
+      await ensureRedis();
+
+      await connectRabbitMQ();
+
+
+      if (
+        SERVICE_ROLE === "worker"
+      ) {
+        await beginConsumer();
+      }
+
+
+      console.log(
+        JSON.stringify({
+          level:
+            "info",
+
+          message:
+            "Reliability Lab dependencies initialized.",
+
+          service:
+            `aira-lab-${SERVICE_ROLE}`,
+
+          attempt,
+
+          labId:
+            LAB_ID,
+        })
+      );
+
+
+      return;
     } catch (
       error
     ) {
@@ -1406,69 +1534,71 @@ async function retry(
       );
 
 
-      if (
-        attempt <
-        attempts
-      ) {
-        await sleep(
-          delayMs
-        );
-      }
+      await new Promise(
+        (
+          resolve
+        ) =>
+          setTimeout(
+            resolve,
+            2000
+          )
+      );
     }
   }
 
 
-  throw lastError;
-}
-
-
-function sleep(
-  ms
-) {
-  return new Promise(
-    (
-      resolve
-    ) =>
-      setTimeout(
-        resolve,
-        ms
-      )
+  throw new Error(
+    `Reliability Lab dependencies failed to initialize: ${
+      lastError?.message ||
+      "unknown error"
+    }`
   );
 }
 
 
-function safeError(
-  error
-) {
-  return String(
-    error?.message ||
-    "unknown error"
-  )
-    .replace(
-      /(?:password|secret|token|authorization)\s*[:=]\s*[^\s,;]+/gi,
+let httpServer =
+  null;
 
-      "[REDACTED]"
-    )
-    .slice(
-      0,
-      500
+
+async function start() {
+  await initialiseDependencies();
+
+
+  httpServer =
+    app.listen(
+      PORT,
+      "0.0.0.0",
+
+      () => {
+        console.log(
+          JSON.stringify({
+            level:
+              "info",
+
+            message:
+              "AIRA Reliability Lab fixture started.",
+
+            service:
+              `aira-lab-${SERVICE_ROLE}`,
+
+            role:
+              SERVICE_ROLE,
+
+            port:
+              PORT,
+
+            labId:
+              LAB_ID,
+
+            safetyClass:
+              SAFETY_CLASS,
+
+            executionAuthorized:
+              false,
+          })
+        );
+      }
     );
-}
-
-
-function recordError(
-  error
-) {
-  state.lastError = {
-    message:
-      safeError(
-        error
-      ),
-
-    at:
-      new Date()
-        .toISOString(),
-  };
 }
 
 
@@ -1478,23 +1608,69 @@ function recordError(
  * ============================================================================
  */
 
+let shuttingDown =
+  false;
+
 
 async function shutdown(
   signal
 ) {
+  if (
+    shuttingDown
+  ) {
+    return;
+  }
+
+
+  shuttingDown =
+    true;
+
+
   console.log(
     JSON.stringify({
-      event:
-        "aira_reliability_fixture_shutdown",
+      level:
+        "info",
 
-      serviceRole:
-        SERVICE_ROLE,
+      message:
+        "Reliability Lab fixture shutting down.",
+
+      service:
+        `aira-lab-${SERVICE_ROLE}`,
 
       signal,
-
-      executionAuthorized:
-        false,
     })
+  );
+
+
+  if (
+    rabbitReconnectTimer
+  ) {
+    clearTimeout(
+      rabbitReconnectTimer
+    );
+
+    rabbitReconnectTimer =
+      null;
+  }
+
+
+  await new Promise(
+    (
+      resolve
+    ) => {
+      if (
+        !httpServer
+      ) {
+        resolve();
+
+        return;
+      }
+
+
+      httpServer.close(
+        () => resolve()
+      );
+    }
   );
 
 
@@ -1580,26 +1756,27 @@ process.on(
 );
 
 
+process.on(
+  "unhandledRejection",
+
+  (
+    error
+  ) => {
+    recordError(
+      error
+    );
+  }
+);
+
+
 start()
   .catch(
     (
       error
     ) => {
-      console.error(
-        JSON.stringify({
-          event:
-            "aira_reliability_fixture_start_failed",
-
-          message:
-            safeError(
-              error
-            ),
-
-          executionAuthorized:
-            false,
-        })
+      recordError(
+        error
       );
-
 
       process.exit(
         1

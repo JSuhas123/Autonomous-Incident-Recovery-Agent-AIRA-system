@@ -31,6 +31,7 @@ services:
       aira.reliability-lab: "true"
       aira.phase: "21"
       aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "postgres.database"
 
     networks:
       - reliability-lab
@@ -43,9 +44,6 @@ services:
     ports:
       - "16380:6379"
 
-    tmpfs:
-      - /data
-
     command:
       [
         "redis-server",
@@ -54,6 +52,9 @@ services:
         "--appendonly",
         "no"
       ]
+
+    tmpfs:
+      - /data
 
     healthcheck:
       test:
@@ -70,6 +71,7 @@ services:
       aira.reliability-lab: "true"
       aira.phase: "21"
       aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "redis.instance"
 
     networks:
       - reliability-lab
@@ -87,9 +89,6 @@ services:
       - "15673:5672"
       - "25673:15672"
 
-    tmpfs:
-      - /var/lib/rabbitmq
-
     healthcheck:
       test:
         [
@@ -106,6 +105,7 @@ services:
       aira.reliability-lab: "true"
       aira.phase: "21"
       aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "rabbitmq.broker"
 
     networks:
       - reliability-lab
@@ -154,7 +154,7 @@ services:
           "http://127.0.0.1:8080/ready"
         ]
       interval: 5s
-      timeout: 3s
+      timeout: 4s
       retries: 20
 
     labels:
@@ -168,6 +168,9 @@ services:
 
 
   lab-worker:
+    build:
+      context: ../apps/fixture
+
     image: aira-reliability-fixture:21.6-v1
     container_name: aira-lab-worker
 
@@ -210,7 +213,7 @@ services:
           "http://127.0.0.1:8081/ready"
         ]
       interval: 5s
-      timeout: 3s
+      timeout: 4s
       retries: 20
 
     labels:
@@ -223,10 +226,99 @@ services:
       - reliability-lab
 
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.133.0
+    container_name: aira-lab-otel-collector
+
+    command:
+      [
+        "--config=/etc/otelcol-contrib/config.yaml"
+      ]
+
+    volumes:
+      - ../observability/otel-collector.yml:/etc/otelcol-contrib/config.yaml:ro
+
+    ports:
+      - "14317:4317"
+      - "14318:4318"
+      - "18889:8889"
+      - "13134:13133"
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/otelcol-contrib",
+          "--version"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "observability.otel-collector"
+
+    networks:
+      - reliability-lab
+
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: aira-lab-prometheus
+
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/tmp/prometheus"
+      - "--storage.tsdb.retention.time=1h"
+
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+    ports:
+      - "19090:9090"
+
+    depends_on:
+      lab-api:
+        condition: service_healthy
+
+      lab-worker:
+        condition: service_healthy
+
+      otel-collector:
+        condition: service_started
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "-",
+          "http://127.0.0.1:9090/-/ready"
+        ]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+
+    labels:
+      aira.reliability-lab: "true"
+      aira.phase: "21"
+      aira.safety-class: "LAB_ONLY"
+      aira.resource-type: "observability.prometheus"
+
+    networks:
+      - reliability-lab
+
+
 networks:
 
   reliability-lab:
     name: aira-reliability-lab
+
     driver: bridge
 
     labels:

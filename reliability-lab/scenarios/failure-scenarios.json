@@ -1,0 +1,384 @@
+[
+  {
+    "failureKey": "kubernetes.pod.crash",
+    "version": 1,
+    "name": "Kubernetes Pod Crash",
+    "domain": "KUBERNETES",
+    "failureType": "POD_CRASH",
+    "targetResourceType": "kubernetes.pod",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["KIND", "KUBERNETES"],
+    "injector": "KUBERNETES_POD_TERMINATION",
+    "groundTruth": {
+      "expectedFailureModeKey": "kubernetes.pod.crash",
+      "expectedSymptoms": [
+        "pod unavailable",
+        "restart or replacement pod observed"
+      ],
+      "expectedDiagnosis": "KUBERNETES_POD_CRASH",
+      "acceptableRecoveryStrategies": [
+        "RESTART_WORKLOAD",
+        "RECREATE_POD"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "DELETE_NAMESPACE",
+        "DELETE_CLUSTER"
+      ],
+      "expectedPolicyBehavior": "ALLOW_ONLY_AUTHORIZED_LAB_RECOVERY",
+      "expectedVerificationResult": "WORKLOAD_READY"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "kubernetes.bad.deployment",
+    "version": 1,
+    "name": "Kubernetes Bad Deployment",
+    "domain": "KUBERNETES",
+    "failureType": "BAD_DEPLOYMENT",
+    "targetResourceType": "kubernetes.deployment",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["KIND", "KUBERNETES"],
+    "injector": "KUBERNETES_BAD_DEPLOYMENT",
+    "groundTruth": {
+      "expectedFailureModeKey": "kubernetes.deployment.bad_release",
+      "expectedSymptoms": [
+        "deployment unavailable",
+        "pods fail readiness"
+      ],
+      "expectedDiagnosis": "KUBERNETES_BAD_DEPLOYMENT",
+      "acceptableRecoveryStrategies": [
+        "ROLLBACK_DEPLOYMENT"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "DELETE_NAMESPACE",
+        "DELETE_CLUSTER"
+      ],
+      "expectedPolicyBehavior": "ALLOW_ONLY_AUTHORIZED_LAB_ROLLBACK",
+      "expectedVerificationResult": "DEPLOYMENT_AVAILABLE"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "kubernetes.readiness.failure",
+    "version": 1,
+    "name": "Kubernetes Readiness Failure",
+    "domain": "KUBERNETES",
+    "failureType": "READINESS_FAILURE",
+    "targetResourceType": "kubernetes.pod",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["KIND", "KUBERNETES"],
+    "injector": "KUBERNETES_READINESS_FAILURE",
+    "groundTruth": {
+      "expectedFailureModeKey": "kubernetes.pod.readiness_failure",
+      "expectedSymptoms": [
+        "readiness false",
+        "service endpoint unavailable"
+      ],
+      "expectedDiagnosis": "KUBERNETES_READINESS_FAILURE",
+      "acceptableRecoveryStrategies": [
+        "RESTART_WORKLOAD",
+        "ROLLBACK_DEPLOYMENT"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "DELETE_NAMESPACE"
+      ],
+      "expectedPolicyBehavior": "REQUIRE_AUTHORIZED_RECOVERY",
+      "expectedVerificationResult": "READINESS_RESTORED"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "kubernetes.pod.oom",
+    "version": 1,
+    "name": "Kubernetes Pod OOM",
+    "domain": "RESOURCE_PRESSURE",
+    "failureType": "OOM",
+    "targetResourceType": "kubernetes.pod",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["KIND", "KUBERNETES"],
+    "injector": "KUBERNETES_MEMORY_OOM",
+    "groundTruth": {
+      "expectedFailureModeKey": "kubernetes.pod.oom",
+      "expectedSymptoms": [
+        "OOMKilled",
+        "container restart"
+      ],
+      "expectedDiagnosis": "KUBERNETES_CONTAINER_OOM",
+      "acceptableRecoveryStrategies": [
+        "RESTART_WORKLOAD",
+        "ADJUST_LAB_RESOURCE_LIMIT"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "REMOVE_PRODUCTION_LIMITS"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY_RESOURCE_CHANGE",
+      "expectedVerificationResult": "WORKLOAD_STABLE"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "resource.cpu.saturation",
+    "version": 1,
+    "name": "CPU Saturation",
+    "domain": "RESOURCE_PRESSURE",
+    "failureType": "CPU_SATURATION",
+    "targetResourceType": "application.service",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "CPU_SATURATION",
+    "groundTruth": {
+      "expectedFailureModeKey": "resource.cpu.saturation",
+      "expectedSymptoms": [
+        "CPU utilization increase",
+        "latency increase"
+      ],
+      "expectedDiagnosis": "CPU_SATURATION",
+      "acceptableRecoveryStrategies": [
+        "RESTART_WORKLOAD",
+        "SCALE_LAB_WORKLOAD"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "MUTATE_NON_LAB_RESOURCE"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "CPU_AND_LATENCY_NORMAL"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "dependency.outage",
+    "version": 1,
+    "name": "Dependency Outage",
+    "domain": "DEPENDENCY",
+    "failureType": "DEPENDENCY_OUTAGE",
+    "targetResourceType": "application.dependency",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "DEPENDENCY_OUTAGE",
+    "groundTruth": {
+      "expectedFailureModeKey": "application.dependency.outage",
+      "expectedSymptoms": [
+        "dependency health false",
+        "request failure"
+      ],
+      "expectedDiagnosis": "DEPENDENCY_OUTAGE",
+      "acceptableRecoveryStrategies": [
+        "RESTORE_DEPENDENCY",
+        "RESTART_DEPENDENCY"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "MUTATE_UNRELATED_RESOURCE"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "DEPENDENCY_HEALTHY"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "postgres.unavailable",
+    "version": 1,
+    "name": "PostgreSQL Unavailable",
+    "domain": "DATABASE",
+    "failureType": "DB_UNAVAILABLE",
+    "targetResourceType": "postgres.database",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "POSTGRES_UNAVAILABLE",
+    "groundTruth": {
+      "expectedFailureModeKey": "postgres.database.unavailable",
+      "expectedSymptoms": [
+        "database health false",
+        "application readiness degradation"
+      ],
+      "expectedDiagnosis": "POSTGRES_UNAVAILABLE",
+      "acceptableRecoveryStrategies": [
+        "RESTORE_DATABASE",
+        "RESTART_DATABASE"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "DROP_DATABASE",
+        "DELETE_DATA"
+      ],
+      "expectedPolicyBehavior": "NO_DESTRUCTIVE_DATA_ACTION",
+      "expectedVerificationResult": "DATABASE_REACHABLE"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "postgres.connection.exhaustion",
+    "version": 1,
+    "name": "PostgreSQL Connection Exhaustion",
+    "domain": "DATABASE",
+    "failureType": "DB_CONNECTION_EXHAUSTION",
+    "targetResourceType": "postgres.database",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "POSTGRES_CONNECTION_EXHAUSTION",
+    "groundTruth": {
+      "expectedFailureModeKey": "postgres.connection.exhaustion",
+      "expectedSymptoms": [
+        "connection count saturation",
+        "database connection failures"
+      ],
+      "expectedDiagnosis": "POSTGRES_CONNECTION_EXHAUSTION",
+      "acceptableRecoveryStrategies": [
+        "TERMINATE_LAB_TEST_CONNECTIONS",
+        "RESTART_LAB_DATABASE"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "TERMINATE_NON_LAB_CONNECTIONS"
+      ],
+      "expectedPolicyBehavior": "LAB_SCOPE_ONLY",
+      "expectedVerificationResult": "CONNECTION_CAPACITY_RESTORED"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "redis.unavailable",
+    "version": 1,
+    "name": "Redis Unavailable",
+    "domain": "CACHE",
+    "failureType": "REDIS_UNAVAILABLE",
+    "targetResourceType": "redis.instance",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "REDIS_UNAVAILABLE",
+    "groundTruth": {
+      "expectedFailureModeKey": "redis.instance.unavailable",
+      "expectedSymptoms": [
+        "redis health false"
+      ],
+      "expectedDiagnosis": "REDIS_UNAVAILABLE",
+      "acceptableRecoveryStrategies": [
+        "RESTORE_REDIS",
+        "RESTART_REDIS"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "MUTATE_NON_LAB_CACHE"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "REDIS_REACHABLE"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "rabbitmq.unavailable",
+    "version": 1,
+    "name": "RabbitMQ Unavailable",
+    "domain": "MESSAGING",
+    "failureType": "RABBITMQ_FAILURE",
+    "targetResourceType": "rabbitmq.broker",
+    "risk": "LOW",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "RABBITMQ_UNAVAILABLE",
+    "groundTruth": {
+      "expectedFailureModeKey": "rabbitmq.broker.unavailable",
+      "expectedSymptoms": [
+        "broker health false",
+        "worker processing interrupted"
+      ],
+      "expectedDiagnosis": "RABBITMQ_UNAVAILABLE",
+      "acceptableRecoveryStrategies": [
+        "RESTORE_RABBITMQ",
+        "RESTART_RABBITMQ"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "PURGE_PRODUCTION_QUEUE"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "QUEUE_PROCESSING_RESTORED"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "network.latency",
+    "version": 1,
+    "name": "Network Latency",
+    "domain": "NETWORK",
+    "failureType": "NETWORK_LATENCY",
+    "targetResourceType": "network.path",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "NETWORK_LATENCY",
+    "groundTruth": {
+      "expectedFailureModeKey": "network.latency",
+      "expectedSymptoms": [
+        "request latency increase"
+      ],
+      "expectedDiagnosis": "NETWORK_LATENCY",
+      "acceptableRecoveryStrategies": [
+        "REMOVE_LAB_NETWORK_FAULT"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "CHANGE_EXTERNAL_NETWORK"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "LATENCY_NORMAL"
+    },
+    "executionAuthorized": false
+  },
+
+  {
+    "failureKey": "dns.failure",
+    "version": 1,
+    "name": "DNS Failure",
+    "domain": "DNS",
+    "failureType": "DNS_FAILURE",
+    "targetResourceType": "network.dns",
+    "risk": "MEDIUM",
+    "destructive": false,
+    "reversible": true,
+    "supportedLabTypes": ["DOCKER", "KIND", "KUBERNETES"],
+    "injector": "DNS_FAILURE",
+    "groundTruth": {
+      "expectedFailureModeKey": "network.dns.failure",
+      "expectedSymptoms": [
+        "name resolution failure",
+        "dependency connection failure"
+      ],
+      "expectedDiagnosis": "DNS_FAILURE",
+      "acceptableRecoveryStrategies": [
+        "RESTORE_LAB_DNS"
+      ],
+      "prohibitedRecoveryStrategies": [
+        "CHANGE_HOST_DNS",
+        "CHANGE_PRODUCTION_DNS"
+      ],
+      "expectedPolicyBehavior": "LAB_ONLY",
+      "expectedVerificationResult": "DNS_RESOLUTION_RESTORED"
+    },
+    "executionAuthorized": false
+  }
+]

@@ -19,23 +19,22 @@ spec:
       app: postgres
 
   template:
-
     metadata:
       labels:
         app: postgres
         aira.reliability-lab: "true"
         aira.phase: "21"
         aira.safety-class: "LAB_ONLY"
+        aira.resource-type: "postgres.database"
 
     spec:
-
       containers:
-
         - name: postgres
+
           image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
 
           env:
-
             - name: POSTGRES_DB
               value: aira_lab
 
@@ -46,7 +45,6 @@ spec:
               value: aira_lab_password
 
           ports:
-
             - containerPort: 5432
               name: postgres
 
@@ -79,7 +77,6 @@ spec:
             failureThreshold: 6
 
           resources:
-
             requests:
               cpu: 50m
               memory: 64Mi
@@ -89,13 +86,11 @@ spec:
               memory: 256Mi
 
           volumeMounts:
-
-            - name: data
+            - name: postgres-data
               mountPath: /var/lib/postgresql/data
 
       volumes:
-
-        - name: data
+        - name: postgres-data
           emptyDir: {}
 
 
@@ -115,15 +110,13 @@ metadata:
     aira.safety-class: "LAB_ONLY"
 
 spec:
-
   selector:
     app: postgres
 
   ports:
-
     - name: postgres
       port: 5432
-      targetPort: 5432
+      targetPort: postgres
 
 
 ---
@@ -149,20 +142,20 @@ spec:
       app: redis
 
   template:
-
     metadata:
       labels:
         app: redis
         aira.reliability-lab: "true"
         aira.phase: "21"
         aira.safety-class: "LAB_ONLY"
+        aira.resource-type: "redis.instance"
 
     spec:
-
       containers:
-
         - name: redis
+
           image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
 
           args:
             - redis-server
@@ -172,7 +165,6 @@ spec:
             - "no"
 
           ports:
-
             - containerPort: 6379
               name: redis
 
@@ -180,3 +172,208 @@ spec:
             exec:
               command:
                 - redis-cli
+                - ping
+
+            initialDelaySeconds: 2
+            periodSeconds: 3
+            timeoutSeconds: 2
+            failureThreshold: 20
+
+          livenessProbe:
+            exec:
+              command:
+                - redis-cli
+                - ping
+
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+
+            limits:
+              cpu: 250m
+              memory: 128Mi
+
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+
+      volumes:
+        - name: redis-data
+          emptyDir: {}
+
+
+---
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: redis
+  namespace: aira-reliability-lab
+
+  labels:
+    app: redis
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+  selector:
+    app: redis
+
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: rabbitmq
+  namespace: aira-reliability-lab
+
+  labels:
+    app: rabbitmq
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: rabbitmq
+
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+        aira.reliability-lab: "true"
+        aira.phase: "21"
+        aira.safety-class: "LAB_ONLY"
+        aira.resource-type: "rabbitmq.broker"
+
+    spec:
+      initContainers:
+        - name: prepare-rabbitmq-data
+
+          image: rabbitmq:3.13-management-alpine
+          imagePullPolicy: IfNotPresent
+
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              mkdir -p /var/lib/rabbitmq
+              rm -f /var/lib/rabbitmq/.erlang.cookie
+              chown -R rabbitmq:rabbitmq /var/lib/rabbitmq
+              chmod 700 /var/lib/rabbitmq
+
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+
+      containers:
+        - name: rabbitmq
+
+          image: rabbitmq:3.13-management-alpine
+          imagePullPolicy: IfNotPresent
+
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              value: guest
+
+            - name: RABBITMQ_DEFAULT_PASS
+              value: guest
+
+          ports:
+            - containerPort: 5672
+              name: amqp
+
+            - containerPort: 15672
+              name: management
+
+                    startupProbe:
+            tcpSocket:
+              port: amqp
+
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 36
+
+          readinessProbe:
+            tcpSocket:
+              port: amqp
+
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+
+          livenessProbe:
+            tcpSocket:
+              port: amqp
+
+            periodSeconds: 15
+            timeoutSeconds: 2
+            failureThreshold: 4
+
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+
+            limits:
+              cpu: 500m
+              memory: 512Mi
+
+          volumeMounts:
+            - name: rabbitmq-data
+              mountPath: /var/lib/rabbitmq
+
+      volumes:
+        - name: rabbitmq-data
+          emptyDir: {}
+
+
+---
+
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: rabbitmq
+  namespace: aira-reliability-lab
+
+  labels:
+    app: rabbitmq
+    aira.reliability-lab: "true"
+    aira.phase: "21"
+    aira.safety-class: "LAB_ONLY"
+
+spec:
+  selector:
+    app: rabbitmq
+
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: amqp
+
+    - name: management
+      port: 15672
+      targetPort: management
