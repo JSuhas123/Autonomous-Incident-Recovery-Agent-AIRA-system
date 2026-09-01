@@ -447,12 +447,16 @@ if (
     aiCompleteness;
 } else {
   /*
-   * Canonical Phase 6 production path.
+   * AI may refine completeness upward only when its assessment is backed
+   * by the same canonical evidence package.
    *
-   * Deterministic evidence coverage remains dominant so an LLM cannot
-   * claim strong completeness without actual telemetry/evidence.
+   * It must never reduce the deterministic evidence floor.
+   *
+   * This is especially important when ReasoningProvider falls back to a
+   * mock/unavailable provider that returns 0.
    */
-  completeness =
+
+  const blendedCompleteness =
     Number(
       (
         deterministicCompleteness *
@@ -464,8 +468,13 @@ if (
           4
         )
     );
-}
 
+  completeness =
+    Math.max(
+      deterministicCompleteness,
+      blendedCompleteness
+    );
+}
       // ======================================================================
       // 11. FINAL MISSING EVIDENCE
       // ======================================================================
@@ -793,18 +802,43 @@ if (
      * If canonical Kubernetes signals already exist, avoid querying the
      * cluster again unless explicitly requested.
      */
-    const canonicalKubernetesEvidence =
-      items.some(
-        (
-          item
-        ) =>
-          item.type ===
-            EVIDENCE_TYPE
-              .KUBERNETES_EVENT ||
-          item.sourceType ===
-            EVIDENCE_SOURCE_TYPE
-              .KUBERNETES_API
+   const canonicalKubernetesEvidence =
+  items.some(
+    (
+      item
+    ) => {
+      /*
+       * Only evidence actually collected from the Kubernetes API can
+       * satisfy the "already investigated" condition.
+       *
+       * A persisted Kubernetes-originated signal must not suppress fresh
+       * read-only investigation.
+       */
+
+      if (
+        item.sourceType !==
+          EVIDENCE_SOURCE_TYPE
+            .KUBERNETES_API
+      ) {
+        return false;
+      }
+
+      return (
+        item.type ===
+          EVIDENCE_TYPE
+            .KUBERNETES_EVENT ||
+        item.type ===
+          EVIDENCE_TYPE
+            .RESOURCE_STATE ||
+        item.type ===
+          EVIDENCE_TYPE
+            .TOPOLOGY ||
+        item.type ===
+          EVIDENCE_TYPE
+            .DEPENDENCY_STATE
       );
+    }
+  );
 
     if (
       canonicalKubernetesEvidence &&
@@ -2675,17 +2709,21 @@ function estimateCompleteness(
       }
     };
 
-  component(
-    presentTypes.has(
-      EVIDENCE_TYPE
-        .ALERT
-    ) ||
-    presentTypes.has(
-      EVIDENCE_TYPE
-        .SIGNAL
-    ),
-    0.15
-  );
+ component(
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .ALERT
+  ) ||
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .SIGNAL
+  ) ||
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .KUBERNETES_EVENT
+  ),
+  0.15
+);
 
   component(
     presentTypes.has(
@@ -2712,15 +2750,23 @@ function estimateCompleteness(
   );
 
   component(
-    presentTypes.has(
-      EVIDENCE_TYPE
-        .TOPOLOGY
-    ) ||
-    context
-      .topology
-      ?.rootService,
-    0.15
-  );
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .TOPOLOGY
+  ) ||
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .RESOURCE_STATE
+  ) ||
+  presentTypes.has(
+    EVIDENCE_TYPE
+      .DEPENDENCY_STATE
+  ) ||
+  context
+    .topology
+    ?.rootService,
+  0.15
+);
 
   component(
     presentTypes.has(

@@ -408,15 +408,60 @@ class ExperimentOrchestrator {
       );
 
 
+           // ======================================================================
+      // INJECTION
+      // ======================================================================
+
+      const injectingRun =
+        await this.updateRun(
+          runContext,
+          EXPERIMENT_RUN_STATUS
+            .INJECTING
+        );
+
+
+      if (
+        !injectingRun ||
+        injectingRun.status !==
+          EXPERIMENT_RUN_STATUS
+            .INJECTING
+      ) {
+        throw orchestratorError(
+          "PHASE21_EXPERIMENT_RUN_NOT_INJECTING",
+          "Canonical experiment run did not enter INJECTING before failure injection"
+        );
+      }
+
+
       const injection =
         await this
           .failureInjector
           .inject({
             ...runContext,
 
+            /*
+             * Phase 21.9 requires the canonical persisted run object,
+             * not merely its public ID.
+             *
+             * The object returned by updateRun() proves PostgreSQL has
+             * already transitioned this exact run to INJECTING before
+             * any destructive lab mutation is permitted.
+             */
+            experimentRun:
+              injectingRun,
+
             failureKey:
               input.failureKey ||
               definition.experimentKey,
+
+            /*
+             * Keep the Failure Scenario Registry version aligned with
+             * the canonical experiment definition. Do not silently
+             * fall back to Phase 21.9's default version for future
+             * experiment-definition revisions.
+             */
+            version:
+              definition.version,
 
             target:
               input.target ||
@@ -438,7 +483,6 @@ class ExperimentOrchestrator {
             executionAuthorized:
               false,
           });
-
 
       assertNonAuthorizingResult(
         injection,

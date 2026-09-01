@@ -1,0 +1,53 @@
+{
+  "certificateVersion": "21.16-batch8b-live-v3",
+  "certifiedAt": "2026-08-31T20:44:20.983Z",
+  "phase": "21.16",
+  "batch": "8B",
+  "certificationType": "LIVE_POSITIVE_AUTHORIZED_LAB_EXECUTION",
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "integrationId": "int_phase21_batch8b_b8a867447d624ace",
+  "capability": "kubernetes.restartDeployment",
+  "runtimeCapability": "execute_capability",
+  "tenantGovernanceObserved": true,
+  "tenantGovernanceAllowExecution": true,
+  "recoveryDecisionId": "rec_phase21_batch8b_e8ae9115cc5c4cfc86c1",
+  "recoveryDecisionRevision": 4,
+  "recoveryDecisionIsCurrent": false,
+  "selectedCandidateId": "cand_phase21_batch8b_e38c708dee0548d8",
+  "selectedPlaybookId": "PB-PHASE21-K8S-RESTART-LAB-001",
+  "authorizationId": "execa_8e6b423b250243c098aef547",
+  "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+  "planId": "execplan_b39d7f794723c4298c917179",
+  "planHash": "planhash_0e56194bf5f65e775d319f9a9e793e01035d99bdca79205850727554e219df83",
+  "podBefore": {
+    "name": "lab-api-56767695c5-fcspz",
+    "uid": "2aebca6e-90c7-464f-ba4c-725c03e222f2",
+    "ready": true
+  },
+  "podAfter": {
+    "name": "lab-api-97949b5d7-8f5b6",
+    "uid": "61c303c3-a581-452d-bdf1-1a20311679ec",
+    "ready": true
+  },
+  "replacementObserved": true,
+  "replacementReady": true,
+  "evaluation": {
+    "evaluatorVersion": "21.16-positive-v1",
+    "result": "PASS",
+    "failures": [],
+    "canonicalAuthorizationObserved": true,
+    "executionPlanObserved": true,
+    "controlledExecutionObserved": true,
+    "productionCertified": false,
+    "executionAuthorized": false
+  },
+  "groundTruthToAira": false,
+  "productionCertified": false,
+  "phase21ExecutionAuthorized": false,
+  "canonicalExecutionAuthorizationObserved": true,
+  "passed": true
+}

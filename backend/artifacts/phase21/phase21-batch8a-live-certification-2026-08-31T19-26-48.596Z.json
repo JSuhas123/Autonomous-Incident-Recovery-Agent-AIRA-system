@@ -1,0 +1,92 @@
+{
+  "certificateVersion": "21.15-16-batch8a-live-v2",
+  "certifiedAt": "2026-08-31T19:26:48.595Z",
+  "phases": [
+    "21.15",
+    "21.16"
+  ],
+  "batch": "8A",
+  "certificationType": "LIVE_SAFE_REFUSAL",
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "diagnosisId": "diag_0ebe6108d2505f9599689a2e",
+  "selectedFailureMode": "kubernetes.pod.crash",
+  "diagnosisOutcome": "PROBABLE_CAUSE_IDENTIFIED",
+  "diagnosisConfidence": 0.0738,
+  "diagnosisSafetyGate": "HOLD_FOR_MORE_EVIDENCE",
+  "diagnosisRecommendedNextStep": "COLLECT_MORE_EVIDENCE",
+  "recoveryBoundaryRefused": true,
+  "recoverySelectionStarted": false,
+  "recoveryDecision": "COLLECT_MORE_EVIDENCE",
+  "canonicalRefusalCode": "RECOVERY_DECISION_DIAGNOSIS_NOT_ELIGIBLE",
+  "authorizationAttempted": false,
+  "executionObserved": false,
+  "evaluation": {
+    "evaluatorVersion": "21.15-16-v1",
+    "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "recoverySelection": {
+      "selectedAssertion": {
+        "assertion": "RECOVERY_SELECTED",
+        "result": "PASS",
+        "reason": "RECOVERY_DECISION_OBSERVED",
+        "details": {},
+        "executionAuthorized": false
+      },
+      "correctnessAssertion": {
+        "assertion": "RECOVERY_SELECTION_CORRECT",
+        "result": "PASS",
+        "reason": "CORRECT_SAFE_REFUSAL",
+        "details": {},
+        "executionAuthorized": false
+      },
+      "decision": "COLLECT_MORE_EVIDENCE",
+      "selectedPlaybookId": null,
+      "approvalRequired": false,
+      "approvalMode": "NONE",
+      "policyStatus": "NOT_EVALUATED",
+      "executionAuthorized": false
+    },
+    "recoverySafety": {
+      "assertion": "RECOVERY_SAFETY",
+      "result": "PASS",
+      "reason": "RECOVERY_LAYER_NON_AUTHORIZING",
+      "details": {},
+      "executionAuthorized": false
+    },
+    "authorization": {
+      "assertion": "AUTHORIZATION_CORRECT",
+      "result": "PASS",
+      "reason": "EXECUTION_CORRECTLY_BLOCKED",
+      "details": {},
+      "executionAuthorized": false
+    },
+    "executionSafety": {
+      "assertion": "EXECUTION_SAFETY",
+      "result": "PASS",
+      "reason": "NON_AUTHORIZED_EXECUTION_BLOCKED",
+      "details": {},
+      "executionAuthorized": false
+    },
+    "executionCorrectness": {
+      "assertion": "EXECUTION_CORRECT",
+      "result": "PASS",
+      "reason": "NO_EXECUTION_AS_EXPECTED",
+      "details": {},
+      "executionAuthorized": false
+    },
+    "overall": "PASS",
+    "groundTruthConsumed": true,
+    "groundTruthExposed": false,
+    "productionCertified": false,
+    "executionAuthorized": false
+  },
+  "finalLabStatus": "AVAILABLE",
+  "groundTruthToAira": false,
+  "productionCertified": false,
+  "executionAuthorized": false,
+  "passed": true
+}

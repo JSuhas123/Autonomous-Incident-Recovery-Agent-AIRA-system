@@ -48,6 +48,27 @@ const FILTER_COLUMNS = {
 
   source:
     "source",
+
+  createdAt:
+    "created_at",
+
+  updatedAt:
+    "updated_at",
+};
+
+
+const SORT_COLUMNS = {
+  createdAt:
+    "created_at",
+
+  updatedAt:
+    "updated_at",
+
+  severity:
+    "severity",
+
+  status:
+    "status",
 };
 
 class PostgresIncidentRepository
@@ -116,14 +137,47 @@ class PostgresIncidentRepository
     );
   }
 
-  async findMany(
+   async findMany(
     filter = {},
+    optionsOrTransaction = {},
     transaction = null
   ) {
     const context =
       requireScope(
         filter
       );
+
+
+    let options =
+      {};
+
+
+    /*
+     * Backward compatibility:
+     *
+     * repository.findMany(filter, transaction)
+     *
+     * and canonical compatibility:
+     *
+     * Incident.find(...).sort(...).limit(...)
+     *
+     * both remain supported.
+     */
+    if (
+      optionsOrTransaction
+        ?.kind ===
+        "postgres" ||
+      optionsOrTransaction
+        ?.client
+    ) {
+      transaction =
+        optionsOrTransaction;
+    } else {
+      options =
+        optionsOrTransaction ||
+        {};
+    }
+
 
     return this.scope.run(
       context,
@@ -140,16 +194,48 @@ class PostgresIncidentRepository
             resolved
           );
 
+
+        const orderBy =
+          buildOrderBy(
+            options.sort
+          );
+
+
+        const limit =
+          normalizeLimit(
+            options.limit
+          );
+
+
+        let sql = `
+          SELECT *
+          FROM incidents.incidents
+          WHERE ${where}
+          ORDER BY ${orderBy}
+        `;
+
+
+        if (
+          limit !==
+          null
+        ) {
+          const limitIndex =
+            values.push(
+              limit
+            );
+
+
+          sql +=
+            ` LIMIT $${limitIndex}`;
+        }
+
+
         const result =
           await client.query(
-            `
-              SELECT *
-              FROM incidents.incidents
-              WHERE ${where}
-              ORDER BY created_at ASC
-            `,
+            sql,
             values
           );
+
 
         return result.rows.map(
           (
@@ -574,7 +660,7 @@ class PostgresIncidentRepository
   );
 }
 
-  buildFilter(
+   buildFilter(
     filter,
     resolved
   ) {
@@ -583,10 +669,12 @@ class PostgresIncidentRepository
       "environment_id = $2",
     ];
 
+
     const values = [
       resolved.organizationUuid,
       resolved.environmentUuid,
     ];
+
 
     for (
       const [
@@ -606,100 +694,31 @@ class PostgresIncidentRepository
         continue;
       }
 
+
       if (
         key ===
-        "_id"
+          "$or"
       ) {
-        const index =
-          values.push(
-            normalizeId(
-              value
-            )
-          );
-
         clauses.push(
-          `(
-            public_id = $${index}
-            OR legacy_mongo_id = $${index}
-            OR id::text = $${index}
-          )`
+          compileLogicalOr(
+            value,
+            values
+          )
         );
 
         continue;
       }
 
-      const column =
-        FILTER_COLUMNS[
-          key
-        ];
-
-      if (!column) {
-        throw Object.assign(
-          new Error(
-            `Unsupported PostgreSQL incident filter: ${key}`
-          ),
-          {
-            code:
-              "POSTGRES_INCIDENT_FILTER_UNSUPPORTED",
-
-            field:
-              key,
-          }
-        );
-      }
-
-      if (
-        value &&
-        typeof value ===
-          "object" &&
-        !Array.isArray(
-          value
-        )
-      ) {
-        if (
-          Array.isArray(
-            value.$in
-          )
-        ) {
-          const index =
-            values.push(
-              value.$in.map(
-                normalizeId
-              )
-            );
-
-          clauses.push(
-            `${column} = ANY($${index}::text[])`
-          );
-
-          continue;
-        }
-
-        throw Object.assign(
-          new Error(
-            `Unsupported PostgreSQL incident operator for ${key}`
-          ),
-          {
-            code:
-              "POSTGRES_INCIDENT_OPERATOR_UNSUPPORTED",
-
-            field:
-              key,
-          }
-        );
-      }
-
-      const index =
-        values.push(
-          normalizeId(
-            value
-          )
-        );
 
       clauses.push(
-        `${column} = $${index}`
+        compileIncidentField(
+          key,
+          value,
+          values
+        )
       );
     }
+
 
     return {
       where:
@@ -710,6 +729,682 @@ class PostgresIncidentRepository
       values,
     };
   }
+}
+
+function compileLogicalOr(
+  branches,
+  values
+) {
+  if (
+    !Array.isArray(
+      branches
+    ) ||
+    branches.length ===
+      0
+  ) {
+    throw Object.assign(
+      new Error(
+        "PostgreSQL incident $or requires a non-empty array"
+      ),
+      {
+        code:
+          "POSTGRES_INCIDENT_OR_INVALID",
+      }
+    );
+  }
+
+
+  const compiled =
+    branches.map(
+      (
+        branch
+      ) => {
+        if (
+          !branch ||
+          typeof branch !==
+            "object" ||
+          Array.isArray(
+            branch
+          )
+        ) {
+          throw Object.assign(
+            new Error(
+              "PostgreSQL incident $or branch must be an object"
+            ),
+            {
+              code:
+                "POSTGRES_INCIDENT_OR_BRANCH_INVALID",
+            }
+          );
+        }
+
+
+        const nested =
+          [];
+
+
+        for (
+          const [
+            key,
+            value,
+          ]
+          of Object.entries(
+            branch
+          )
+        ) {
+          nested.push(
+            compileIncidentField(
+              key,
+              value,
+              values
+            )
+          );
+        }
+
+
+        if (
+          nested.length ===
+            0
+        ) {
+          throw Object.assign(
+            new Error(
+              "PostgreSQL incident $or branch cannot be empty"
+            ),
+            {
+              code:
+                "POSTGRES_INCIDENT_OR_BRANCH_EMPTY",
+            }
+          );
+        }
+
+
+        return `(${nested.join(
+          " AND "
+        )})`;
+      }
+    );
+
+
+  return `(${compiled.join(
+    " OR "
+  )})`;
+}
+
+
+function compileIncidentField(
+  key,
+  value,
+  values
+) {
+  if (
+    key ===
+      "_id"
+  ) {
+    return compileIncidentIdentifier(
+      value,
+      values
+    );
+  }
+
+
+  const column =
+    FILTER_COLUMNS[
+      key
+    ];
+
+
+  if (
+    !column
+  ) {
+    throw Object.assign(
+      new Error(
+        `Unsupported PostgreSQL incident filter: ${key}`
+      ),
+      {
+        code:
+          "POSTGRES_INCIDENT_FILTER_UNSUPPORTED",
+
+        field:
+          key,
+      }
+    );
+  }
+
+
+  return compileColumnCondition(
+    column,
+    key,
+    value,
+    values
+  );
+}
+
+
+function compileIncidentIdentifier(
+  value,
+  values
+) {
+  const identitySql =
+    (
+      placeholder
+    ) =>
+      `(
+        public_id = ${placeholder}
+        OR legacy_mongo_id = ${placeholder}
+        OR id::text = ${placeholder}
+      )`;
+
+
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    !Array.isArray(
+      value
+    )
+  ) {
+    if (
+      Object.prototype
+        .hasOwnProperty
+        .call(
+          value,
+          "$ne"
+        )
+    ) {
+      const index =
+        values.push(
+          normalizeId(
+            value.$ne
+          )
+        );
+
+
+      const placeholder =
+        `$${index}`;
+
+
+      return `NOT ${identitySql(
+        placeholder
+      )}`;
+    }
+
+
+    if (
+      Array.isArray(
+        value.$in
+      )
+    ) {
+      if (
+        value.$in.length ===
+          0
+      ) {
+        return "FALSE";
+      }
+
+
+      const conditions =
+        value.$in.map(
+          (
+            item
+          ) => {
+            const index =
+              values.push(
+                normalizeId(
+                  item
+                )
+              );
+
+
+            return identitySql(
+              `$${index}`
+            );
+          }
+        );
+
+
+      return `(${conditions.join(
+        " OR "
+      )})`;
+    }
+
+
+    throw Object.assign(
+      new Error(
+        "Unsupported PostgreSQL incident operator for _id"
+      ),
+      {
+        code:
+          "POSTGRES_INCIDENT_OPERATOR_UNSUPPORTED",
+
+        field:
+          "_id",
+      }
+    );
+  }
+
+
+  const index =
+    values.push(
+      normalizeId(
+        value
+      )
+    );
+
+
+  return identitySql(
+    `$${index}`
+  );
+}
+
+
+function compileColumnCondition(
+  column,
+  key,
+  value,
+  values
+) {
+  if (
+    value ===
+      null
+  ) {
+    return `${column} IS NULL`;
+  }
+
+
+  if (
+    value &&
+    typeof value ===
+      "object" &&
+    !Array.isArray(
+      value
+    ) &&
+    !(value instanceof Date)
+  ) {
+    const operators =
+      [];
+
+
+    for (
+      const [
+        operator,
+        operand,
+      ]
+      of Object.entries(
+        value
+      )
+    ) {
+      if (
+        operator ===
+          "$in"
+      ) {
+        if (
+          !Array.isArray(
+            operand
+          )
+        ) {
+          throw unsupportedIncidentOperator(
+            key,
+            operator
+          );
+        }
+
+
+        if (
+          operand.length ===
+            0
+        ) {
+          operators.push(
+            "FALSE"
+          );
+
+          continue;
+        }
+
+
+        const placeholders =
+          operand.map(
+            (
+              item
+            ) => {
+              const index =
+                values.push(
+                  normalizeFilterValue(
+                    key,
+                    item
+                  )
+                );
+
+
+              return `$${index}`;
+            }
+          );
+
+
+        operators.push(
+          `${column} IN (${placeholders.join(
+            ", "
+          )})`
+        );
+
+        continue;
+      }
+
+
+      if (
+        operator ===
+          "$ne"
+      ) {
+        if (
+          operand ===
+            null
+        ) {
+          operators.push(
+            `${column} IS NOT NULL`
+          );
+        } else {
+          const index =
+            values.push(
+              normalizeFilterValue(
+                key,
+                operand
+              )
+            );
+
+
+          operators.push(
+            `${column} <> $${index}`
+          );
+        }
+
+        continue;
+      }
+
+
+      if (
+        operator ===
+          "$gte" ||
+        operator ===
+          "$gt" ||
+        operator ===
+          "$lte" ||
+        operator ===
+          "$lt"
+      ) {
+        const sqlOperator =
+          {
+            $gte:
+              ">=",
+
+            $gt:
+              ">",
+
+            $lte:
+              "<=",
+
+            $lt:
+              "<",
+          }[
+            operator
+          ];
+
+
+        const index =
+          values.push(
+            normalizeFilterValue(
+              key,
+              operand
+            )
+          );
+
+
+        operators.push(
+          `${column} ${sqlOperator} $${index}`
+        );
+
+        continue;
+      }
+
+
+      throw unsupportedIncidentOperator(
+        key,
+        operator
+      );
+    }
+
+
+    if (
+      operators.length ===
+        0
+    ) {
+      throw Object.assign(
+        new Error(
+          `Empty PostgreSQL incident operator object for ${key}`
+        ),
+        {
+          code:
+            "POSTGRES_INCIDENT_OPERATOR_EMPTY",
+
+          field:
+            key,
+        }
+      );
+    }
+
+
+    return `(${operators.join(
+      " AND "
+    )})`;
+  }
+
+
+  const index =
+    values.push(
+      normalizeFilterValue(
+        key,
+        value
+      )
+    );
+
+
+  return `${column} = $${index}`;
+}
+
+
+function normalizeFilterValue(
+  key,
+  value
+) {
+  if (
+    key ===
+      "createdAt" ||
+    key ===
+      "updatedAt"
+  ) {
+    if (
+      value instanceof
+        Date
+    ) {
+      return value;
+    }
+
+
+    const parsed =
+      new Date(
+        value
+      );
+
+
+    if (
+      Number.isNaN(
+        parsed.getTime()
+      )
+    ) {
+      throw Object.assign(
+        new Error(
+          `Invalid PostgreSQL incident timestamp for ${key}`
+        ),
+        {
+          code:
+            "POSTGRES_INCIDENT_TIMESTAMP_INVALID",
+
+          field:
+            key,
+        }
+      );
+    }
+
+
+    return parsed;
+  }
+
+
+  return normalizeId(
+    value
+  );
+}
+
+
+function unsupportedIncidentOperator(
+  key,
+  operator
+) {
+  return Object.assign(
+    new Error(
+      `Unsupported PostgreSQL incident operator ${operator} for ${key}`
+    ),
+    {
+      code:
+        "POSTGRES_INCIDENT_OPERATOR_UNSUPPORTED",
+
+      field:
+        key,
+
+      operator,
+    }
+  );
+}
+
+
+function buildOrderBy(
+  sort
+) {
+  if (
+    !sort ||
+    typeof sort !==
+      "object" ||
+    Array.isArray(
+      sort
+    ) ||
+    Object.keys(
+      sort
+    ).length ===
+      0
+  ) {
+    return "created_at ASC";
+  }
+
+
+  const clauses =
+    [];
+
+
+  for (
+    const [
+      key,
+      direction,
+    ]
+    of Object.entries(
+      sort
+    )
+  ) {
+    const column =
+      SORT_COLUMNS[
+        key
+      ];
+
+
+    if (
+      !column
+    ) {
+      throw Object.assign(
+        new Error(
+          `Unsupported PostgreSQL incident sort: ${key}`
+        ),
+        {
+          code:
+            "POSTGRES_INCIDENT_SORT_UNSUPPORTED",
+
+          field:
+            key,
+        }
+      );
+    }
+
+
+    clauses.push(
+      `${column} ${
+        Number(
+          direction
+        ) <
+        0
+          ? "DESC"
+          : "ASC"
+      }`
+    );
+  }
+
+
+  return clauses.join(
+    ", "
+  );
+}
+
+
+function normalizeLimit(
+  value
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined ||
+    value ===
+      ""
+  ) {
+    return null;
+  }
+
+
+  const parsed =
+    Number.parseInt(
+      value,
+      10
+    );
+
+
+  if (
+    !Number.isInteger(
+      parsed
+    ) ||
+    parsed <=
+      0
+  ) {
+    throw Object.assign(
+      new Error(
+        "PostgreSQL incident limit must be a positive integer"
+      ),
+      {
+        code:
+          "POSTGRES_INCIDENT_LIMIT_INVALID",
+      }
+    );
+  }
+
+
+  return Math.min(
+    parsed,
+    1000
+  );
 }
 
 function requireScope(

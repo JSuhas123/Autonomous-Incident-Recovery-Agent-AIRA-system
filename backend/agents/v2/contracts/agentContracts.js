@@ -2297,6 +2297,13 @@ function createHypothesis({
   title = null,
   category = null,
 
+  /*
+   * Canonical machine-readable failure identity.
+   *
+   * This is diagnosis output, not authorization.
+   */
+  failureModeKey = null,
+
   confidence,
 
   status =
@@ -2431,6 +2438,14 @@ function createHypothesis({
       )
     );
 
+  const normalizedFailureModeKey =
+    typeof failureModeKey ===
+      "string" &&
+    failureModeKey.trim()
+      ? failureModeKey
+          .trim()
+      : null;
+
   return {
     schemaVersion:
       String(
@@ -2455,6 +2470,9 @@ function createHypothesis({
     category:
       category ||
       null,
+
+    failureModeKey:
+      normalizedFailureModeKey,
 
     confidence:
       clampConfidence(
@@ -2546,9 +2564,6 @@ function createHypothesis({
           )
         : null,
 
-    /*
-     * Populated after deterministic scoring.
-     */
     scoreBreakdown:
       scoreBreakdown &&
       typeof scoreBreakdown ===
@@ -2567,7 +2582,6 @@ function createHypothesis({
           ),
   };
 }
-
 // ============================================================================
 // PHASE 12.6 — CANONICAL DIAGNOSIS RESULT
 // ============================================================================

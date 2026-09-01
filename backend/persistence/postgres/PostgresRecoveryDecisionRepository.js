@@ -472,234 +472,238 @@ class PostgresRecoveryDecisionRepository
     );
   }
 
-  async createDecision(
-    data,
-    transaction = null
-  ) {
-    const scope =
-      requireScope(
-        data
-      );
+ async createDecision(
+  data,
+  transaction = null
+) {
+  const scope =
+    requireScope(
+      data
+    );
 
-    return this.scope.run(
-      scope,
-      async (
-        client,
-        resolved
-      ) => {
-        const incident =
-          await this.resolveIncident(
-            client,
-            resolved,
-            data.incidentId
-          );
+  return this.scope.run(
+    scope,
+    async (
+      client,
+      resolved
+    ) => {
+      const incident =
+        await this.resolveIncident(
+          client,
+          resolved,
+          data.incidentId
+        );
 
-        const diagnosisUuid =
-          data.diagnosisId
-            ? await resolveDiagnosisUuid(
-                client,
-                data.diagnosisId
+      const diagnosisUuid =
+        data.diagnosisId
+          ? await resolveDiagnosisUuid(
+              client,
+              data.diagnosisId
+            )
+          : null;
+
+      const runUuid =
+        data.runId
+          ? await resolveRunUuid(
+              client,
+              data.runId
+            )
+          : null;
+
+      const supersedesUuid =
+        data.supersedesDecisionId
+          ? await resolveDecisionUuid(
+              client,
+              data.supersedesDecisionId
+            )
+          : null;
+
+      const databaseId =
+        normalizeId(
+          data._id
+        ) ||
+        createDatabaseId();
+
+      /*
+       * Preserve the complete domain representation, including optional
+       * diagnosisRevision, inside the canonical document projection.
+       *
+       * execution.recovery_decisions does NOT have a physical
+       * diagnosis_revision column. That column belongs to
+       * execution.recovery_decision_runs.
+       */
+      const document =
+        serializeDocument({
+          ...data,
+
+          _id:
+            databaseId,
+
+          executionAuthorized:
+            false,
+        });
+
+      try {
+        const result =
+          await client.query(
+            `
+              INSERT INTO execution.recovery_decisions (
+                public_id,
+                database_id,
+                legacy_mongo_id,
+                organization_id,
+                environment_id,
+                incident_id,
+                diagnosis_id,
+                run_id,
+                revision,
+                is_current,
+                status,
+                decision,
+                selected_candidate_id,
+                selected_playbook_id,
+                confidence,
+                candidates,
+                rejected_candidates,
+                reasons,
+                unknowns,
+                policy_status,
+                risk_level,
+                approval_required,
+                approval_mode,
+                rollback_available,
+                reversibility,
+                critic_result,
+                supersedes_decision_id,
+                execution_authorized,
+                generated_at,
+                metadata,
+                document
               )
-            : null;
-
-        const runUuid =
-          data.runId
-            ? await resolveRunUuid(
-                client,
-                data.runId
+              VALUES (
+                $1, $2, $3, $4, $5,
+                $6, $7, $8, $9, $10,
+                $11, $12, $13, $14, $15,
+                $16::jsonb, $17::jsonb, $18::jsonb, $19::jsonb,
+                $20, $21, $22, $23, $24,
+                $25, $26::jsonb, $27, FALSE,
+                $28, $29::jsonb, $30::jsonb
               )
-            : null;
+              RETURNING *
+            `,
+            [
+              data.decisionId,
 
-        const supersedesUuid =
-          data.supersedesDecisionId
-            ? await resolveDecisionUuid(
-                client,
-                data.supersedesDecisionId
-              )
-            : null;
-
-        const databaseId =
-          normalizeId(
-            data._id
-          ) ||
-          createDatabaseId();
-
-        const document =
-          serializeDocument({
-            ...data,
-
-            _id:
               databaseId,
 
-            executionAuthorized:
-              false,
-          });
+              data.legacyMongoId ||
+                null,
 
-        try {
-          const result =
-            await client.query(
-              `
-                INSERT INTO execution.recovery_decisions (
-                  public_id,
-                  database_id,
-                  legacy_mongo_id,
-                  organization_id,
-                  environment_id,
-                  incident_id,
-                  diagnosis_id,
-                  diagnosis_revision,
-                  run_id,
-                  revision,
-                  is_current,
-                  status,
-                  decision,
-                  selected_candidate_id,
-                  selected_playbook_id,
-                  confidence,
-                  candidates,
-                  rejected_candidates,
-                  reasons,
-                  unknowns,
-                  policy_status,
-                  risk_level,
-                  approval_required,
-                  approval_mode,
-                  rollback_available,
-                  reversibility,
-                  critic_result,
-                  supersedes_decision_id,
-                  execution_authorized,
-                  generated_at,
-                  metadata,
-                  document
-                )
-                VALUES (
-                  $1, $2, $3, $4, $5,
-                  $6, $7, $8, $9, $10,
-                  $11, $12, $13, $14, $15,
-                  $16, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb,
-                  $21, $22, $23, $24, $25,
-                  $26, $27::jsonb, $28, FALSE, $29,
-                  $30::jsonb, $31::jsonb
-                )
-                RETURNING *
-              `,
-              [
-                data.decisionId,
+              resolved.organizationUuid,
 
-                databaseId,
+              resolved.environmentUuid,
 
-                data.legacyMongoId ||
-                  null,
+              incident.id,
 
-                resolved.organizationUuid,
+              diagnosisUuid,
 
-                resolved.environmentUuid,
+              runUuid,
 
-                incident.id,
+              data.revision,
 
-                diagnosisUuid,
+              data.isCurrent !==
+                false,
 
-                data.diagnosisRevision ??
-                  null,
+              data.status ||
+                "current",
 
-                runUuid,
+              data.decision,
 
-                data.revision,
+              data.selectedCandidateId ||
+                null,
 
-                data.isCurrent !==
-                  false,
+              data.selectedPlaybookId ||
+                null,
 
-                data.status ||
-                  "current",
+              data.confidence ??
+                0,
 
-                data.decision,
+              JSON.stringify(
+                data.candidates ||
+                []
+              ),
 
-                data.selectedCandidateId ||
-                  null,
+              JSON.stringify(
+                data.rejectedCandidates ||
+                []
+              ),
 
-                data.selectedPlaybookId ||
-                  null,
+              JSON.stringify(
+                data.reasons ||
+                []
+              ),
 
-                data.confidence ??
-                  0,
+              JSON.stringify(
+                data.unknowns ||
+                []
+              ),
 
-                JSON.stringify(
-                  data.candidates ||
-                  []
-                ),
+              data.policyStatus ||
+                null,
 
-                JSON.stringify(
-                  data.rejectedCandidates ||
-                  []
-                ),
+              data.riskLevel ||
+                null,
 
-                JSON.stringify(
-                  data.reasons ||
-                  []
-                ),
+              Boolean(
+                data.approvalRequired
+              ),
 
-                JSON.stringify(
-                  data.unknowns ||
-                  []
-                ),
+              data.approvalMode ||
+                null,
 
-                data.policyStatus ||
-                  null,
+              Boolean(
+                data.rollbackAvailable
+              ),
 
-                data.riskLevel ||
-                  null,
+              data.reversibility ||
+                null,
 
-                Boolean(
-                  data.approvalRequired
-                ),
+              JSON.stringify(
+                data.criticResult ||
+                {}
+              ),
 
-                data.approvalMode ||
-                  null,
+              supersedesUuid,
 
-                Boolean(
-                  data.rollbackAvailable
-                ),
+              data.generatedAt ||
+                new Date(),
 
-                data.reversibility ||
-                  null,
+              JSON.stringify(
+                data.metadata ||
+                {}
+              ),
 
-                JSON.stringify(
-                  data.criticResult ||
-                  {}
-                ),
-
-                supersedesUuid,
-
-                data.generatedAt ||
-                  new Date(),
-
-                JSON.stringify(
-                  data.metadata ||
-                  {}
-                ),
-
-                JSON.stringify(
-                  document
-                ),
-              ]
-            );
-
-          return mapDecision(
-            result.rows[0],
-            scope
+              JSON.stringify(
+                document
+              ),
+            ]
           );
-        } catch (
+
+        return mapDecision(
+          result.rows[0],
+          scope
+        );
+      } catch (
+        error
+      ) {
+        throw translatePostgresError(
           error
-        ) {
-          throw translatePostgresError(
-            error
-          );
-        }
-      },
-      transaction
-    );
-  }
+        );
+      }
+    },
+    transaction
+  );
+}
 
   async saveDecision(
     decision,

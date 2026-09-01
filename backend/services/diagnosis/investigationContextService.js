@@ -1420,127 +1420,123 @@ class InvestigationContextService {
   // ==========================================================================
 
   evidenceTypeForSignal(
-    signal
+  signal
+) {
+  const signalType =
+    String(
+      signal.signalType ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  const eventType =
+    String(
+      signal.eventType ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  const provider =
+    String(
+      signal.provider ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  /*
+   * A persisted Kubernetes event/replacement/failure observation is still
+   * operational signal evidence.
+   *
+   * KUBERNETES_EVENT is reserved for Kubernetes evidence that represents
+   * an actual Kubernetes event observation.
+   */
+
+  if (
+    provider ===
+      "kubernetes" ||
+    provider ===
+      "k8s"
   ) {
-    const type =
-      String(
-        signal.signalType ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-
-    const provider =
-      String(
-        signal.provider ||
-        ""
-      )
-        .trim()
-        .toLowerCase();
-
     if (
-      provider ===
-        "kubernetes" ||
-      provider ===
-        "k8s"
+      eventType.includes(
+        "event"
+      )
     ) {
-      if (
-        String(
-          signal.eventType ||
-          ""
-        )
-          .toLowerCase()
-          .includes(
-            "event"
-          )
-      ) {
-        return EVIDENCE_TYPE
-          .KUBERNETES_EVENT;
-      }
-
       return EVIDENCE_TYPE
-        .RESOURCE_STATE;
+        .KUBERNETES_EVENT;
     }
 
-    switch (
-      type
-    ) {
-      case "metric":
-        return EVIDENCE_TYPE
-          .METRIC;
-
-      case "log":
-        return EVIDENCE_TYPE
-          .LOG;
-
-      case "trace":
-        return EVIDENCE_TYPE
-          .TRACE;
-
-      case "alert":
-        return EVIDENCE_TYPE
-          .ALERT;
-
-      default:
-        return EVIDENCE_TYPE
-          .SIGNAL;
-    }
+    /*
+     * Examples:
+     *
+     * kubernetes.pod.replacement
+     * kubernetes.pod.crash
+     * kubernetes.pod.unhealthy
+     *
+     * These are incoming observations and should count as SIGNAL evidence.
+     */
+    return EVIDENCE_TYPE
+      .SIGNAL;
   }
+
+  switch (
+    signalType
+  ) {
+    case "metric":
+      return EVIDENCE_TYPE
+        .METRIC;
+
+    case "log":
+      return EVIDENCE_TYPE
+        .LOG;
+
+    case "trace":
+      return EVIDENCE_TYPE
+        .TRACE;
+
+    case "alert":
+      return EVIDENCE_TYPE
+        .ALERT;
+
+    default:
+      return EVIDENCE_TYPE
+        .SIGNAL;
+  }
+}
 
   // ==========================================================================
   // PROVIDER -> EVIDENCE SOURCE
   // ==========================================================================
 
   evidenceSourceForProvider(
-    provider
-  ) {
-    switch (
-      String(
-        provider ||
-        ""
-      )
-        .trim()
-        .toLowerCase()
-    ) {
-      case "prometheus":
-      case "prometheus_alertmanager":
-        return EVIDENCE_SOURCE_TYPE
-          .PROMETHEUS;
+  provider
+) {
+  /*
+   * IMPORTANT:
+   *
+   * These records are being read from AIRA's canonical Signal store.
+   *
+   * `provider` identifies where the signal originated, but it does NOT
+   * prove InvestigationAgent itself queried that provider/API.
+   *
+   * In particular:
+   *
+   *   provider = "kubernetes"
+   *
+   * means "this persisted signal originated from Kubernetes-related
+   * telemetry", not "fresh Kubernetes API evidence has already been
+   * collected during this diagnosis".
+   *
+   * Keeping those concepts separate allows InvestigationAgent to perform
+   * independent read-only Kubernetes verification.
+   */
 
-      case "opentelemetry":
-        return EVIDENCE_SOURCE_TYPE
-          .OPENTELEMETRY;
-
-      case "datadog":
-        return EVIDENCE_SOURCE_TYPE
-          .DATADOG;
-
-      case "aws_cloudwatch":
-        return EVIDENCE_SOURCE_TYPE
-          .AWS_CLOUDWATCH;
-
-      case "azure_monitor":
-        return EVIDENCE_SOURCE_TYPE
-          .AZURE_MONITOR;
-
-      case "gcp_monitoring":
-        return EVIDENCE_SOURCE_TYPE
-          .GCP_MONITORING;
-
-      case "kubernetes":
-      case "k8s":
-        return EVIDENCE_SOURCE_TYPE
-          .KUBERNETES_API;
-
-      case "monitor":
-        return EVIDENCE_SOURCE_TYPE
-          .AIRA_SIGNAL_STORE;
-
-      default:
-        return EVIDENCE_SOURCE_TYPE
-          .AIRA_SIGNAL_STORE;
-    }
-  }
+  return EVIDENCE_SOURCE_TYPE
+    .AIRA_SIGNAL_STORE;
+}
 
   // ==========================================================================
   // EVIDENCE COMPLETENESS

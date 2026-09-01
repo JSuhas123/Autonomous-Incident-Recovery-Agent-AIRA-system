@@ -1,0 +1,110 @@
+{
+  "phase": "21",
+  "batch": "6",
+  "subphases": [
+    "21.11",
+    "21.12"
+  ],
+  "title": "Experiment Orchestrator + AIRA Correlation Harness Live Certification",
+  "certificateVersion": "21.11-12-live-v1",
+  "createdAt": "2026-08-31T14:05:36.279Z",
+  "status": "PASS",
+  "pass": true,
+  "liveCertified": true,
+  "frozen": true,
+  "certificationClass": "LIVE_FOUNDATION",
+  "safetyClass": "LAB_ONLY",
+  "environment": {
+    "organizationId": "aira-dev-org",
+    "environmentId": "env_aira_development",
+    "tenantId": "aira-dev-org",
+    "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+    "namespace": "aira-reliability-lab",
+    "clusterName": "aira-reliability-lab",
+    "production": false
+  },
+  "implementation": {
+    "orchestratorVersion": "21.11-v1",
+    "correlationHarnessVersion": "21.12-v1",
+    "failureInjectionEngineVersion": "21.9-v1",
+    "canonicalFailureEngineApi": "FailureInjectionEngine.inject",
+    "signalPersistencePreflight": {
+      "exists": true,
+      "hasMongooseImport": false,
+      "hasLegacySignalModel": false,
+      "pass": true
+    }
+  },
+  "scenario": {
+    "experimentKey": "kubernetes.pod.crash",
+    "experimentVersion": 1,
+    "targetApp": "lab-api",
+    "targetPod": "lab-api-56767695c5-45949",
+    "targetPodUid": "eae220f9-0ea9-4edf-8718-4f27932f561e",
+    "failureInjectedThroughPhase21Engine": true
+  },
+  "orchestration": {
+    "experimentRunId": "exprun_9c99c71a-a980-4ac9-8e2f-a1eb21895934",
+    "correlationId": "phase21-batch6:524a3f17-9a2e-4093-a2c0-15d6a582e1ba",
+    "finalExperimentState": "WAITING_FOR_DIAGNOSIS",
+    "baselineCaptured": true,
+    "injectionRecorded": true,
+    "observableSignalAccepted": true,
+    "signalId": "sig_5d0a745b14faea02298512bf0c039a91ed92eb32f5eeb937",
+    "correlationGroupId": "single_sig_5d0a745b14faea02298512bf0c039a91ed92eb32f5eeb937",
+    "correlationObserved": true,
+    "incidentCandidate": true,
+    "incidentId": null,
+    "routed": false,
+    "detectionCorrect": null,
+    "diagnosisCorrect": null,
+    "correctnessEvaluationDeferredTo": [
+      "21.13",
+      "21.14"
+    ]
+  },
+  "groundTruthFirewall": {
+    "groundTruthAvailableToEvaluator": true,
+    "groundTruthPassedToAira": false,
+    "groundTruthConsumedByCorrelationHarness": false,
+    "evaluatorInfluencedReasoning": false,
+    "pass": true
+  },
+  "reset": {
+    "resetSucceeded": true,
+    "baselineRestored": true,
+    "finalLabStatus": "AVAILABLE",
+    "finalHealth": true,
+    "finalReadiness": true,
+    "finalReadyPod": true,
+    "airaRecoveryExecuted": false,
+    "pass": true
+  },
+  "scopeBoundaries": {
+    "detectionCorrectnessCertified": false,
+    "diagnosisCorrectnessCertified": false,
+    "recoverySelectionCertified": false,
+    "executionSafetyCertified": false,
+    "verifiedRecoveryCertified": false,
+    "batch6OnlyProvesOrchestrationAndCorrelationPlumbing": true
+  },
+  "authority": {
+    "productionCertified": false,
+    "executionAuthorized": false,
+    "canGrantExecutionAuthorization": false,
+    "canGrantAutonomy": false,
+    "canModifyProductionAuthority": false,
+    "failureInjectionIsAiraRecovery": false,
+    "kubernetesSelfHealingIsAiraRecovery": false,
+    "phase21IsEvidenceOnly": true,
+    "phase22ConsumesEvidence": true
+  },
+  "finalResult": {
+    "pass": true,
+    "status": "PASS",
+    "liveCertified": true,
+    "frozen": true,
+    "productionCertified": false,
+    "executionAuthorized": false
+  }
+}

@@ -246,6 +246,11 @@ class IntegrationExecutionAuthorizationBoundary {
 
       planHash,
     });
+    this.assertCapabilityBinding({
+  executionRequest,
+
+  capability,
+});
 
 
     const checkedAt =
@@ -766,6 +771,109 @@ class IntegrationExecutionAuthorizationBoundary {
       );
     }
   }
+  assertCapabilityBinding({
+  executionRequest,
+  capability,
+}) {
+  requireText(
+    capability,
+    "capability"
+  );
+
+
+  const executionPlan =
+    executionRequest
+      ?.executionPlan;
+
+
+  if (
+    !executionPlan ||
+    typeof executionPlan !==
+      "object"
+  ) {
+    throw boundaryError(
+      "Persisted execution request does not contain an immutable execution plan",
+      "INTEGRATION_EXECUTION_PLAN_NOT_AVAILABLE"
+    );
+  }
+
+
+  const steps =
+    Array.isArray(
+      executionPlan.steps
+    )
+      ? executionPlan.steps
+      : [];
+
+
+  if (
+    steps.length ===
+    0
+  ) {
+    throw boundaryError(
+      "Persisted execution plan contains no executable steps",
+      "INTEGRATION_EXECUTION_PLAN_EMPTY"
+    );
+  }
+
+
+  const requestedCapability =
+    normalizeCapabilityIdentity(
+      capability
+    );
+
+
+  const matched =
+    steps.some(
+      step => {
+        const identities =
+          [
+            step
+              ?.capability,
+
+            step
+              ?.metadata
+              ?.capability,
+
+            step
+              ?.action,
+
+            (
+              step?.adapter &&
+              step?.action
+            )
+              ? `${step.adapter}.${step.action}`
+              : null,
+          ]
+            .filter(
+              Boolean
+            )
+            .map(
+              normalizeCapabilityIdentity
+            );
+
+
+        return identities
+          .some(
+            identity =>
+              capabilityIdentityMatches(
+                requestedCapability,
+                identity
+              )
+          );
+      }
+    );
+
+
+  if (
+    !matched
+  ) {
+    throw boundaryError(
+      `Requested capability "${capability}" is not bound to the persisted immutable execution plan`,
+      "INTEGRATION_EXECUTION_CAPABILITY_PLAN_MISMATCH"
+    );
+  }
+}
 }
 
 
@@ -815,6 +923,85 @@ function boundaryError(
       executionAuthorized:
         false,
     }
+  );
+}
+function normalizeCapabilityIdentity(
+  value
+) {
+  return String(
+    value ||
+    ""
+  )
+    .trim()
+    .toLowerCase()
+    .replace(
+      /[_/\s-]+/g,
+      "."
+    )
+    .replace(
+      /\.+/g,
+      "."
+    )
+    .replace(
+      /^\.+|\.+$/g,
+      ""
+    );
+}
+
+
+function capabilityIdentityMatches(
+  requested,
+  candidate
+) {
+  if (
+    !requested ||
+    !candidate
+  ) {
+    return false;
+  }
+
+
+  if (
+    requested ===
+    candidate
+  ) {
+    return true;
+  }
+
+
+  /*
+   * ExecutionPlanBuilder currently stores the operation in `action`.
+   *
+   * Example:
+   *
+   * capability:
+   *   kubernetes.restartDeployment
+   *
+   * execution-plan action:
+   *   restartDeployment
+   *
+   * Keep this compatibility explicit rather than accepting arbitrary suffixes.
+   */
+
+  const COMPATIBLE =
+    Object.freeze({
+      "kubernetes.restartdeployment":
+        new Set([
+          "restartdeployment",
+          "kubernetes.restartdeployment",
+          "kubernetes.restart.deployment",
+        ]),
+    });
+
+
+  return (
+    COMPATIBLE[
+      requested
+    ]
+      ?.has(
+        candidate
+      ) ===
+    true
   );
 }
 

@@ -1301,7 +1301,7 @@ record =
   // BUILD CANONICAL DIAGNOSIS
   // ==========================================================================
 
-  buildDiagnosisResult({
+ buildDiagnosisResult({
   context,
   confidence,
   safetyGate,
@@ -1320,9 +1320,13 @@ record =
     {};
 
   const hypotheses =
-    rootCause
-      .hypotheses ||
-    [];
+    Array.isArray(
+      rootCause
+        .hypotheses
+    )
+      ? rootCause
+          .hypotheses
+      : [];
 
   const primaryHypothesis =
     this.resolvePrimaryHypothesis(
@@ -1334,17 +1338,22 @@ record =
     typeof primaryHypothesis ===
       "string"
       ? primaryHypothesis
-      : primaryHypothesis?.id ||
+      : primaryHypothesis
+          ?.id ||
         null;
 
   const primaryHypothesisObject =
     hypotheses.find(
-      (hypothesis) =>
+      (
+        hypothesis
+      ) =>
         String(
-          hypothesis?.id
+          hypothesis?.id ||
+          ""
         ) ===
         String(
-          primaryHypothesisId
+          primaryHypothesisId ||
+          ""
         )
     ) ||
     (
@@ -1357,11 +1366,15 @@ record =
   const alternateHypothesisIds =
     hypotheses
       .map(
-        (hypothesis) =>
+        (
+          hypothesis
+        ) =>
           hypothesis?.id
       )
       .filter(
-        (id) =>
+        (
+          id
+        ) =>
           Boolean(
             id
           ) &&
@@ -1424,6 +1437,22 @@ record =
       []
     );
 
+  /*
+   * Machine-readable identity comes ONLY from diagnosis output.
+   *
+   * No Reliability Lab experiment key, expected failure mode or evaluator
+   * ground truth is consulted here.
+   */
+  const recommendedIncidentType =
+    this.resolveRecommendedIncidentType({
+      primaryHypothesis:
+        primaryHypothesisObject,
+
+      rootCause,
+
+      verification,
+    });
+
   const outcome =
     this.resolveOutcome({
       rootCause,
@@ -1461,10 +1490,6 @@ record =
       safetyGate,
     });
 
-  /*
-   * Prefer the Phase-12 canonical assessment while preserving compatibility
-   * with older RiskImpactAgent output.
-   */
   const canonicalRisk =
     context
       .riskAnalysis
@@ -1493,7 +1518,8 @@ record =
 
     diagnosisConfidence:
       confidence
-        .confidence,
+        ?.confidence ??
+      0,
 
     evidenceCompleteness:
       context
@@ -1521,6 +1547,8 @@ record =
           []
         ),
       ]),
+
+    recommendedIncidentType,
 
     symptoms:
       context.symptoms ||
@@ -1607,10 +1635,77 @@ record =
           safetyGate
             ?.requiresHuman
         ),
+
+      machineReadableDiagnosis:
+        recommendedIncidentType ||
+        null,
     },
   });
 }
 
+resolveRecommendedIncidentType({
+  primaryHypothesis,
+  rootCause,
+  verification,
+}) {
+  /*
+   * Fail closed.
+   *
+   * Only structured diagnosis-produced identities are accepted.
+   * Natural-language rootCause/title strings are deliberately excluded.
+   */
+  const candidates = [
+    primaryHypothesis
+      ?.failureModeKey,
+
+    primaryHypothesis
+      ?.recommendedIncidentType,
+
+    primaryHypothesis
+      ?.incidentType,
+
+    rootCause
+      ?.failureModeKey,
+
+    rootCause
+      ?.recommendedIncidentType,
+
+    verification
+      ?.failureModeKey,
+
+    verification
+      ?.recommendedIncidentType,
+  ];
+
+  for (
+    const candidate
+    of candidates
+  ) {
+    if (
+      typeof candidate !==
+        "string"
+    ) {
+      continue;
+    }
+
+    const normalized =
+      candidate
+        .trim();
+
+    if (
+      !normalized ||
+      normalized
+        .toLowerCase() ===
+        "unknown"
+    ) {
+      continue;
+    }
+
+    return normalized;
+  }
+
+  return null;
+}
   // ==========================================================================
   // PRIMARY HYPOTHESIS
   // ==========================================================================
@@ -1681,94 +1776,146 @@ record =
   // ==========================================================================
 
   resolveOutcome({
-    rootCause,
-    verification,
-    confidence,
-    safetyGate,
-    falsePositiveSuspected,
-  }) {
-    /*
-     * Explicit diagnosis false-positive classification has priority
-     * only when it is actually supported by the diagnosis itself.
-     *
-     * Missing evidence alone must NOT become FALSE_POSITIVE.
-     */
+  rootCause,
+  verification,
+  confidence,
+  safetyGate,
+}) {
+  const rootCauseOutcome =
+    rootCause
+      ?.outcome ||
+    DIAGNOSIS_OUTCOME
+      .UNKNOWN;
 
-    if (
-      rootCause
-        ?.outcome ===
-      DIAGNOSIS_OUTCOME
-        .FALSE_POSITIVE_SUSPECTED
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .FALSE_POSITIVE_SUSPECTED;
-    }
-
-    if (
-      verification
-        ?.verificationStatus ===
-      "REJECTED"
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .CONTRADICTORY_EVIDENCE;
-    }
-
-    if (
-      safetyGate
-        ?.decision ===
-      "REJECT_DIAGNOSIS"
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .CONTRADICTORY_EVIDENCE;
-    }
-
-    /*
-     * Unknown / weak telemetry:
-     *
-     * "I cannot determine the cause"
-     *
-     * !=
-     *
-     * "The incident is false"
-     */
-
-    if (
-      safetyGate
-        ?.decision ===
-      "HOLD_FOR_MORE_EVIDENCE"
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .INSUFFICIENT_EVIDENCE;
-    }
-
-    if (
-      confidence
-        ?.decision ===
-      "COLLECT_MORE_EVIDENCE"
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .INSUFFICIENT_EVIDENCE;
-    }
-
-    if (
-      falsePositiveSuspected ===
-        true &&
-      rootCause
-        ?.outcome ===
-        DIAGNOSIS_OUTCOME
-          .FALSE_POSITIVE_SUSPECTED
-    ) {
-      return DIAGNOSIS_OUTCOME
-        .FALSE_POSITIVE_SUSPECTED;
-    }
-
-    return (
-      rootCause
-        ?.outcome ||
-      DIAGNOSIS_OUTCOME
-        .UNKNOWN
+  const primaryHypothesis =
+    rootCause
+      ?.primaryHypothesis ||
+    (
+      Array.isArray(
+        rootCause
+          ?.hypotheses
+      )
+        ? rootCause
+            .hypotheses[0]
+        : null
     );
+
+  const hasMachineDiagnosisIdentity =
+    Boolean(
+      primaryHypothesis
+        ?.failureModeKey ||
+      rootCause
+        ?.recommendedIncidentType
+    );
+
+  // ------------------------------------------------------------------------
+  // HARD REJECTION
+  // ------------------------------------------------------------------------
+
+  /*
+   * Rejected evidence/verification genuinely invalidates the diagnosis.
+   */
+  if (
+    verification
+      ?.verificationStatus ===
+    "REJECTED"
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .CONTRADICTORY_EVIDENCE;
   }
+
+  if (
+    safetyGate
+      ?.decision ===
+    "REJECT_DIAGNOSIS"
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .CONTRADICTORY_EVIDENCE;
+  }
+
+  // ------------------------------------------------------------------------
+  // EXPLICIT FALSE POSITIVE
+  // ------------------------------------------------------------------------
+
+  if (
+    rootCauseOutcome ===
+    DIAGNOSIS_OUTCOME
+      .FALSE_POSITIVE_SUSPECTED
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .FALSE_POSITIVE_SUSPECTED;
+  }
+
+  // ------------------------------------------------------------------------
+  // DIAGNOSIS IDENTITY VS RECOVERY ELIGIBILITY
+  // ------------------------------------------------------------------------
+
+  /*
+   * IMPORTANT:
+   *
+   * Diagnosis outcome answers:
+   *
+   *     "What does AIRA believe happened?"
+   *
+   * SafetyGate / Confidence decision answers:
+   *
+   *     "May AIRA proceed toward recovery evaluation?"
+   *
+   * Those must not be conflated.
+   *
+   * If deterministic evidence has already produced a machine-readable
+   * diagnosis identity and RootCauseHypothesisAgent classified the cause,
+   * a HOLD_FOR_MORE_EVIDENCE / COLLECT_MORE_EVIDENCE decision must continue
+   * to block recovery eligibility, but must not erase the diagnosis itself.
+   *
+   * executionAuthorized remains false.
+   */
+
+  const rootCauseIdentified =
+    [
+      DIAGNOSIS_OUTCOME
+        .ROOT_CAUSE_IDENTIFIED,
+
+      DIAGNOSIS_OUTCOME
+        .PROBABLE_CAUSE_IDENTIFIED,
+
+      DIAGNOSIS_OUTCOME
+        .MULTIPLE_PLAUSIBLE_CAUSES,
+    ].includes(
+      rootCauseOutcome
+    );
+
+  if (
+    rootCauseIdentified &&
+    hasMachineDiagnosisIdentity
+  ) {
+    return rootCauseOutcome;
+  }
+
+  // ------------------------------------------------------------------------
+  // INSUFFICIENT EVIDENCE
+  // ------------------------------------------------------------------------
+
+  if (
+    safetyGate
+      ?.decision ===
+    "HOLD_FOR_MORE_EVIDENCE"
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .INSUFFICIENT_EVIDENCE;
+  }
+
+  if (
+    confidence
+      ?.decision ===
+    "COLLECT_MORE_EVIDENCE"
+  ) {
+    return DIAGNOSIS_OUTCOME
+      .INSUFFICIENT_EVIDENCE;
+  }
+
+  return rootCauseOutcome;
+}
 
   // ==========================================================================
   // SAFE NEXT STEP
@@ -2003,6 +2150,90 @@ record =
     return false;
   }
 
+    // ==========================================================================
+  // MACHINE-READABLE DIAGNOSIS IDENTITY
+  // ==========================================================================
+
+  resolveRecommendedIncidentType({
+    context,
+    rootCause,
+    verification,
+    primaryHypothesis,
+  }) {
+    /*
+     * Never infer diagnosis identity from Reliability Lab metadata,
+     * experiment keys, evaluator expectations, or execution context.
+     *
+     * Identity must come only from canonical diagnosis/evidence output.
+     */
+
+    const candidates = [
+      primaryHypothesis
+        ?.failureModeKey,
+
+      primaryHypothesis
+        ?.incidentType,
+
+      primaryHypothesis
+        ?.recommendedIncidentType,
+
+      rootCause
+        ?.failureModeKey,
+
+      rootCause
+        ?.recommendedIncidentType,
+
+      verification
+        ?.failureModeKey,
+
+      verification
+        ?.recommendedIncidentType,
+
+      context
+        ?.deterministicDiagnosis
+        ?.primary
+        ?.failureModeKey,
+
+      context
+        ?.deterministicDiagnosis
+        ?.primary
+        ?.code,
+    ];
+
+
+    for (
+      const candidate
+      of candidates
+    ) {
+      if (
+        typeof candidate !==
+          "string"
+      ) {
+        continue;
+      }
+
+
+      const normalized =
+        candidate
+          .trim();
+
+
+      if (
+        !normalized ||
+        normalized.toLowerCase() ===
+          "unknown"
+      ) {
+        continue;
+      }
+
+
+      return normalized;
+    }
+
+
+    return null;
+  }
+  
   // ==========================================================================
   // SUMMARY
   // ==========================================================================

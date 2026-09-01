@@ -6,6 +6,7 @@ const {
   require(
     "../constants/integrationPlatform"
   );
+
 /**
  * Canonical AIRA integration catalogue.
  *
@@ -444,18 +445,38 @@ const CATALOGUE = [
       CATEGORIES.INFRA,
 
     description:
-      "Connect Kubernetes clusters for health checking, infrastructure discovery, inventory and topology analysis.",
+      "Connect Kubernetes clusters for health checking, infrastructure discovery, inventory, topology analysis, and tightly authorized operational capabilities.",
 
+    /*
+     * Kubernetes event ingestion is intentionally NOT advertised yet.
+     *
+     * execute_capability is a TECHNICAL capability only.
+     *
+     * It does not grant execution authority.
+     *
+     * Execution still requires:
+     *
+     * Recovery Decision
+     *   ->
+     * Policy / Approval
+     *   ->
+     * ExecutionAuthorizationEngine
+     *   ->
+     * immutable persisted execution request
+     *   ->
+     * IntegrationExecutionAuthorizationBoundary
+     *   ->
+     * IntegrationRuntime
+     *   ->
+     * Kubernetes adapter
+     */
     capabilities: [
       "get_health",
       "discover_resources",
+      "execute_capability",
       "revoke",
     ],
 
-    /*
-     * Kubernetes event ingestion is intentionally NOT
-     * advertised yet.
-     */
     availabilityStatus:
       "available",
 
@@ -821,7 +842,6 @@ const CATALOGUE = [
       1,
   },
 
-
   // ==========================================================================
   // DATABASES
   // ==========================================================================
@@ -1168,72 +1188,74 @@ const CATALOGUE = [
     configSchemaVersion:
       1,
   },
+
   {
-  provider:
-    "tekton",
+    provider:
+      "tekton",
 
-  displayName:
-    "Tekton",
+    displayName:
+      "Tekton",
 
-  category:
-    CATEGORIES.DEV,
+    category:
+      CATEGORIES.DEV,
 
-  description:
-    "Integrate Tekton PipelineRuns, TaskRuns, build status and deployment pipeline events with AIRA.",
+    description:
+      "Integrate Tekton PipelineRuns, TaskRuns, build status and deployment pipeline events with AIRA.",
 
-  capabilities: [
-    "receive_events",
-    "normalize_events",
-    "get_health",
-    "discover_resources",
-    "revoke",
-  ],
+    capabilities: [
+      "receive_events",
+      "normalize_events",
+      "get_health",
+      "discover_resources",
+      "revoke",
+    ],
 
-  availabilityStatus:
-    "coming_soon",
+    availabilityStatus:
+      "coming_soon",
 
-  documentationUrl:
-    "https://tekton.dev/docs/",
+    documentationUrl:
+      "https://tekton.dev/docs/",
 
-  icon:
-    "tekton",
+    icon:
+      "tekton",
 
-  configSchemaVersion:
-    1,
-},
-{
-  provider:
-    "terraform",
+    configSchemaVersion:
+      1,
+  },
 
-  displayName:
-    "Terraform",
+  {
+    provider:
+      "terraform",
 
-  category:
-    CATEGORIES.INFRA,
+    displayName:
+      "Terraform",
 
-  description:
-    "Integrate Terraform infrastructure state, resource discovery and infrastructure change evidence with AIRA.",
+    category:
+      CATEGORIES.INFRA,
 
-  capabilities: [
-    "get_health",
-    "discover_resources",
-    "discover_relationships",
-    "get_changes",
-    "revoke",
-  ],
+    description:
+      "Integrate Terraform infrastructure state, resource discovery and infrastructure change evidence with AIRA.",
 
-  availabilityStatus:
-    "coming_soon",
+    capabilities: [
+      "get_health",
+      "discover_resources",
+      "discover_relationships",
+      "get_changes",
+      "revoke",
+    ],
 
-  documentationUrl:
-    "https://developer.hashicorp.com/terraform/docs",
+    availabilityStatus:
+      "coming_soon",
 
-  icon:
-    "terraform",
+    documentationUrl:
+      "https://developer.hashicorp.com/terraform/docs",
 
-  configSchemaVersion:
-    1,
-},
+    icon:
+      "terraform",
+
+    configSchemaVersion:
+      1,
+  },
 ];
 
 // ============================================================================
@@ -1250,10 +1272,6 @@ function validateCatalogue() {
     const definition
     of CATALOGUE
   ) {
-    // ------------------------------------------------------------------------
-    // PROVIDER
-    // ------------------------------------------------------------------------
-
     if (
       !definition.provider ||
       typeof definition.provider !==
@@ -1266,6 +1284,7 @@ function validateCatalogue() {
       continue;
     }
 
+
     if (
       definition.provider !==
       definition.provider
@@ -1277,6 +1296,7 @@ function validateCatalogue() {
       );
     }
 
+
     if (
       providers.has(
         definition.provider
@@ -1287,13 +1307,11 @@ function validateCatalogue() {
       );
     }
 
+
     providers.add(
       definition.provider
     );
 
-    // ------------------------------------------------------------------------
-    // DISPLAY NAME
-    // ------------------------------------------------------------------------
 
     if (
       !definition.displayName ||
@@ -1305,9 +1323,6 @@ function validateCatalogue() {
       );
     }
 
-    // ------------------------------------------------------------------------
-    // CATEGORY
-    // ------------------------------------------------------------------------
 
     if (
       !Object.values(
@@ -1321,9 +1336,6 @@ function validateCatalogue() {
       );
     }
 
-    // ------------------------------------------------------------------------
-    // AVAILABILITY
-    // ------------------------------------------------------------------------
 
     if (
       !AVAILABILITY_STATUSES
@@ -1337,9 +1349,6 @@ function validateCatalogue() {
       );
     }
 
-    // ------------------------------------------------------------------------
-    // CAPABILITIES
-    // ------------------------------------------------------------------------
 
     if (
       !Array.isArray(
@@ -1353,6 +1362,7 @@ function validateCatalogue() {
       continue;
     }
 
+
     if (
       definition
         .capabilities
@@ -1364,8 +1374,10 @@ function validateCatalogue() {
       );
     }
 
+
     const seenCapabilities =
       new Set();
+
 
     for (
       const capability
@@ -1382,6 +1394,7 @@ function validateCatalogue() {
         );
       }
 
+
       if (
         seenCapabilities.has(
           capability
@@ -1392,14 +1405,12 @@ function validateCatalogue() {
         );
       }
 
+
       seenCapabilities.add(
         capability
       );
     }
 
-    // ------------------------------------------------------------------------
-    // VERSION
-    // ------------------------------------------------------------------------
 
     if (
       !Number.isInteger(
@@ -1415,6 +1426,7 @@ function validateCatalogue() {
       );
     }
   }
+
 
   return {
     valid:
@@ -1436,43 +1448,45 @@ const AVAILABLE_PROVIDERS =
   new Set(
     CATALOGUE
       .filter(
-        (definition) =>
+        definition =>
           definition
             .availabilityStatus ===
           "available"
       )
       .map(
-        (definition) =>
+        definition =>
           definition.provider
       )
   );
+
 
 const BETA_PROVIDERS =
   new Set(
     CATALOGUE
       .filter(
-        (definition) =>
+        definition =>
           definition
             .availabilityStatus ===
           "beta"
       )
       .map(
-        (definition) =>
+        definition =>
           definition.provider
       )
   );
+
 
 const COMING_SOON_PROVIDERS =
   new Set(
     CATALOGUE
       .filter(
-        (definition) =>
+        definition =>
           definition
             .availabilityStatus ===
           "coming_soon"
       )
       .map(
-        (definition) =>
+        definition =>
           definition.provider
       )
   );
@@ -1492,20 +1506,23 @@ function findDefinition(
     return null;
   }
 
+
   const normalized =
     provider
       .trim()
       .toLowerCase();
 
+
   return (
     CATALOGUE.find(
-      (definition) =>
+      definition =>
         definition.provider ===
         normalized
     ) ||
     null
   );
 }
+
 
 function isAvailable(
   provider
@@ -1519,6 +1536,7 @@ function isAvailable(
   );
 }
 
+
 function isBeta(
   provider
 ) {
@@ -1530,6 +1548,7 @@ function isBeta(
     "beta"
   );
 }
+
 
 function isComingSoon(
   provider
@@ -1543,46 +1562,51 @@ function isComingSoon(
   );
 }
 
+
 function getByCategory(
   category
 ) {
   return CATALOGUE
     .filter(
-      (definition) =>
+      definition =>
         definition.category ===
         category
     );
 }
 
+
 function getAvailableDefinitions() {
   return CATALOGUE
     .filter(
-      (definition) =>
+      definition =>
         definition
           .availabilityStatus ===
         "available"
     );
 }
 
+
 function getBetaDefinitions() {
   return CATALOGUE
     .filter(
-      (definition) =>
+      definition =>
         definition
           .availabilityStatus ===
         "beta"
     );
 }
 
+
 function getComingSoonDefinitions() {
   return CATALOGUE
     .filter(
-      (definition) =>
+      definition =>
         definition
           .availabilityStatus ===
         "coming_soon"
     );
 }
+
 
 function getProvidersByCapability(
   capability,
@@ -1600,9 +1624,10 @@ function getProvidersByCapability(
     return [];
   }
 
+
   return CATALOGUE
     .filter(
-      (definition) => {
+      definition => {
         if (
           !definition
             .capabilities
@@ -1613,6 +1638,7 @@ function getProvidersByCapability(
           return false;
         }
 
+
         if (
           availabilityStatus &&
           definition
@@ -1621,6 +1647,7 @@ function getProvidersByCapability(
         ) {
           return false;
         }
+
 
         return true;
       }
@@ -1635,7 +1662,10 @@ function assertCatalogueValid() {
   const result =
     validateCatalogue();
 
-  if (!result.valid) {
+
+  if (
+    !result.valid
+  ) {
     throw Object.assign(
       new Error(
         `Integration catalogue is invalid: ${result.errors.join(
@@ -1651,6 +1681,7 @@ function assertCatalogueValid() {
       }
     );
   }
+
 
   return result;
 }

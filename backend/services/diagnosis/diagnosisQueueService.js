@@ -17,7 +17,9 @@ const crypto =
     "node:crypto"
   );
 
-const queueService =
+const {
+  getQueueService,
+} =
   require(
     "../infrastructure/queueService"
   );
@@ -284,39 +286,99 @@ class DiagnosisQueueService {
   // QUEUE ADAPTER
   // ==========================================================================
 
-  async publish(
-  eventType,
-  payload
-) {
-  return queueService
-    .publishEvent(
-      eventType,
+   async publish(
+    eventType,
+    payload
+  ) {
+    const queue =
+      await getQueueService();
 
-      payload,
 
-      {
-        organizationId:
-          payload.organizationId ||
-          null,
+    if (
+      !queue ||
+      typeof queue
+        .publishEvent !==
+        "function"
+    ) {
+      throw Object.assign(
+        new Error(
+          "Diagnosis queue publisher is unavailable"
+        ),
+        {
+          code:
+            "DIAGNOSIS_QUEUE_PUBLISHER_UNAVAILABLE",
 
-        environmentId:
-          payload.environmentId ||
-          null,
+          executionAuthorized:
+            false,
+        }
+      );
+    }
 
-        correlationId:
-          payload.correlationId ||
-          payload.jobId ||
-          null,
 
-        tenantId:
-          payload.tenantId ||
-          null,
+    /*
+     * QueueService owns the canonical topic names.
+     *
+     * Prefer a registered topic when present. The explicit event type remains
+     * the fallback for compatibility with queue implementations/tests that
+     * intentionally do not expose a topics map.
+     */
+    const topicName =
+      eventType ===
+        DIAGNOSIS_EVENT
+          .REQUESTED
+        ? "DIAGNOSIS_REQUESTED"
+        : eventType ===
+            DIAGNOSIS_EVENT
+              .COMPLETED
+          ? "DIAGNOSIS_COMPLETED"
+          : eventType ===
+              DIAGNOSIS_EVENT
+                .FAILED
+            ? "DIAGNOSIS_FAILED"
+            : null;
 
-        schemaVersion:
-          1,
-      }
-    );
-}
+
+    const topic =
+      (
+        topicName &&
+        queue.topics
+          ?.[topicName]
+      ) ||
+      eventType;
+
+
+    return queue
+      .publishEvent(
+        topic,
+
+        payload,
+
+        {
+          organizationId:
+            payload.organizationId ||
+            null,
+
+          environmentId:
+            payload.environmentId ||
+            null,
+
+          correlationId:
+            payload.correlationId ||
+            payload.jobId ||
+            null,
+
+          tenantId:
+            payload.tenantId ||
+            null,
+
+          schemaVersion:
+            1,
+
+          executionAuthorized:
+            false,
+        }
+      );
+  }
   // ==========================================================================
   // JOB ID
   // ==========================================================================

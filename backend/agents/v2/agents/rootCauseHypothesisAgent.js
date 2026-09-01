@@ -32,7 +32,10 @@ const {
   require(
     "../runtime/baseAgent"
   );
-
+const kubernetesDiagnosisService =
+  require(
+    "../../../services/diagnosis/kubernetesDiagnosisService"
+  );
 const {
   HYPOTHESIS_STATUS,
   HYPOTHESIS_ORIGIN,
@@ -605,46 +608,464 @@ const primaryHypothesis =
   // ==========================================================================
 
   generateDeterministicCandidates(
-    context
+  context
+) {
+  const candidates =
+    [];
+
+  const symptoms =
+    context.symptoms ||
+    [];
+
+  // ==========================================================================
+  // DETERMINISTIC KUBERNETES DIAGNOSIS
+  // ==========================================================================
+
+  /*
+   * Use only canonical investigation evidence.
+   *
+   * There is deliberately no Reliability Lab experiment key,
+   * expected diagnosis, injected failure name or evaluator ground truth here.
+   */
+  const kubernetesDiagnosis =
+    kubernetesDiagnosisService
+      .diagnose({
+        incident:
+          context.incident ||
+          null,
+
+        evidencePackage:
+          context.evidence ||
+          {
+            items:
+              [],
+          },
+      });
+
+  const kubernetesCandidates =
+    Array.isArray(
+      kubernetesDiagnosis
+        ?.candidates
+    )
+      ? kubernetesDiagnosis
+          .candidates
+      : [];
+
+  for (
+    let index = 0;
+    index <
+      kubernetesCandidates.length;
+    index +=
+      1
   ) {
-    const candidates =
-      [];
-
-    const symptoms =
-      context.symptoms ||
-      [];
-
-    // ------------------------------------------------------------------------
-    // HTTP / dependency failure
-    // ------------------------------------------------------------------------
+    const candidate =
+      kubernetesCandidates[
+        index
+      ];
 
     if (
-      symptoms.some(
+      !candidate ||
+      !candidate
+        .failureModeKey
+    ) {
+      continue;
+    }
+
+    const supportingEvidence =
+      Array.from(
+        new Set(
+          [
+            ...(
+              Array.isArray(
+                candidate
+                  .evidenceIds
+              )
+                ? candidate
+                    .evidenceIds
+                : []
+            ),
+          ]
+            .filter(
+              Boolean
+            )
+            .map(
+              String
+            )
+        )
+      );
+
+    /*
+     * Fail closed.
+     *
+     * A deterministic diagnosis without supporting canonical evidence
+     * must not become a diagnosis hypothesis.
+     */
+    if (
+      supportingEvidence.length ===
+      0
+    ) {
+      continue;
+    }
+
+    candidates.push(
+      createHypothesis({
+        id:
+          this.hypothesisId(
+            `kubernetes-${candidate.failureModeKey}-${index}`
+          ),
+
+        rootCause:
+          candidate.rootCause ||
+          candidate.title ||
+          candidate.failureModeKey,
+
+        title:
+          candidate.title ||
+          candidate.rootCause ||
+          candidate.failureModeKey,
+
+        category:
+          candidate.category ||
+          "kubernetes",
+
+        failureModeKey:
+          candidate
+            .failureModeKey,
+
+        confidence:
+          clamp01(
+            candidate
+              .confidence ??
+            0
+          ),
+
+        status:
+          HYPOTHESIS_STATUS
+            .PROPOSED,
+
+        evidenceSupporting:
+          supportingEvidence,
+
+        evidenceAgainst:
+          [],
+
+        affectedResources:
+          extractCandidateAffectedResources(
+            candidate
+          ),
+
+        explanation:
+          `[FACT + deterministic inference] ${
+            candidate.rootCause ||
+            candidate.title ||
+            candidate.failureModeKey
+          }`,
+
+        assumptions:
+          [],
+
+        unknowns:
+          [],
+      })
+    );
+  }
+
+  // ==========================================================================
+  // HTTP / DEPENDENCY FAILURE
+  // ==========================================================================
+
+  if (
+    symptoms.some(
+      (
+        symptom
+      ) =>
+        symptom.type ===
+          "http_error_rate" ||
+        symptom.type ===
+          "trace_failure"
+    )
+  ) {
+    candidates.push(
+      createHypothesis({
+        id:
+          this.hypothesisId(
+            "upstream_dependency_failure"
+          ),
+
+        rootCause:
+          "Upstream dependency or downstream service dependency failure",
+
+        title:
+          "Dependency failure",
+
+        category:
+          "dependency",
+
+        confidence:
+          0.4,
+
+        status:
+          HYPOTHESIS_STATUS
+            .PROPOSED,
+
+        evidenceSupporting:
+          this.evidenceIdsByType(
+            context,
+            [
+              "TRACE",
+              "ALERT",
+              "DEPENDENCY_STATE",
+              "TOPOLOGY",
+            ]
+          ),
+
+        explanation:
+          "HTTP/trace failures can be caused by an unhealthy dependency. Topology and trace evidence must confirm whether failure propagated from another service.",
+
+        unknowns: [
+          "Exact failing dependency may not yet be known.",
+        ],
+      })
+    );
+  }
+
+  // ==========================================================================
+  // RECENT DEPLOYMENT / CONFIGURATION REGRESSION
+  // ==========================================================================
+
+  const suspiciousChanges =
+    context
+      .changeAnalysis
+      ?.suspiciousChanges ||
+    [];
+
+  if (
+    suspiciousChanges.length >
+    0
+  ) {
+    candidates.push(
+      createHypothesis({
+        id:
+          this.hypothesisId(
+            "recent_change_regression"
+          ),
+
+        rootCause:
+          "Recent deployment, configuration, or infrastructure change introduced a regression",
+
+        title:
+          "Recent change regression",
+
+        category:
+          "change",
+
+        confidence:
+          0.45,
+
+        status:
+          HYPOTHESIS_STATUS
+            .PROPOSED,
+
+        evidenceSupporting:
+          this.evidenceIdsByType(
+            context,
+            [
+              "DEPLOYMENT_CHANGE",
+              "CONFIGURATION_CHANGE",
+            ]
+          ),
+
+        explanation:
+          "A potentially impactful change occurred shortly before incident onset. Temporal proximity is supporting evidence but does not prove causality.",
+
+        assumptions: [
+          "The relevant change affected the failing service or dependency.",
+        ],
+      })
+    );
+  }
+
+  // ==========================================================================
+  // GENERIC INFRASTRUCTURE RESOURCE FAILURE
+  // ==========================================================================
+
+  const suspiciousResources =
+    context
+      .topologyAnalysis
+      ?.suspiciousResources ||
+    [];
+
+  if (
+    suspiciousResources.length >
+    0
+  ) {
+    candidates.push(
+      createHypothesis({
+        id:
+          this.hypothesisId(
+            "infrastructure_resource_failure"
+          ),
+
+        rootCause:
+          "Underlying infrastructure or Kubernetes resource degradation",
+
+        title:
+          "Infrastructure resource degradation",
+
+        category:
+          "infrastructure",
+
+        /*
+         * Intentionally no failureModeKey.
+         *
+         * This hypothesis is too broad to represent a specific
+         * machine-readable diagnosis.
+         */
+        confidence:
+          0.45,
+
+        status:
+          HYPOTHESIS_STATUS
+            .PROPOSED,
+
+        evidenceSupporting:
+          this.evidenceIdsByType(
+            context,
+            [
+              "RESOURCE_STATE",
+              "KUBERNETES_EVENT",
+              "TOPOLOGY",
+              "BLAST_RADIUS",
+            ]
+          ),
+
+        affectedResources:
+          suspiciousResources
+            .map(
+              (
+                resource
+              ) =>
+                resource.id
+            )
+            .filter(
+              Boolean
+            ),
+
+        explanation:
+          "Topology analysis identified unhealthy or highly critical infrastructure resources inside the incident blast radius.",
+      })
+    );
+  }
+
+  // ==========================================================================
+  // RECURRING KNOWN FAILURE
+  // ==========================================================================
+
+  if (
+    context
+      .historicalAnalysis
+      ?.recurrenceDetected
+  ) {
+    candidates.push(
+      createHypothesis({
+        id:
+          this.hypothesisId(
+            "recurring_known_failure"
+          ),
+
+        rootCause:
+          "Recurrence of a previously observed failure pattern",
+
+        title:
+          "Recurring failure pattern",
+
+        category:
+          "recurrence",
+
+        confidence:
+          context
+            .historicalAnalysis
+            .recurringFingerprint
+            ? 0.7
+            : 0.5,
+
+        status:
+          HYPOTHESIS_STATUS
+            .PROPOSED,
+
+        evidenceSupporting:
+          this.evidenceIdsByType(
+            context,
+            [
+              "HISTORICAL_INCIDENT",
+              "INCIDENT_EVENT",
+            ]
+          ),
+
+        explanation:
+          "Historical analysis indicates that this incident resembles or shares identity with prior failures.",
+
+        assumptions: [
+          "Historical similarity does not guarantee identical root cause.",
+        ],
+      })
+    );
+  }
+
+  // ==========================================================================
+  // RESOURCE EXHAUSTION
+  // ==========================================================================
+
+  const metricEvidence =
+    (
+      context
+        .evidence
+        ?.items ||
+      []
+    )
+      .filter(
         (
-          symptom
+          evidence
         ) =>
-          symptom.type ===
-            "http_error_rate" ||
-          symptom.type ===
-            "trace_failure"
+          evidence.type ===
+          "METRIC"
+      );
+
+  if (
+    metricEvidence.length >
+    0
+  ) {
+    const serialized =
+      JSON.stringify(
+        metricEvidence
+      )
+        .toLowerCase();
+
+    if (
+      /cpu|memory|connection|pool|queue|disk|latency|saturation/.test(
+        serialized
       )
     ) {
       candidates.push(
         createHypothesis({
           id:
             this.hypothesisId(
-              "upstream_dependency_failure"
+              "resource_exhaustion"
             ),
 
           rootCause:
-            "Upstream dependency or downstream service dependency failure",
+            "Resource exhaustion or saturation",
 
           title:
-            "Dependency failure",
+            "Resource exhaustion",
 
           category:
-            "dependency",
+            "capacity",
 
+          /*
+           * Generic metric hints are not enough to assign a specific
+           * failureModeKey.
+           */
           confidence:
             0.4,
 
@@ -653,279 +1074,30 @@ const primaryHypothesis =
               .PROPOSED,
 
           evidenceSupporting:
-            this.evidenceIdsByType(
-              context,
-              [
-                "TRACE",
-                "ALERT",
-                "DEPENDENCY_STATE",
-                "TOPOLOGY",
-              ]
-            ),
-
-          explanation:
-            "HTTP/trace failures can be caused by an unhealthy dependency. Topology and trace evidence must confirm whether failure propagated from another service.",
-
-          unknowns: [
-            "Exact failing dependency may not yet be known.",
-          ],
-        })
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // Recent deployment/configuration regression
-    // ------------------------------------------------------------------------
-
-    const suspiciousChanges =
-      context
-        .changeAnalysis
-        ?.suspiciousChanges ||
-      [];
-
-    if (
-      suspiciousChanges.length >
-      0
-    ) {
-      candidates.push(
-        createHypothesis({
-          id:
-            this.hypothesisId(
-              "recent_change_regression"
-            ),
-
-          rootCause:
-            "Recent deployment, configuration, or infrastructure change introduced a regression",
-
-          title:
-            "Recent change regression",
-
-          category:
-            "change",
-
-          confidence:
-            0.45,
-
-          status:
-            HYPOTHESIS_STATUS
-              .PROPOSED,
-
-          evidenceSupporting:
-            this.evidenceIdsByType(
-              context,
-              [
-                "DEPLOYMENT_CHANGE",
-                "CONFIGURATION_CHANGE",
-              ]
-            ),
-
-          explanation:
-            "A potentially impactful change occurred shortly before incident onset. Temporal proximity is supporting evidence but does not prove causality.",
-
-          assumptions: [
-            "The relevant change affected the failing service or dependency.",
-          ],
-        })
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // Kubernetes / resource failure
-    // ------------------------------------------------------------------------
-
-    const suspiciousResources =
-      context
-        .topologyAnalysis
-        ?.suspiciousResources ||
-      [];
-
-    if (
-      suspiciousResources.length >
-      0
-    ) {
-      candidates.push(
-        createHypothesis({
-          id:
-            this.hypothesisId(
-              "infrastructure_resource_failure"
-            ),
-
-          rootCause:
-            "Underlying infrastructure or Kubernetes resource degradation",
-
-          title:
-            "Infrastructure resource degradation",
-
-          category:
-            "infrastructure",
-
-          confidence:
-            0.45,
-
-          status:
-            HYPOTHESIS_STATUS
-              .PROPOSED,
-
-          evidenceSupporting:
-            this.evidenceIdsByType(
-              context,
-              [
-                "RESOURCE_STATE",
-                "KUBERNETES_EVENT",
-                "TOPOLOGY",
-                "BLAST_RADIUS",
-              ]
-            ),
-
-          affectedResources:
-            suspiciousResources
+            metricEvidence
               .map(
                 (
-                  resource
+                  evidence
                 ) =>
-                  resource.id
+                  evidence.id
               )
               .filter(
                 Boolean
               ),
 
           explanation:
-            "Topology analysis identified unhealthy or highly critical infrastructure resources inside the incident blast radius.",
+            "Metric evidence contains resource utilization, latency, queueing, connection, or saturation indicators that may contribute to the incident.",
         })
       );
     }
-
-    // ------------------------------------------------------------------------
-    // Recurring known failure
-    // ------------------------------------------------------------------------
-
-    if (
-      context
-        .historicalAnalysis
-        ?.recurrenceDetected
-    ) {
-      candidates.push(
-        createHypothesis({
-          id:
-            this.hypothesisId(
-              "recurring_known_failure"
-            ),
-
-          rootCause:
-            "Recurrence of a previously observed failure pattern",
-
-          title:
-            "Recurring failure pattern",
-
-          category:
-            "recurrence",
-
-          confidence:
-            context
-              .historicalAnalysis
-              .recurringFingerprint
-              ? 0.7
-              : 0.5,
-
-          status:
-            HYPOTHESIS_STATUS
-              .PROPOSED,
-
-          evidenceSupporting:
-            this.evidenceIdsByType(
-              context,
-              [
-                "HISTORICAL_INCIDENT",
-                "INCIDENT_EVENT",
-              ]
-            ),
-
-          explanation:
-            "Historical analysis indicates that this incident resembles or shares identity with prior failures.",
-
-          assumptions: [
-            "Historical similarity does not guarantee identical root cause.",
-          ],
-        })
-      );
-    }
-
-    // ------------------------------------------------------------------------
-    // Resource exhaustion
-    // ------------------------------------------------------------------------
-
-    const metricEvidence =
-      (
-        context
-          .evidence
-          ?.items ||
-        []
-      )
-        .filter(
-          (
-            evidence
-          ) =>
-            evidence.type ===
-            "METRIC"
-        );
-
-    if (
-      metricEvidence.length >
-      0
-    ) {
-      const serialized =
-        JSON.stringify(
-          metricEvidence
-        )
-          .toLowerCase();
-
-      if (
-        /cpu|memory|connection|pool|queue|disk|latency|saturation/.test(
-          serialized
-        )
-      ) {
-        candidates.push(
-          createHypothesis({
-            id:
-              this.hypothesisId(
-                "resource_exhaustion"
-              ),
-
-            rootCause:
-              "Resource exhaustion or saturation",
-
-            title:
-              "Resource exhaustion",
-
-            category:
-              "capacity",
-
-            confidence:
-              0.4,
-
-            status:
-              HYPOTHESIS_STATUS
-                .PROPOSED,
-
-            evidenceSupporting:
-              metricEvidence
-                .map(
-                  (
-                    evidence
-                  ) =>
-                    evidence.id
-                ),
-
-            explanation:
-              "Metric evidence contains resource utilization, latency, queueing, connection, or saturation indicators that may contribute to the incident.",
-          })
-        );
-      }
-    }
-
-    return candidates;
   }
 
+  /*
+   * Prefer strongly supported deterministic candidates without deleting
+   * alternative hypotheses. Ranking/scoring remains downstream authority.
+   */
+  return candidates;
+}
   // ==========================================================================
   // AI NORMALIZATION
   // ==========================================================================
@@ -1022,85 +1194,93 @@ const primaryHypothesis =
               );
 
           return createHypothesis({
-            id:
-              hypothesis.id ||
-              this.hypothesisId(
-                `ai-${index}-${rootCause}`
-              ),
+  id:
+    hypothesis.id ||
+    this.hypothesisId(
+      `ai-${index}-${rootCause}`
+    ),
 
-            rootCause,
-             
-            origin:
-  HYPOTHESIS_ORIGIN
-    .AI,
+  rootCause,
 
-            title:
-              hypothesis.title ||
-              rootCause,
+  origin:
+    HYPOTHESIS_ORIGIN
+      .AI,
 
-            category:
-              hypothesis.category ||
-              null,
+  title:
+    hypothesis.title ||
+    rootCause,
 
-            confidence:
-              clamp01(
-                hypothesis
-                  .confidence ??
-                0.4
-              ),
+  category:
+    hypothesis.category ||
+    null,
 
-            status:
-              normalizeHypothesisStatus(
-                hypothesis.status
-              ),
+  failureModeKey:
+    typeof hypothesis
+      .failureModeKey ===
+      "string"
+      ? hypothesis
+          .failureModeKey
+      : null,
 
-            evidenceSupporting:
-              supporting,
+  confidence:
+    clamp01(
+      hypothesis
+        .confidence ??
+      0.4
+    ),
 
-            evidenceAgainst:
-              against,
+  status:
+    normalizeHypothesisStatus(
+      hypothesis.status
+    ),
 
-            contradictions:
-              normalizeArray(
-                hypothesis
-                  .contradictions
-              ),
+  evidenceSupporting:
+    supporting,
 
-            affectedServices:
-              normalizeArray(
-                hypothesis
-                  .affectedServices
-              ),
+  evidenceAgainst:
+    against,
 
-            affectedResources:
-              normalizeArray(
-                hypothesis
-                  .affectedResources
-              ),
+  contradictions:
+    normalizeArray(
+      hypothesis
+        .contradictions
+    ),
 
-            explanation:
-              hypothesis.explanation ||
-              hypothesis.reasoning ||
-              "",
+  affectedServices:
+    normalizeArray(
+      hypothesis
+        .affectedServices
+    ),
 
-            causalChain:
-              normalizeArray(
-                hypothesis
-                  .causalChain
-              ),
+  affectedResources:
+    normalizeArray(
+      hypothesis
+        .affectedResources
+    ),
 
-            assumptions:
-              normalizeArray(
-                hypothesis
-                  .assumptions
-              ),
+  explanation:
+    hypothesis.explanation ||
+    hypothesis.reasoning ||
+    "",
 
-            unknowns:
-              normalizeArray(
-                hypothesis
-                  .unknowns
-              ),
-          });
+  causalChain:
+    normalizeArray(
+      hypothesis
+        .causalChain
+    ),
+
+  assumptions:
+    normalizeArray(
+      hypothesis
+        .assumptions
+    ),
+
+  unknowns:
+    normalizeArray(
+      hypothesis
+        .unknowns
+    ),
+});
         }
       )
       .filter(
@@ -1157,7 +1337,16 @@ const primaryHypothesis =
       map.get(
         key
       );
-
+    if (
+  !existing
+    .failureModeKey &&
+  hypothesis
+    .failureModeKey
+) {
+  existing.failureModeKey =
+    hypothesis
+      .failureModeKey;
+}
     /*
      * The same causal hypothesis was independently produced by deterministic
      * and AI reasoning.
@@ -1321,6 +1510,196 @@ const primaryHypothesis =
     ...map.values(),
   ];
 }
+calculateEvidenceSupportStrength(
+  supportingEvidenceIds,
+  context
+) {
+  const ids =
+    Array.isArray(
+      supportingEvidenceIds
+    )
+      ? supportingEvidenceIds
+      : [];
+
+  if (
+    ids.length ===
+    0
+  ) {
+    return 0;
+  }
+
+  const evidenceItems =
+    Array.isArray(
+      context
+        ?.evidence
+        ?.items
+    )
+      ? context
+          .evidence
+          .items
+      : [];
+
+  const evidenceById =
+    new Map(
+      evidenceItems
+        .filter(
+          item =>
+            item?.id
+        )
+        .map(
+          item => [
+            String(
+              item.id
+            ),
+            item,
+          ]
+        )
+    );
+
+  let strength =
+    Math.min(
+      1,
+      ids.length /
+        4
+    );
+
+  for (
+    const evidenceId
+    of ids
+  ) {
+    const item =
+      evidenceById.get(
+        String(
+          evidenceId
+        )
+      );
+
+    if (
+      !item
+    ) {
+      continue;
+    }
+
+    const data =
+      item
+        .structuredData &&
+      typeof item
+        .structuredData ===
+        "object"
+        ? item
+            .structuredData
+        : {};
+
+    const attributes =
+      data.attributes &&
+      typeof data.attributes ===
+        "object"
+        ? data.attributes
+        : {};
+
+    const kubernetes =
+      attributes
+        .kubernetes &&
+      typeof attributes
+        .kubernetes ===
+        "object"
+        ? attributes
+            .kubernetes
+        : {};
+
+    const eventType =
+      String(
+        data.eventType ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+    const originalUid =
+      kubernetes
+        .originalUid ||
+      kubernetes
+        .originalPodUid ||
+      null;
+
+    const replacementUid =
+      kubernetes
+        .replacementUid ||
+      kubernetes
+        .replacementPodUid ||
+      null;
+
+    const originalPod =
+      kubernetes
+        .originalPod ||
+      kubernetes
+        .originalPodName ||
+      null;
+
+    const replacementPod =
+      kubernetes
+        .replacementPod ||
+      kubernetes
+        .replacementPodName ||
+      null;
+
+    const replacementReady =
+      kubernetes
+        .replacementReady;
+
+    const podIdentityChanged =
+      Boolean(
+        originalUid &&
+        replacementUid &&
+        String(
+          originalUid
+        ) !==
+        String(
+          replacementUid
+        )
+      );
+
+    const podReplacementObserved =
+      eventType ===
+        "kubernetes.pod.replacement" ||
+      (
+        eventType.includes(
+          "pod"
+        ) &&
+        eventType.includes(
+          "replacement"
+        )
+      );
+
+    /*
+     * One canonical telemetry object may contain multiple independently
+     * observed Kubernetes facts.
+     *
+     * Strength is based on those facts, not merely evidence-row count.
+     *
+     * No evaluator ground truth or Reliability Lab scenario identity is used.
+     */
+    if (
+      podReplacementObserved &&
+      podIdentityChanged &&
+      originalPod &&
+      replacementPod
+    ) {
+      strength =
+        Math.max(
+          strength,
+          replacementReady ===
+            true
+            ? 0.9
+            : 0.8
+        );
+    }
+  }
+
+  return clamp01(
+    strength
+  );
+}
 
   // ==========================================================================
   // SCORING
@@ -1446,11 +1825,10 @@ const primaryHypothesis =
     );
 
   const supportStrength =
-    Math.min(
-      1,
-      supportCount /
-        4
-    );
+  this.calculateEvidenceSupportStrength(
+    validSupporting,
+    context
+  );
 
   const contradictionPenalty =
     Math.min(
@@ -2388,12 +2766,9 @@ function clamp01OrNull(
   value
 ) {
   if (
-    value ===
-      null ||
-    value ===
-      undefined ||
-    value ===
-      ""
+    value === null ||
+    value === undefined ||
+    value === ""
   ) {
     return null;
   }
@@ -2413,6 +2788,34 @@ function clamp01OrNull(
 
   return clamp01(
     number
+  );
+}
+
+
+function extractCandidateAffectedResources(
+  candidate
+) {
+  const evidence =
+    candidate?.evidence ||
+    {};
+
+  return Array.from(
+    new Set(
+      [
+        evidence.pod,
+        evidence.oldPodName,
+        evidence.newPodName,
+        evidence.deployment,
+        evidence.node,
+        evidence.workload,
+      ]
+        .filter(
+          Boolean
+        )
+        .map(
+          String
+        )
+    )
   );
 }
 

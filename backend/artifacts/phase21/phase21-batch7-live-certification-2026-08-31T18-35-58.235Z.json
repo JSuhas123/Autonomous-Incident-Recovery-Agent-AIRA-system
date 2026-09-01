@@ -1,0 +1,45 @@
+{
+  "certificate": "21.13-14-live-v1",
+  "generatedAt": "2026-08-31T18:35:58.233Z",
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "serviceId": "8ecfe7f9a1a3bce1ddb24351",
+  "experimentKey": "kubernetes.pod.crash",
+  "experimentVersion": 1,
+  "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+  "signalId": "sig_22b1a1ce05e4846d5faa76d51f8a896434a4e13be10204ff",
+  "correlationGroupId": "single_sig_22b1a1ce05e4846d5faa76d51f8a896434a4e13be10204ff",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "diagnosisRunId": "diag_b97b6e8034fbad195eb245f3",
+  "selectedFailureMode": "kubernetes.pod.crash",
+  "expectedFailureMode": "kubernetes.pod.crash",
+  "expectedDiagnosis": "KUBERNETES_POD_CRASH",
+  "assertions": {
+    "detected": "PASS",
+    "correlated": "PASS",
+    "diagnosisCorrect": "PASS"
+  },
+  "metrics": {
+    "timeToObservableMs": 8045,
+    "timeToSignalMs": 8858,
+    "timeToIncidentMs": 8915,
+    "diagnosisLatencyMs": 209,
+    "diagnosisConfidence": 0.0738
+  },
+  "groundTruth": {
+    "availableToEvaluator": true,
+    "passedToAira": false,
+    "consumedByDiagnosisHarness": false
+  },
+  "reset": {
+    "succeeded": true,
+    "baselineRestored": true
+  },
+  "finalLabStatus": "AVAILABLE",
+  "safetyClass": "LAB_ONLY",
+  "productionCertified": false,
+  "executionAuthorized": false,
+  "frozen": true
+}

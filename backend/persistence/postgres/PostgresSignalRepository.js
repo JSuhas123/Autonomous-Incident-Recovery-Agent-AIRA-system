@@ -934,7 +934,7 @@ function buildWhere(
         return null;
       }
 
-      if (
+            if (
         key ===
         "_id"
       ) {
@@ -943,6 +943,28 @@ function buildWhere(
           values
         );
       }
+
+
+      /*
+       * Incident identity is an application/public identifier while
+       * signals.signals.incident_id stores the canonical PostgreSQL UUID FK.
+       *
+       * Resolve through incidents.incidents inside the scoped query instead
+       * of comparing a 24-character application ID directly to a UUID.
+       *
+       * The organization/environment predicates are repeated deliberately:
+       * cross-tenant incident resolution must never occur.
+       */
+      if (
+        key ===
+        "incidentId"
+      ) {
+        return compileIncidentId(
+          value,
+          values
+        );
+      }
+
 
       if (
         key ===
@@ -1093,6 +1115,65 @@ function compileDatabaseId(
     OR legacy_mongo_id = $${index}
     OR id::text = $${index}
   )`;
+}
+
+function compileIncidentId(
+  value,
+  values
+) {
+  if (
+    value ===
+      null ||
+    value ===
+      undefined ||
+    String(
+      value
+    )
+      .trim() ===
+      ""
+  ) {
+    const index =
+      values.push(
+        null
+      );
+
+    return `incident_id IS NOT DISTINCT FROM $${index}::uuid`;
+  }
+
+
+  /*
+   * AIRA may encounter:
+   *
+   * - public_id
+   * - legacy_mongo_id
+   * - PostgreSQL UUID
+   *
+   * Historical/application callers should not need to know which physical
+   * identifier PostgreSQL stores in signals.signals.incident_id.
+   */
+  const index =
+    values.push(
+      String(
+        value
+      )
+    );
+
+
+  return `
+    incident_id = (
+      SELECT i.id
+      FROM incidents.incidents AS i
+      WHERE
+        i.organization_id = $1
+        AND i.environment_id = $2
+        AND (
+          i.public_id = $${index}
+          OR i.legacy_mongo_id = $${index}
+          OR i.id::text = $${index}
+        )
+      LIMIT 1
+    )
+  `;
 }
 
 function compileOperator(

@@ -11,7 +11,7 @@ const {
   buildFingerprint,
 } =
   require(
-    "../../persistence/operational/canonicalModels"
+    "../../utils/incidentFingerprint"
   );
 
 const {

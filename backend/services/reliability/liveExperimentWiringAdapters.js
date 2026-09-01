@@ -235,12 +235,18 @@ class ReliabilityFailureInjectorAdapter {
     }
 
 
-    const referenceId =
+       const referenceId =
       firstNonEmpty(
         result.publicId,
         result.failureInjectionId,
         result.injectionId,
-        result.id
+        result.id,
+        result.evidence
+          ?.publicId,
+        result.evidence
+          ?.public_id,
+        result.evidence
+          ?.id
       );
 
 
@@ -272,13 +278,35 @@ class ReliabilityFailureInjectorAdapter {
         result
       ),
 
-      publicId:
-        result.publicId ||
-        referenceId,
+           publicId:
+        firstNonEmpty(
+          result.publicId,
+          result.evidence
+            ?.publicId,
+          result.evidence
+            ?.public_id,
+          referenceId
+        ),
+
+      failureInjectionId:
+        firstNonEmpty(
+          result.failureInjectionId,
+          result.evidence
+            ?.publicId,
+          result.evidence
+            ?.public_id,
+          referenceId
+        ),
 
       injectionId:
-        result.injectionId ||
-        referenceId,
+        firstNonEmpty(
+          result.injectionId,
+          result.evidence
+            ?.publicId,
+          result.evidence
+            ?.public_id,
+          referenceId
+        ),
 
       injected:
         true,

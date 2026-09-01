@@ -1072,11 +1072,10 @@ detectEvidenceIntegrityProblems(
       );
 
     const supportStrength =
-      Math.min(
-        1,
-        validSupporting.length /
-          3
-      );
+  this.calculateEvidenceSupportStrength(
+    validSupporting,
+    context
+  );
 
     const contradictionPenalty =
       Math.min(
@@ -1349,6 +1348,218 @@ detectEvidenceIntegrityProblems(
 
     return issues;
   }
+
+  calculateEvidenceSupportStrength(
+  validSupporting,
+  context
+) {
+  const ids =
+    Array.isArray(
+      validSupporting
+    )
+      ? validSupporting
+      : [];
+
+  if (
+    ids.length ===
+    0
+  ) {
+    return 0;
+  }
+
+
+  const evidenceItems =
+    Array.isArray(
+      context
+        ?.evidence
+        ?.items
+    )
+      ? context
+          .evidence
+          .items
+      : [];
+
+
+  const byId =
+    new Map(
+      evidenceItems
+        .filter(
+          item =>
+            item?.id
+        )
+        .map(
+          item => [
+            String(
+              item.id
+            ),
+            item,
+          ]
+        )
+    );
+
+
+  let strength =
+    Math.min(
+      1,
+      ids.length /
+        3
+    );
+
+
+  for (
+    const evidenceId
+    of ids
+  ) {
+    const item =
+      byId.get(
+        String(
+          evidenceId
+        )
+      );
+
+    if (
+      !item
+    ) {
+      continue;
+    }
+
+
+    const data =
+      item
+        .structuredData &&
+      typeof item
+        .structuredData ===
+        "object"
+        ? item
+            .structuredData
+        : {};
+
+
+    const attributes =
+      data.attributes &&
+      typeof data.attributes ===
+        "object"
+        ? data.attributes
+        : {};
+
+
+    const kubernetes =
+      attributes
+        .kubernetes &&
+      typeof attributes
+        .kubernetes ===
+        "object"
+        ? attributes
+            .kubernetes
+        : {};
+
+
+    const eventType =
+      String(
+        data.eventType ||
+        ""
+      )
+        .trim()
+        .toLowerCase();
+
+
+    /*
+     * A Kubernetes pod-replacement observation can contain several
+     * independently observed facts inside one canonical evidence record:
+     *
+     * - old pod identity
+     * - new pod identity
+     * - UID transition
+     * - readiness of the replacement
+     *
+     * Evidence strength must reflect those facts rather than merely the
+     * number of database/evidence rows.
+     *
+     * This does NOT inspect Reliability Lab scenario metadata and does
+     * NOT use evaluator ground truth.
+     */
+
+    const originalUid =
+      kubernetes
+        .originalUid ||
+      kubernetes
+        .originalPodUid ||
+      null;
+
+    const replacementUid =
+      kubernetes
+        .replacementUid ||
+      kubernetes
+        .replacementPodUid ||
+      null;
+
+    const originalPod =
+      kubernetes
+        .originalPod ||
+      kubernetes
+        .originalPodName ||
+      null;
+
+    const replacementPod =
+      kubernetes
+        .replacementPod ||
+      kubernetes
+        .replacementPodName ||
+      null;
+
+    const replacementReady =
+      kubernetes
+        .replacementReady;
+
+
+    const podIdentityChanged =
+      Boolean(
+        originalUid &&
+        replacementUid &&
+        String(
+          originalUid
+        ) !==
+        String(
+          replacementUid
+        )
+      );
+
+
+    const podReplacementObserved =
+      eventType ===
+        "kubernetes.pod.replacement" ||
+      (
+        eventType.includes(
+          "pod"
+        ) &&
+        eventType.includes(
+          "replacement"
+        )
+      );
+
+
+    if (
+      podReplacementObserved &&
+      podIdentityChanged &&
+      originalPod &&
+      replacementPod
+    ) {
+      strength =
+        Math.max(
+          strength,
+          replacementReady ===
+            true
+            ? 0.9
+            : 0.8
+        );
+    }
+  }
+
+
+  return clamp01(
+    strength
+  );
+}
 
   // ==========================================================================
   // COMPETING HYPOTHESES
