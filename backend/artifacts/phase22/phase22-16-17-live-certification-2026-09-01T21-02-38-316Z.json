@@ -1,0 +1,75 @@
+{
+  "phase": "22.16-22.17",
+  "certificateVersion": "22.16-22.17-live-v1",
+  "status": "PASS",
+  "liveCertified": true,
+  "source": {
+    "phase2215Artifact": "phase22-15-first-live-capability-2026-09-01T20-57-31-765Z.json",
+    "capabilityKey": "K8S_POD_CRASH_DEPLOYMENT_RESTART",
+    "failureMode": "kubernetes.pod.crash",
+    "realEvidenceLevel": "L0",
+    "evidenceSufficiency": "INSUFFICIENT_EVIDENCE"
+  },
+  "tenant": {
+    "organizationId": "aira-dev-org",
+    "environmentId": "env_aira_development",
+    "autonomyMode": "approval_required",
+    "allowAutonomousRecovery": false,
+    "allowProductionAutonomy": false,
+    "minimumConfidenceForAutonomy": 0.95
+  },
+  "runtimeEnforcement": {
+    "pass": true,
+    "certificationLevel": "L0",
+    "effectiveLevel": "L0",
+    "decision": "OBSERVE",
+    "autonomousRecoveryEligible": false,
+    "nextAuthority": null,
+    "tenantReductionProbe": {
+      "pass": true,
+      "effectiveLevel": "L3",
+      "approvalRequired": true
+    },
+    "killSwitchProbe": {
+      "pass": true,
+      "blocked": true,
+      "effectiveLevel": "L0"
+    },
+    "executionAuthorized": false
+  },
+  "lifecycleEnforcement": {
+    "pass": true,
+    "controlledProbeOnly": true,
+    "doesNotPromoteLiveCapability": true,
+    "promotion": {
+      "action": "PROMOTION_ELIGIBLE",
+      "executionAuthorized": false
+    },
+    "demotion": {
+      "action": "DEMOTION_REQUIRED",
+      "level": "L2",
+      "executionAuthorized": false
+    },
+    "suspension": {
+      "action": "SUSPENSION_REQUIRED",
+      "executionAuthorized": false
+    },
+    "revocation": {
+      "action": "REVOCATION_ENFORCED",
+      "executionAuthorized": false
+    }
+  },
+  "safety": {
+    "certificationGrantsAuthority": false,
+    "promotionGrantsAuthority": false,
+    "reputationGrantsAuthority": false,
+    "tenantCanIncreaseCertification": false,
+    "killSwitchCanBeBypassed": false,
+    "productionCertified": false,
+    "executionAuthorized": false
+  },
+  "productionCertified": false,
+  "executionAuthorized": false,
+  "authorizationGranted": false,
+  "generatedAt": "2026-09-01T21:02:38.316Z"
+}

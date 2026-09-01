@@ -23,6 +23,7 @@ module.exports = {
 
     "<rootDir>/agents",
 
+    "<rootDir>/coverage",
     // Phase 13 persistence layer
     "<rootDir>/persistence",
   ],
@@ -45,6 +46,8 @@ module.exports = {
 
     "knowledge/**/*.js",
 
+    "coverage/**/*.js",
+    
     "utils/**/*.js",
 
     // Phase 13 persistence code

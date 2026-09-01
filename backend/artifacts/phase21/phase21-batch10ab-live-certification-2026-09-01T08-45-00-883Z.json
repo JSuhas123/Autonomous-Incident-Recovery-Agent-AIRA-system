@@ -1,0 +1,172 @@
+{
+  "certificateVersion": "21.19ab-batch10-live-v1",
+  "certifiedAt": "2026-09-01T08:45:00.880Z",
+  "phase": "21.19",
+  "subphases": [
+    "21.19A",
+    "21.19B"
+  ],
+  "batch": "10A/B",
+  "certificationType": "LIVE_MASTER_LINEAGE_AND_SAFETY",
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "sourceEvidence": {
+    "batch7": {
+      "artifact": "phase21-batch7-live-certification-2026-08-31T18-35-58.235Z.json",
+      "sha256": "167c12d2c402522cbfc010a1fb6100ec8775e685ad5b687b5340a43e3e6e1c9e"
+    },
+    "batch8a": {
+      "artifact": "phase21-batch8a-live-certification-2026-08-31T19-26-48.596Z.json",
+      "sha256": "0c6d7e7c344f8c2ce09ef0832c3d47c7ba24fb031583e5859b8b743c2f05017d"
+    },
+    "batch8b": {
+      "artifact": "phase21-batch8b-live-certification-2026-08-31T20-44-20.984Z.json",
+      "sha256": "0424d22a18fbf6c86cb306ab40268d1b82565e78489a58920edf27006d4663af"
+    },
+    "batch9": {
+      "artifact": "phase21-batch9-live-certification-2026-09-01T08-37-32-960Z.json",
+      "sha256": "b3b69e80a1dc4ddf1a7c644aacc4ce182c89f7f0f885abc70e0fa8d5f381a3a5"
+    },
+    "tenantIsolation": {
+      "artifact": "phase21-10c-final-certification-2026-08-31T10-43-27.929Z.json",
+      "sha256": "e7f376199b39fc3d7a9fecd1809bf67e8bca3ef66eaf33c2c4437df13d2da918"
+    }
+  },
+  "endToEnd": {
+    "healthyBaseline": true,
+    "realFailureInjection": true,
+    "realSignal": true,
+    "incident": true,
+    "correlation": true,
+    "diagnosis": true,
+    "recoverySelection": true,
+    "policyAuthorization": true,
+    "deterministicExecution": true,
+    "realInfrastructureChange": true,
+    "independentVerification": true,
+    "recoveryConfirmed": true,
+    "metricsScored": true,
+    "postgresEvidence": true,
+    "labReset": true,
+    "lineageContinuous": true
+  },
+  "safetyChecks": [
+    {
+      "name": "production target impossible",
+      "pass": true,
+      "details": {
+        "reasonCode": "FAILURE_INJECTION_PRODUCTION_ENVIRONMENT_FORBIDDEN"
+      }
+    },
+    {
+      "name": "ground truth evaluator-only",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "capability != authorization",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "diagnosis != authorization",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "recovery recommendation != authorization",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "Phase21 != authorization",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "IntegrationRuntime requires persisted authorization",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "command success != recovery",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "failed verification != recovered",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "rollback recommendation != rollback execution",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "experiment metrics != authority",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "historical evidence immutable",
+      "pass": true,
+      "details": {
+        "artifactEvidenceImmutable": true,
+        "canonicalExperimentStable": true
+      }
+    },
+    {
+      "name": "PostgreSQL canonical",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "tenant isolation intact",
+      "pass": true,
+      "details": {}
+    },
+    {
+      "name": "master authority invariant",
+      "pass": true,
+      "details": {}
+    }
+  ],
+  "lineage": {
+    "batch7ExperimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "batch8aExperimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "batch9ExperimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "incidentId": "e8fa0aeec7d209dd5770b293",
+    "authorizationId": "execa_8e6b423b250243c098aef547",
+    "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+    "planId": "execplan_b39d7f794723c4298c917179",
+    "preExecutionPodUid": "2aebca6e-90c7-464f-ba4c-725c03e222f2",
+    "postExecutionPodUid": "61c303c3-a581-452d-bdf1-1a20311679ec",
+    "verificationLinkedToExactExecution": true
+  },
+  "safety": {
+    "productionTargetImpossible": true,
+    "groundTruthEvaluatorOnly": true,
+    "capabilityDoesNotAuthorize": true,
+    "diagnosisDoesNotAuthorize": true,
+    "recoveryRecommendationDoesNotAuthorize": true,
+    "phase21DoesNotAuthorize": true,
+    "integrationRuntimeRequiredCanonicalAuthorization": true,
+    "commandSuccessDoesNotEqualRecovery": true,
+    "failedVerificationDoesNotEqualRecovered": true,
+    "rollbackRecommendationDoesNotExecuteRollback": true,
+    "experimentMetricsDoNotAuthorize": true,
+    "historicalEvidenceImmutableDuringCertification": true,
+    "postgresCanonical": true,
+    "tenantIsolationIntact": true
+  },
+  "finalLabStatus": "AVAILABLE",
+  "groundTruthPassedToAira": false,
+  "phase21ExecutionAuthorized": false,
+  "productionCertified": false,
+  "passed": true
+}

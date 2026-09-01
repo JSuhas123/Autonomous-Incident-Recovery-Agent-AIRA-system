@@ -1,0 +1,423 @@
+{
+  "phase": "22.15",
+  "certificateVersion": "22.15-first-live-capability-v1",
+  "status": "PASS",
+  "liveAssessment": true,
+  "capability": {
+    "capabilityKey": "K8S_POD_CRASH_DEPLOYMENT_RESTART",
+    "provider": "kubernetes",
+    "resourceType": "kubernetes.deployment",
+    "failureMode": "kubernetes.pod.crash",
+    "recoveryStrategy": "restartDeployment",
+    "resourceCapability": "RESTART",
+    "playbookId": "PB-PHASE21-K8S-RESTART-LAB-001",
+    "domain": "SOFTWARE_INFRASTRUCTURE"
+  },
+  "lineage": {
+    "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "incidentId": "e8fa0aeec7d209dd5770b293",
+    "authorizationId": "execa_8e6b423b250243c098aef547",
+    "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+    "planId": "execplan_b39d7f794723c4298c917179"
+  },
+  "evidence": {
+    "sourcePhase": 21,
+    "frozen": true,
+    "sampleCount": 1,
+    "independentExperimentCount": 1,
+    "evidenceDigest": "0f560f4fb34c2036632cc1cf06b168049e857794b41b99af4c8103b1a518b583",
+    "artifacts": {
+      "batch7": {
+        "file": "phase21-batch7-live-certification-2026-08-31T18-35-58.235Z.json",
+        "sha256": "167c12d2c402522cbfc010a1fb6100ec8775e685ad5b687b5340a43e3e6e1c9e"
+      },
+      "batch8a": {
+        "file": "phase21-batch8a-live-certification-2026-08-31T19-26-48.596Z.json",
+        "sha256": "0c6d7e7c344f8c2ce09ef0832c3d47c7ba24fb031583e5859b8b743c2f05017d"
+      },
+      "batch8b": {
+        "file": "phase21-batch8b-live-certification-2026-08-31T20-44-20.984Z.json",
+        "sha256": "0424d22a18fbf6c86cb306ab40268d1b82565e78489a58920edf27006d4663af"
+      },
+      "batch9": {
+        "file": "phase21-batch9-live-certification-2026-09-01T08-37-32-960Z.json",
+        "sha256": "b3b69e80a1dc4ddf1a7c644aacc4ce182c89f7f0f885abc70e0fa8d5f381a3a5"
+      }
+    },
+    "phase21EvidenceMutated": false
+  },
+  "statistics": {
+    "statisticsVersion": "22.4-recovery-statistics-v1",
+    "totalTests": 1,
+    "independentExperimentCount": 1,
+    "failureModeCount": 1,
+    "infrastructureContextCount": 1,
+    "experimentRunIds": [
+      "exprun_35397791-f02b-42bd-aa21-8eba274d204d"
+    ],
+    "failureModes": [
+      "kubernetes.pod.crash"
+    ],
+    "infrastructureContexts": [
+      "kind-aira-reliability-lab"
+    ],
+    "evidenceWindow": {
+      "earliest": "2026-09-01T08:37:32.958Z",
+      "latest": "2026-09-01T08:37:32.958Z",
+      "durationMs": 0
+    },
+    "rates": {
+      "diagnosisCorrect": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      },
+      "recoverySelectionCorrect": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      },
+      "executionSuccess": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      },
+      "verifiedRecovery": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      },
+      "falseRecovery": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": 0,
+        "percentage": 0,
+        "confidence": {
+          "lower": 0,
+          "upper": 0.7934506856227626,
+          "confidenceLevel": 0.95
+        }
+      },
+      "recurrence": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": 0,
+        "percentage": 0,
+        "confidence": {
+          "lower": 0,
+          "upper": 0.7934506856227626,
+          "confidenceLevel": 0.95
+        }
+      },
+      "rollbackSuccess": {
+        "numerator": 0,
+        "denominator": 0,
+        "rate": null,
+        "percentage": null,
+        "confidence": {
+          "lower": null,
+          "upper": null,
+          "confidenceLevel": 0.95
+        }
+      },
+      "manualEscalation": {
+        "numerator": 0,
+        "denominator": 1,
+        "rate": 0,
+        "percentage": 0,
+        "confidence": {
+          "lower": 0,
+          "upper": 0.7934506856227626,
+          "confidenceLevel": 0.95
+        }
+      },
+      "verificationCoverage": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      },
+      "evidenceCompleteness": {
+        "numerator": 1,
+        "denominator": 1,
+        "rate": 1,
+        "percentage": 100,
+        "confidence": {
+          "lower": 0.20654931437723742,
+          "upper": 1,
+          "confidenceLevel": 0.95
+        }
+      }
+    },
+    "safety": {
+      "unauthorizedActionCount": 0,
+      "authorityLeakCount": 0,
+      "safetyViolationCount": 0,
+      "clean": true
+    },
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "sufficiency": {
+    "sufficiencyVersion": "22.5-evidence-sufficiency-v1",
+    "status": "INSUFFICIENT_EVIDENCE",
+    "sufficient": false,
+    "safetyBlocked": false,
+    "requirements": {
+      "minimumSamples": 30,
+      "minimumIndependentExperiments": 3,
+      "minimumFailureModes": 1,
+      "minimumInfrastructureContexts": 1,
+      "minimumVerificationCoverage": 0.95,
+      "minimumEvidenceCompleteness": 0.95,
+      "minimumCriticalMetricSamples": 30,
+      "maximumEvidenceAgeDays": 90,
+      "requireZeroUnauthorizedActions": true,
+      "requireZeroAuthorityLeaks": true,
+      "requireZeroSafetyViolations": true
+    },
+    "checks": [
+      {
+        "key": "MINIMUM_SAMPLE_COUNT",
+        "actual": 1,
+        "expected": 30,
+        "pass": false
+      },
+      {
+        "key": "INDEPENDENT_EXPERIMENT_COUNT",
+        "actual": 1,
+        "expected": 3,
+        "pass": false
+      },
+      {
+        "key": "FAILURE_MODE_DIVERSITY",
+        "actual": 1,
+        "expected": 1,
+        "pass": true
+      },
+      {
+        "key": "INFRASTRUCTURE_CONTEXT_DIVERSITY",
+        "actual": 1,
+        "expected": 1,
+        "pass": true
+      },
+      {
+        "key": "VERIFICATION_COVERAGE",
+        "actual": 1,
+        "expected": 0.95,
+        "pass": true
+      },
+      {
+        "key": "EVIDENCE_COMPLETENESS",
+        "actual": 1,
+        "expected": 0.95,
+        "pass": true
+      },
+      {
+        "key": "DIAGNOSIS_SAMPLE_COUNT",
+        "actual": 1,
+        "expected": 30,
+        "pass": false
+      },
+      {
+        "key": "RECOVERY_VERIFICATION_SAMPLE_COUNT",
+        "actual": 1,
+        "expected": 30,
+        "pass": false
+      },
+      {
+        "key": "FALSE_RECOVERY_SAMPLE_COUNT",
+        "actual": 1,
+        "expected": 30,
+        "pass": false
+      },
+      {
+        "key": "EVIDENCE_FRESHNESS",
+        "actual": 0.5138748958333333,
+        "expected": 90,
+        "pass": true
+      }
+    ],
+    "safetyChecks": [
+      {
+        "key": "ZERO_UNAUTHORIZED_ACTIONS",
+        "actual": 0,
+        "expected": 0,
+        "pass": true
+      },
+      {
+        "key": "ZERO_AUTHORITY_LEAKS",
+        "actual": 0,
+        "expected": 0,
+        "pass": true
+      },
+      {
+        "key": "ZERO_SAFETY_VIOLATIONS",
+        "actual": 0,
+        "expected": 0,
+        "pass": true
+      }
+    ],
+    "failedChecks": [
+      "MINIMUM_SAMPLE_COUNT",
+      "INDEPENDENT_EXPERIMENT_COUNT",
+      "DIAGNOSIS_SAMPLE_COUNT",
+      "RECOVERY_VERIFICATION_SAMPLE_COUNT",
+      "FALSE_RECOVERY_SAMPLE_COUNT"
+    ],
+    "confidenceSummary": {
+      "diagnosisCorrect": {
+        "samples": 1,
+        "observedRate": 1,
+        "lower95": 0.20654931437723742,
+        "upper95": 1
+      },
+      "recoverySelectionCorrect": {
+        "samples": 1,
+        "observedRate": 1,
+        "lower95": 0.20654931437723742,
+        "upper95": 1
+      },
+      "executionSuccess": {
+        "samples": 1,
+        "observedRate": 1,
+        "lower95": 0.20654931437723742,
+        "upper95": 1
+      },
+      "verifiedRecovery": {
+        "samples": 1,
+        "observedRate": 1,
+        "lower95": 0.20654931437723742,
+        "upper95": 1
+      },
+      "falseRecovery": {
+        "samples": 1,
+        "observedRate": 0,
+        "lower95": 0,
+        "upper95": 0.7934506856227626
+      },
+      "recurrence": {
+        "samples": 1,
+        "observedRate": 0,
+        "lower95": 0,
+        "upper95": 0.7934506856227626
+      },
+      "rollbackSuccess": {
+        "samples": 0,
+        "observedRate": null,
+        "lower95": null,
+        "upper95": null
+      }
+    },
+    "qualifiedLevel": null,
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "qualification": {
+    "qualificationVersion": "22.6-22.8-autonomy-qualification-v1",
+    "domain": "SOFTWARE_INFRASTRUCTURE",
+    "evidenceDerivedLevel": "L0",
+    "domainCeiling": "L5",
+    "domainAdjustedLevel": "L0",
+    "safetyCap": {
+      "requestedLevel": "L0",
+      "maximumLevel": "L0",
+      "status": "CAPPED",
+      "capped": false,
+      "suspended": false,
+      "failed": false,
+      "reasons": [
+        "FALSE_RECOVERY_REGRESSION",
+        "RECURRENCE_REGRESSION"
+      ],
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "qualifiedLevel": "L0",
+    "levelDefinition": {
+      "name": "OBSERVE",
+      "description": "Observe signals, state and evidence only.",
+      "executionMode": "NONE",
+      "autonomousExecution": false
+    },
+    "autonomousRecoveryEligible": false,
+    "approvalRequired": false,
+    "previousLevel": null,
+    "promoted": false,
+    "demoted": false,
+    "demotionFrom": null,
+    "demotionTo": null,
+    "levelEvaluations": {
+      "L1": {
+        "level": "L1",
+        "pass": false,
+        "checks": [
+          {
+            "key": "MINIMUM_SAMPLES",
+            "actual": 1,
+            "expected": 10,
+            "pass": false
+          },
+          {
+            "key": "DIAGNOSIS_CORRECT_LOWER95",
+            "actual": 0.20654931437723742,
+            "expected": 0.7,
+            "pass": false
+          }
+        ],
+        "failedChecks": [
+          "MINIMUM_SAMPLES",
+          "DIAGNOSIS_CORRECT_LOWER95"
+        ],
+        "executionAuthorized": false
+      }
+    },
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "liveResult": {
+    "observedRecoverySuccess": 1,
+    "recurrenceRate": 0,
+    "unauthorizedActionCount": 0,
+    "authorityLeakCount": 0,
+    "evidenceSufficiency": "INSUFFICIENT_EVIDENCE",
+    "qualifiedLevel": "L0",
+    "autonomousRecoveryEligible": false,
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "executionAuthorized": false,
+  "authorizationGranted": false,
+  "productionCertified": false,
+  "frozenPhase21Modified": false,
+  "generatedAt": "2026-09-01T20:57:31.765Z"
+}

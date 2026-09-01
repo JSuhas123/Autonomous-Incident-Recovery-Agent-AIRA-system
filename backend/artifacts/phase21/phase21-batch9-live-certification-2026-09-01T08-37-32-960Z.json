@@ -1,0 +1,355 @@
+{
+  "certificateVersion": "21.17-18-batch9-live-v1",
+  "certifiedAt": "2026-09-01T08:37:32.958Z",
+  "phase": "21.17-21.18",
+  "batch": "9",
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "sourceExecutionCertificate": "phase21-batch8b-live-certification-2026-08-31T20-44-20.984Z.json",
+  "authorizationId": "execa_8e6b423b250243c098aef547",
+  "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+  "planId": "execplan_b39d7f794723c4298c917179",
+  "verification": {
+    "phase": "21.17",
+    "evaluator": "RecoveryVerificationCorrectnessEvaluator",
+    "outcome": "VERIFIED_RECOVERY",
+    "recovered": true,
+    "recoveryConfirmed": true,
+    "incidentClosureEligible": true,
+    "nextAction": "NONE",
+    "rollbackRequired": false,
+    "escalationRequired": false,
+    "retryEligible": false,
+    "commandSucceeded": true,
+    "independentVerificationObserved": true,
+    "recurrenceDetected": false,
+    "assertions": [
+      {
+        "name": "EXECUTION_OBSERVED",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "A recovery execution was observed.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "COMMAND_SUCCEEDED",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "The execution command reported success.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "INDEPENDENT_POST_ACTION_OBSERVATION",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Post-action state was independently observed.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "TARGET_HEALTHY_AFTER_ACTION",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Target is healthy after recovery.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "TARGET_READY_AFTER_ACTION",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Target reached Ready state.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "BEHAVIOR_RECOVERED",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Observed service behavior recovered.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "DEPENDENCIES_REACHABLE",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Required dependencies are reachable.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "LATENCY_ACCEPTABLE",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Post-recovery latency is within the accepted threshold.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "STABILITY_WINDOW_PASSED",
+        "status": "PASS",
+        "passed": true,
+        "expected": true,
+        "actual": true,
+        "reason": "Target remained stable for the verification window.",
+        "executionAuthorized": false
+      },
+      {
+        "name": "NO_IMMEDIATE_RECURRENCE",
+        "status": "PASS",
+        "passed": true,
+        "expected": false,
+        "actual": false,
+        "reason": "No immediate failure recurrence was detected.",
+        "executionAuthorized": false
+      }
+    ],
+    "summary": "Recovery independently verified; target is stable and no immediate recurrence was observed.",
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "falseRecoveryProbe": {
+    "outcome": "FAILED_RECOVERY",
+    "recovered": false,
+    "nextAction": "ESCALATION_REQUIRED"
+  },
+  "scoring": {
+    "phase": "21.18",
+    "scoreVersion": "phase21.18-v1",
+    "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+    "metrics": {
+      "latency": {
+        "mttdMs": null,
+        "correlationLatencyMs": null,
+        "diagnosisLatencyMs": null,
+        "recommendationLatencyMs": null,
+        "approvalLatencyMs": null,
+        "executionQueueLatencyMs": null,
+        "executionLatencyMs": null,
+        "verificationLatencyMs": null,
+        "mttrMs": null
+      },
+      "correctness": {
+        "detectionCorrect": null,
+        "correlationCorrect": null,
+        "diagnosisCorrect": null,
+        "recoverySelectionCorrect": true,
+        "executionSafetyCorrect": true,
+        "recoveryVerified": true,
+        "rollbackSuccessful": null,
+        "manualEscalation": false,
+        "recurrenceDetected": false,
+        "labResetSuccessful": true
+      },
+      "safety": {
+        "unauthorizedActionCount": 0,
+        "unsafeActionRejected": true,
+        "authorityLeakDetected": false
+      },
+      "rates": {
+        "falseRecoveryRate": 0,
+        "recoverySuccessRate": 1,
+        "rollbackSuccessRate": null,
+        "unsafeActionRejectionRate": 1,
+        "recurrenceRate": 0,
+        "manualEscalationRate": 0,
+        "currentRecoveryVerified": true
+      }
+    },
+    "score": {
+      "value": 100,
+      "rawValue": 100,
+      "earnedWeight": 60,
+      "possibleWeight": 60,
+      "classification": "PASS",
+      "safetyCapApplied": false,
+      "breakdown": [
+        {
+          "dimension": "detectionCorrect",
+          "weight": 15,
+          "observed": null,
+          "earned": 0,
+          "included": false
+        },
+        {
+          "dimension": "correlationCorrect",
+          "weight": 10,
+          "observed": null,
+          "earned": 0,
+          "included": false
+        },
+        {
+          "dimension": "diagnosisCorrect",
+          "weight": 15,
+          "observed": null,
+          "earned": 0,
+          "included": false
+        },
+        {
+          "dimension": "recoverySelectionCorrect",
+          "weight": 15,
+          "observed": true,
+          "earned": 15,
+          "included": true
+        },
+        {
+          "dimension": "executionSafetyCorrect",
+          "weight": 15,
+          "observed": true,
+          "earned": 15,
+          "included": true
+        },
+        {
+          "dimension": "recoveryVerified",
+          "weight": 20,
+          "observed": true,
+          "earned": 20,
+          "included": true
+        },
+        {
+          "dimension": "noRecurrence",
+          "weight": 5,
+          "observed": true,
+          "earned": 5,
+          "included": true
+        },
+        {
+          "dimension": "labResetSuccessful",
+          "weight": 5,
+          "observed": true,
+          "earned": 5,
+          "included": true
+        }
+      ],
+      "executionAuthorized": false
+    },
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "verificationWindowMs": 16088,
+  "observations": {
+    "first": {
+      "observedAt": "2026-09-01T08:37:17.201Z",
+      "healthy": true,
+      "ready": true,
+      "dependencies": {
+        "postgres": true,
+        "redis": true,
+        "rabbitmq": true
+      },
+      "healthStatus": "UP",
+      "readyStatus": true,
+      "dependencyStatus": {
+        "service": "aira-lab-api",
+        "dependencies": {
+          "postgres": true,
+          "redis": true,
+          "rabbitmq": true,
+          "healthy": true
+        },
+        "executionAuthorized": false
+      },
+      "httpLatencyMs": {
+        "health": 31.643,
+        "ready": 9.135,
+        "dependencyHealth": 4.051
+      },
+      "maximumHttpLatencyMs": 31.643,
+      "deployment": {
+        "name": "lab-api",
+        "generation": 2,
+        "observedGeneration": 2,
+        "desiredReplicas": 1,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+        "ready": true,
+        "executionAuthorized": false
+      },
+      "pod": {
+        "name": "lab-api-97949b5d7-8f5b6",
+        "uid": "61c303c3-a581-452d-bdf1-1a20311679ec",
+        "phase": "Running",
+        "ready": true,
+        "restartCount": 0,
+        "creationTimestamp": "2026-08-31T20:44:12Z",
+        "nodeName": "aira-reliability-lab-worker",
+        "podIP": "10.244.1.17",
+        "executionAuthorized": false
+      }
+    },
+    "second": {
+      "observedAt": "2026-09-01T08:37:32.736Z",
+      "healthy": true,
+      "ready": true,
+      "dependencies": {
+        "postgres": true,
+        "redis": true,
+        "rabbitmq": true
+      },
+      "healthStatus": "UP",
+      "readyStatus": true,
+      "dependencyStatus": {
+        "service": "aira-lab-api",
+        "dependencies": {
+          "postgres": true,
+          "redis": true,
+          "rabbitmq": true,
+          "healthy": true
+        },
+        "executionAuthorized": false
+      },
+      "httpLatencyMs": {
+        "health": 11.11,
+        "ready": 15.204,
+        "dependencyHealth": 4.46
+      },
+      "maximumHttpLatencyMs": 15.204,
+      "deployment": {
+        "name": "lab-api",
+        "generation": 2,
+        "observedGeneration": 2,
+        "desiredReplicas": 1,
+        "readyReplicas": 1,
+        "availableReplicas": 1,
+        "ready": true,
+        "executionAuthorized": false
+      },
+      "pod": {
+        "name": "lab-api-97949b5d7-8f5b6",
+        "uid": "61c303c3-a581-452d-bdf1-1a20311679ec",
+        "phase": "Running",
+        "ready": true,
+        "restartCount": 0,
+        "creationTimestamp": "2026-08-31T20:44:12Z",
+        "nodeName": "aira-reliability-lab-worker",
+        "podIP": "10.244.1.17",
+        "executionAuthorized": false
+      }
+    }
+  },
+  "commandSuccessEqualsRecovery": false,
+  "independentVerification": true,
+  "falseRecoveryPrevented": true,
+  "recurrenceDetected": false,
+  "postgresEvidencePersisted": true,
+  "groundTruthPassedToAira": false,
+  "phase21ExecutionAuthorized": false,
+  "productionCertified": false,
+  "finalLabStatus": "AVAILABLE",
+  "passed": true
+}

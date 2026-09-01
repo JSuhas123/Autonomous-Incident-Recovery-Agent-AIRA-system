@@ -1,0 +1,805 @@
+{
+  "certificateVersion": "21.19cd-batch10-final-v1",
+  "certifiedAt": "2026-09-01T08:56:14.973Z",
+  "phase": "21",
+  "subphase": "21.19C-21.19D",
+  "batch": "10C/D",
+  "certificationType": "FINAL_RELIABILITY_LAB_FREEZE",
+  "status": "PASS",
+  "liveCertified": true,
+  "frozen": true,
+  "organizationId": "aira-dev-org",
+  "environmentId": "env_aira_development",
+  "tenantId": "aira-dev-org",
+  "labEnvironmentId": "lab_1b22c2dd-2224-492d-86f9-9879f5ce6123",
+  "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+  "incidentId": "e8fa0aeec7d209dd5770b293",
+  "correlationId": "phase21-batch7:381ca3f5-2b55-4b2e-bae1-390533a34fe2",
+  "sourceEvidence": {
+    "capacity10b": {
+      "artifact": "phase21-10b-final-certification-2026-08-31T09-58-13-171Z.json",
+      "sha256": "d584502155c91a65b850e6a79fc72bf612df14598d81f07d7db146216d19b104"
+    },
+    "tenantIsolation10c": {
+      "artifact": "phase21-10c-final-certification-2026-08-31T10-43-27.929Z.json",
+      "sha256": "e7f376199b39fc3d7a9fecd1809bf67e8bca3ef66eaf33c2c4437df13d2da918"
+    },
+    "resilience10d": {
+      "artifact": "phase21-10d-final-certification-2026-08-31T10-58-22.101Z.json",
+      "sha256": "861925abfd67c75a0149a34d857989b9695d4f951fe0e451e25758cf190fd001"
+    },
+    "batch6": {
+      "artifact": "phase21-batch6-live-certification-2026-08-31T14-05-36.280Z.json",
+      "sha256": "4b114c469476fe5acd102d39e59ee20a5a81a1a24772b703bf136de888fb928b"
+    },
+    "batch7": {
+      "artifact": "phase21-batch7-live-certification-2026-08-31T18-35-58.235Z.json",
+      "sha256": "167c12d2c402522cbfc010a1fb6100ec8775e685ad5b687b5340a43e3e6e1c9e"
+    },
+    "batch8a": {
+      "artifact": "phase21-batch8a-live-certification-2026-08-31T19-26-48.596Z.json",
+      "sha256": "0c6d7e7c344f8c2ce09ef0832c3d47c7ba24fb031583e5859b8b743c2f05017d"
+    },
+    "batch8b": {
+      "artifact": "phase21-batch8b-live-certification-2026-08-31T20-44-20.984Z.json",
+      "sha256": "0424d22a18fbf6c86cb306ab40268d1b82565e78489a58920edf27006d4663af"
+    },
+    "batch9": {
+      "artifact": "phase21-batch9-live-certification-2026-09-01T08-37-32-960Z.json",
+      "sha256": "b3b69e80a1dc4ddf1a7c644aacc4ce182c89f7f0f885abc70e0fa8d5f381a3a5"
+    },
+    "batch10ab": {
+      "artifact": "phase21-batch10ab-live-certification-2026-09-01T08-45-00-883Z.json",
+      "sha256": "db0539a3b0af68b7ca641f00158144e728a7730a2968689b22743c456a6f4b5b"
+    }
+  },
+  "persistenceArchitecture": {
+    "pass": true,
+    "checks": [
+      {
+        "name": "Reliability migrations canonical",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "checks": [
+            {
+              "version": "0082",
+              "filename": "0082_reliability_lab_foundation.sql",
+              "applied": true,
+              "filenameMatches": true,
+              "checksumMatches": true,
+              "appliedAt": "2026-08-30T16:23:30.254Z"
+            },
+            {
+              "version": "0084",
+              "filename": "0084_phase21_rls_certification_role.sql",
+              "applied": true,
+              "filenameMatches": true,
+              "checksumMatches": true,
+              "appliedAt": "2026-08-31T10:34:55.456Z"
+            }
+          ]
+        }
+      },
+      {
+        "name": "Reliability tables present",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "byTable": {
+            "assertion_results": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "experiment_definitions": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "experiment_runs": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "failure_injections": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "lab_environments": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "metrics": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "observations": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            }
+          }
+        }
+      },
+      {
+        "name": "RLS enabled + forced",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "tables": {
+            "assertion_results": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "experiment_definitions": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "experiment_runs": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "failure_injections": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "lab_environments": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "metrics": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            },
+            "observations": {
+              "present": true,
+              "rowSecurity": true,
+              "forceRowSecurity": true
+            }
+          }
+        }
+      },
+      {
+        "name": "Tenant policies scoped + non-authorizing",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "policies": {
+            "assertion_results": {
+              "policyName": "reliability_assertion_results_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "experiment_definitions": {
+              "policyName": "reliability_experiment_definitions_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "experiment_runs": {
+              "policyName": "reliability_experiment_runs_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "failure_injections": {
+              "policyName": "reliability_failure_injections_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "lab_environments": {
+              "policyName": "reliability_lab_environments_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "metrics": {
+              "policyName": "reliability_metrics_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            },
+            "observations": {
+              "policyName": "reliability_observations_tenant_policy",
+              "command": "ALL",
+              "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+              "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+            }
+          }
+        }
+      },
+      {
+        "name": "RLS certifier role hardened",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "exists": true,
+          "noSuperuser": true,
+          "noBypassRls": true,
+          "noLogin": true,
+          "noCreateDb": true,
+          "noCreateRole": true,
+          "noInherit": true
+        }
+      },
+      {
+        "name": "Tenant isolation live-certified",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "liveCertified": true,
+          "forceRlsCanary": true,
+          "crossTenantVisibilityLeak": false,
+          "redisCollisions": 0,
+          "rabbitMqEnvelopeLeaks": 0,
+          "boundaryViolations": 0
+        }
+      },
+      {
+        "name": "Experiment definition immutable",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "definitionId": "expdef_8468be2c-9d01-43c7-bfca-342b0ffd0f11",
+          "updateTriggerPresent": true,
+          "deleteTriggerPresent": true,
+          "updateRejected": true,
+          "deleteRejected": true,
+          "probesRolledBack": true
+        }
+      },
+      {
+        "name": "Failure provenance complete",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "evidenceCount": 1,
+          "evidenceId": "inject_5ef775d7-5448-4b9b-9826-1fb1304a5502",
+          "failureType": "POD_CRASH",
+          "injectorKey": "KUBERNETES_POD_TERMINATION",
+          "provenanceSource": "AIRA_PHASE_21_FAILURE_INJECTION_ENGINE"
+        }
+      },
+      {
+        "name": "Recovery provenance complete",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "recoveryDecisionId": "rec_phase21_batch8b_e8ae9115cc5c4cfc86c1",
+          "selectedPlaybookId": "PB-PHASE21-K8S-RESTART-LAB-001",
+          "selectedCandidateId": "cand_phase21_batch8b_e38c708dee0548d8"
+        }
+      },
+      {
+        "name": "Correlation lineage intact",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "experimentCorrelationId": "phase21-batch7:381ca3f5-2b55-4b2e-bae1-390533a34fe2",
+          "failureCorrelationId": "phase21-batch7:381ca3f5-2b55-4b2e-bae1-390533a34fe2"
+        }
+      },
+      {
+        "name": "Authorization lineage intact",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "authorizationId": "execa_8e6b423b250243c098aef547",
+          "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+          "recoveryDecisionId": "rec_phase21_batch8b_e8ae9115cc5c4cfc86c1",
+          "planId": "execplan_b39d7f794723c4298c917179",
+          "planHash": "planhash_0e56194bf5f65e775d319f9a9e793e01035d99bdca79205850727554e219df83"
+        }
+      },
+      {
+        "name": "Verification lineage intact",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "observationId": "obs_87c3cfbe-bc70-4247-8146-9510aa88e3cd",
+          "referenceId": "e8fa0aeec7d209dd5770b293",
+          "authorizationId": "execa_8e6b423b250243c098aef547",
+          "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+          "planId": "execplan_b39d7f794723c4298c917179"
+        }
+      },
+      {
+        "name": "Metric lineage intact",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "expectedMetricKeys": [
+            "recovery_verified",
+            "recurrence_detected",
+            "false_recovery_prevented",
+            "verification_window_ms",
+            "post_recovery_http_latency_ms",
+            "experiment_score"
+          ],
+          "observedMetricKeys": [
+            "diagnosis_confidence",
+            "diagnosis_latency_ms",
+            "experiment_score",
+            "false_recovery_prevented",
+            "post_recovery_http_latency_ms",
+            "recovery_verified",
+            "recurrence_detected",
+            "time_to_incident_ms",
+            "time_to_observable_ms",
+            "time_to_signal_ms",
+            "verification_window_ms"
+          ]
+        }
+      },
+      {
+        "name": "Assertion lineage intact",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "expectedAssertionKeys": [
+            "RECOVERY_VERIFIED",
+            "NO_IMMEDIATE_RECURRENCE",
+            "FALSE_RECOVERY_PREVENTED",
+            "ROLLBACK_ESCALATION_CLASSIFICATION"
+          ],
+          "observedAssertionKeys": [
+            "AUTHORIZATION_CORRECT",
+            "CORRELATED",
+            "DETECTED",
+            "DIAGNOSIS_CORRECT",
+            "EXECUTION_CORRECT",
+            "EXECUTION_SAFETY",
+            "FALSE_RECOVERY_PREVENTED",
+            "NO_IMMEDIATE_RECURRENCE",
+            "RECOVERY_SAFETY",
+            "RECOVERY_SELECTED",
+            "RECOVERY_SELECTION_CORRECT",
+            "RECOVERY_VERIFIED",
+            "ROLLBACK_ESCALATION_CLASSIFICATION"
+          ]
+        }
+      },
+      {
+        "name": "Reliability evidence never authorizes",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "authorityLeakCount": 0,
+          "experimentExecutionAuthorized": false
+        }
+      },
+      {
+        "name": "PostgreSQL is canonical evidence store",
+        "pass": true,
+        "details": {
+          "pass": true,
+          "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+          "failureEvidenceRows": 1,
+          "observationRows": 5,
+          "assertionRows": 13,
+          "metricRows": 11,
+          "batch9PostgresEvidencePersisted": true
+        }
+      }
+    ],
+    "inspection": {
+      "migrations": {
+        "pass": true,
+        "checks": [
+          {
+            "version": "0082",
+            "filename": "0082_reliability_lab_foundation.sql",
+            "applied": true,
+            "filenameMatches": true,
+            "checksumMatches": true,
+            "appliedAt": "2026-08-30T16:23:30.254Z"
+          },
+          {
+            "version": "0084",
+            "filename": "0084_phase21_rls_certification_role.sql",
+            "applied": true,
+            "filenameMatches": true,
+            "checksumMatches": true,
+            "appliedAt": "2026-08-31T10:34:55.456Z"
+          }
+        ]
+      },
+      "tables": {
+        "pass": true,
+        "byTable": {
+          "assertion_results": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "experiment_definitions": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "experiment_runs": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "failure_injections": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "lab_environments": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "metrics": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "observations": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          }
+        }
+      },
+      "rls": {
+        "pass": true,
+        "tables": {
+          "assertion_results": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "experiment_definitions": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "experiment_runs": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "failure_injections": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "lab_environments": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "metrics": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          },
+          "observations": {
+            "present": true,
+            "rowSecurity": true,
+            "forceRowSecurity": true
+          }
+        }
+      },
+      "policies": {
+        "pass": true,
+        "policies": {
+          "assertion_results": {
+            "policyName": "reliability_assertion_results_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "experiment_definitions": {
+            "policyName": "reliability_experiment_definitions_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "experiment_runs": {
+            "policyName": "reliability_experiment_runs_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "failure_injections": {
+            "policyName": "reliability_failure_injections_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "lab_environments": {
+            "policyName": "reliability_lab_environments_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "metrics": {
+            "policyName": "reliability_metrics_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          },
+          "observations": {
+            "policyName": "reliability_observations_tenant_policy",
+            "command": "ALL",
+            "qual": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()))",
+            "withCheck": "((organization_id = tenancy.current_organization_id()) AND (environment_id = tenancy.current_environment_id()) AND (execution_authorized = false))"
+          }
+        }
+      },
+      "certifierRole": {
+        "pass": true,
+        "exists": true,
+        "noSuperuser": true,
+        "noBypassRls": true,
+        "noLogin": true,
+        "noCreateDb": true,
+        "noCreateRole": true,
+        "noInherit": true
+      },
+      "tenantIsolation": {
+        "pass": true,
+        "liveCertified": true,
+        "forceRlsCanary": true,
+        "crossTenantVisibilityLeak": false,
+        "redisCollisions": 0,
+        "rabbitMqEnvelopeLeaks": 0,
+        "boundaryViolations": 0
+      },
+      "experimentImmutability": {
+        "pass": true,
+        "definitionId": "expdef_8468be2c-9d01-43c7-bfca-342b0ffd0f11",
+        "updateTriggerPresent": true,
+        "deleteTriggerPresent": true,
+        "updateRejected": true,
+        "deleteRejected": true,
+        "probesRolledBack": true
+      },
+      "failureProvenance": {
+        "pass": true,
+        "evidenceCount": 1,
+        "evidenceId": "inject_5ef775d7-5448-4b9b-9826-1fb1304a5502",
+        "failureType": "POD_CRASH",
+        "injectorKey": "KUBERNETES_POD_TERMINATION",
+        "provenanceSource": "AIRA_PHASE_21_FAILURE_INJECTION_ENGINE"
+      },
+      "recoveryProvenance": {
+        "pass": true,
+        "recoveryDecisionId": "rec_phase21_batch8b_e8ae9115cc5c4cfc86c1",
+        "selectedPlaybookId": "PB-PHASE21-K8S-RESTART-LAB-001",
+        "selectedCandidateId": "cand_phase21_batch8b_e38c708dee0548d8"
+      },
+      "correlationLineage": {
+        "pass": true,
+        "experimentCorrelationId": "phase21-batch7:381ca3f5-2b55-4b2e-bae1-390533a34fe2",
+        "failureCorrelationId": "phase21-batch7:381ca3f5-2b55-4b2e-bae1-390533a34fe2"
+      },
+      "authorizationLineage": {
+        "pass": true,
+        "authorizationId": "execa_8e6b423b250243c098aef547",
+        "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+        "recoveryDecisionId": "rec_phase21_batch8b_e8ae9115cc5c4cfc86c1",
+        "planId": "execplan_b39d7f794723c4298c917179",
+        "planHash": "planhash_0e56194bf5f65e775d319f9a9e793e01035d99bdca79205850727554e219df83"
+      },
+      "verificationLineage": {
+        "pass": true,
+        "observationId": "obs_87c3cfbe-bc70-4247-8146-9510aa88e3cd",
+        "referenceId": "e8fa0aeec7d209dd5770b293",
+        "authorizationId": "execa_8e6b423b250243c098aef547",
+        "executionRequestId": "execreq_079b7eacb48f3fde582a928d",
+        "planId": "execplan_b39d7f794723c4298c917179"
+      },
+      "metricLineage": {
+        "pass": true,
+        "expectedMetricKeys": [
+          "recovery_verified",
+          "recurrence_detected",
+          "false_recovery_prevented",
+          "verification_window_ms",
+          "post_recovery_http_latency_ms",
+          "experiment_score"
+        ],
+        "observedMetricKeys": [
+          "diagnosis_confidence",
+          "diagnosis_latency_ms",
+          "experiment_score",
+          "false_recovery_prevented",
+          "post_recovery_http_latency_ms",
+          "recovery_verified",
+          "recurrence_detected",
+          "time_to_incident_ms",
+          "time_to_observable_ms",
+          "time_to_signal_ms",
+          "verification_window_ms"
+        ]
+      },
+      "assertionLineage": {
+        "pass": true,
+        "expectedAssertionKeys": [
+          "RECOVERY_VERIFIED",
+          "NO_IMMEDIATE_RECURRENCE",
+          "FALSE_RECOVERY_PREVENTED",
+          "ROLLBACK_ESCALATION_CLASSIFICATION"
+        ],
+        "observedAssertionKeys": [
+          "AUTHORIZATION_CORRECT",
+          "CORRELATED",
+          "DETECTED",
+          "DIAGNOSIS_CORRECT",
+          "EXECUTION_CORRECT",
+          "EXECUTION_SAFETY",
+          "FALSE_RECOVERY_PREVENTED",
+          "NO_IMMEDIATE_RECURRENCE",
+          "RECOVERY_SAFETY",
+          "RECOVERY_SELECTED",
+          "RECOVERY_SELECTION_CORRECT",
+          "RECOVERY_VERIFIED",
+          "ROLLBACK_ESCALATION_CLASSIFICATION"
+        ]
+      },
+      "authorityInvariant": {
+        "pass": true,
+        "authorityLeakCount": 0,
+        "experimentExecutionAuthorized": false
+      },
+      "postgresCanonical": {
+        "pass": true,
+        "experimentRunId": "exprun_35397791-f02b-42bd-aa21-8eba274d204d",
+        "failureEvidenceRows": 1,
+        "observationRows": 5,
+        "assertionRows": 13,
+        "metricRows": 11,
+        "batch9PostgresEvidencePersisted": true
+      }
+    }
+  },
+  "finalFreeze": {
+    "pass": true,
+    "checks": [
+      {
+        "name": "21.10B capacity certification frozen",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.10C tenant isolation frozen",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.10D resilience report frozen",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.11-21.12 live evidence frozen",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.13-21.14 live evidence frozen",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.15 safe-refusal evidence passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.16 authorized LAB_ONLY evidence passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.17-21.18 live evidence passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.19A end-to-end certification passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.19B master safety certification passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "21.19C persistence architecture passed",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "Lab returned to AVAILABLE",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "Ground truth remained evaluator-only",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "Phase21 grants no execution authority",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "Production certification remains false",
+        "pass": true,
+        "details": {}
+      },
+      {
+        "name": "Frozen historical artifacts unchanged",
+        "pass": true,
+        "details": {
+          "before": {
+            "capacity10b": "d584502155c91a65b850e6a79fc72bf612df14598d81f07d7db146216d19b104",
+            "tenantIsolation10c": "e7f376199b39fc3d7a9fecd1809bf67e8bca3ef66eaf33c2c4437df13d2da918",
+            "resilience10d": "861925abfd67c75a0149a34d857989b9695d4f951fe0e451e25758cf190fd001",
+            "batch6": "4b114c469476fe5acd102d39e59ee20a5a81a1a24772b703bf136de888fb928b",
+            "batch7": "167c12d2c402522cbfc010a1fb6100ec8775e685ad5b687b5340a43e3e6e1c9e",
+            "batch8a": "0c6d7e7c344f8c2ce09ef0832c3d47c7ba24fb031583e5859b8b743c2f05017d",
+            "batch8b": "0424d22a18fbf6c86cb306ab40268d1b82565e78489a58920edf27006d4663af",
+            "batch9": "b3b69e80a1dc4ddf1a7c644aacc4ce182c89f7f0f885abc70e0fa8d5f381a3a5",
+            "batch10ab": "db0539a3b0af68b7ca641f00158144e728a7730a2968689b22743c456a6f4b5b"
+          },
+          "after": {
+            "capacity10b": "d584502155c91a65b850e6a79fc72bf612df14598d81f07d7db146216d19b104",
+            "tenantIsolation10c": "e7f376199b39fc3d7a9fecd1809bf67e8bca3ef66eaf33c2c4437df13d2da918",
+            "resilience10d": "861925abfd67c75a0149a34d857989b9695d4f951fe0e451e25758cf190fd001",
+            "batch6": "4b114c469476fe5acd102d39e59ee20a5a81a1a24772b703bf136de888fb928b",
+            "batch7": "167c12d2c402522cbfc010a1fb6100ec8775e685ad5b687b5340a43e3e6e1c9e",
+            "batch8a": "0c6d7e7c344f8c2ce09ef0832c3d47c7ba24fb031583e5859b8b743c2f05017d",
+            "batch8b": "0424d22a18fbf6c86cb306ab40268d1b82565e78489a58920edf27006d4663af",
+            "batch9": "b3b69e80a1dc4ddf1a7c644aacc4ce182c89f7f0f885abc70e0fa8d5f381a3a5",
+            "batch10ab": "db0539a3b0af68b7ca641f00158144e728a7730a2968689b22743c456a6f4b5b"
+          }
+        }
+      },
+      {
+        "name": "Final canonical lab safety intact",
+        "pass": true,
+        "details": {}
+      }
+    ]
+  },
+  "phase21": {
+    "name": "RELIABILITY LAB",
+    "status": "LIVE CERTIFIED",
+    "result": "PASS",
+    "frozen": true
+  },
+  "authority": {
+    "productionCertified": false,
+    "executionAuthorizedByPhase21": false,
+    "canGrantAutonomy": false,
+    "canBypassPolicy": false,
+    "canBypassApproval": false,
+    "phase21IsEvidenceOnly": true
+  },
+  "groundTruthPassedToAira": false,
+  "phase21ExecutionAuthorized": false,
+  "productionCertified": false,
+  "finalLabStatus": "AVAILABLE",
+  "passed": true
+}

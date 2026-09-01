@@ -556,7 +556,10 @@ const humanTaskRoutes =
   require(
     "./routes/humanTaskRoutes"
   );
-
+const certificationRoutes =
+  require(
+    "./routes/certificationRoutes"
+  );
   const organizationInvitationRoutes =
   require(
     "./routes/organizationInvitationRoutes"
@@ -1019,6 +1022,18 @@ app.use(
   browserEnvironmentContext,
 
   humanTaskRoutes
+);
+
+app.use(
+  "/api/v1/certifications",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
+  browserEnvironmentContext,
+
+  certificationRoutes
 );
 
 app.use(

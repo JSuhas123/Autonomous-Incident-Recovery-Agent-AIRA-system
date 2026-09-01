@@ -1,0 +1,181 @@
+{
+  "phase": "22.18",
+  "certificateVersion": "22.18-multi-tenant-autonomy-isolation-v1",
+  "status": "PASS",
+  "liveCertified": true,
+  "source": {
+    "phase2215Artifact": "phase22-15-first-live-capability-2026-09-01T20-57-31-765Z.json",
+    "phase221617Artifact": "phase22-16-17-live-certification-2026-09-01T21-02-38-316Z.json",
+    "realCapabilityLevel": "L0"
+  },
+  "postgresIsolation": {
+    "pass": true,
+    "expectedTableCount": 9,
+    "tables": [
+      {
+        "tableName": "autonomy_evaluations",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "certificate_constraints",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "certificates",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "certification_runs",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "certified_capabilities",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "evidence_links",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "metric_snapshots",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "revocations",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      },
+      {
+        "tableName": "status_history",
+        "rlsEnabled": true,
+        "rlsForced": true,
+        "executionAuthorizedColumn": true,
+        "executionAuthorizedDefaultFalse": true,
+        "organizationScoped": true,
+        "environmentScoped": true,
+        "nonAuthorizingPolicy": true,
+        "tenantPolicyPresent": true,
+        "nonAuthorizingConstraint": true,
+        "policyCount": 1
+      }
+    ],
+    "rlsCanary": {
+      "certifierRoleAvailable": true,
+      "certifierRoleSafe": true,
+      "sourceVisibleCount": 1,
+      "sourceCanSeeOwnRow": true,
+      "foreignVisibleCount": 0,
+      "crossTenantVisibilityLeak": false,
+      "crossTenantWriteRejected": true,
+      "restoredVisibleCount": 1,
+      "sourceRecoveredAfterScopeRestore": true,
+      "executionAuthorized": false
+    },
+    "crossTenantVisibilityLeak": false,
+    "crossTenantWriteRejected": true
+  },
+  "autonomyIsolation": {
+    "pass": true,
+    "controlledProbeOnly": true,
+    "tenantA": {
+      "effectiveLevel": "L5",
+      "autonomousRecoveryEligible": true,
+      "executionAuthorized": false
+    },
+    "tenantB": {
+      "effectiveLevel": "L2",
+      "autonomousRecoveryEligible": false,
+      "executionAuthorized": false
+    },
+    "realCapability": {
+      "effectiveLevel": "L0",
+      "autonomousRecoveryEligible": false,
+      "executionAuthorized": false
+    },
+    "crossTenantAutonomyInheritance": false
+  },
+  "authority": {
+    "certificationGrantsAuthority": false,
+    "tenantSettingsGrantAuthority": false,
+    "environmentSettingsGrantAuthority": false,
+    "autonomyLevelGrantsAuthority": false,
+    "canBypassTenantIsolation": false,
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "executionAuthorized": false,
+  "authorizationGranted": false,
+  "productionCertified": false,
+  "generatedAt": "2026-09-01T21:12:34.196Z"
+}
