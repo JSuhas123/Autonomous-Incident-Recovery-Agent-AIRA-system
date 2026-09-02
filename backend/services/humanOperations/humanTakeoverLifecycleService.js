@@ -905,89 +905,113 @@ class HumanTakeoverLifecycleService {
   }
 
 
-  async releaseControl(
-    input
-  ) {
-    requireValue(
-      input.leaseId,
-      "leaseId",
-      "HUMAN_CONTROL_LEASE_REQUIRED"
-    );
+async releaseControl(
+  input
+) {
+  requireValue(
+    input.leaseId,
+    "leaseId",
+    "HUMAN_CONTROL_LEASE_REQUIRED"
+  );
 
-    requireValue(
-      input.actorUserId,
-      "actorUserId",
-      "HUMAN_CONTROL_RELEASE_USER_REQUIRED"
-    );
+  requireValue(
+    input.actorUserId,
+    "actorUserId",
+    "HUMAN_CONTROL_RELEASE_USER_REQUIRED"
+  );
 
-    /*
-     * ACTIVE -> RELEASING -> RELEASED is the conceptual
-     * takeover lifecycle.
-     *
-     * The repository performs the lease RELEASED write
-     * and final session RELEASED write atomically in one
-     * PostgreSQL scoped transaction.
-     *
-     * Phase 23.6 will add the stale-plan/control-epoch
-     * fence before AIRA may re-evaluate the incident.
-     */
-    assertControlLeaseTransition(
-      CONTROL_LEASE_STATUS.ACTIVE,
-      CONTROL_LEASE_STATUS.RELEASED
-    );
+  /*
+   * ACTIVE -> RELEASING -> RELEASED is the conceptual
+   * takeover lifecycle.
+   *
+   * The repository performs:
+   *
+   *   lease ACTIVE -> RELEASED
+   *   session ACTIVE -> RELEASING -> RELEASED
+   *
+   * atomically inside PostgreSQL.
+   *
+   * Phase 23.6 additionally installs a database trigger that creates the
+   * durable fresh-evaluation fence inside that same transaction.
+   */
+  assertControlLeaseTransition(
+    CONTROL_LEASE_STATUS.ACTIVE,
+    CONTROL_LEASE_STATUS.RELEASED
+  );
 
-    assertTakeoverSessionTransition(
-      TAKEOVER_SESSION_STATUS.ACTIVE,
-      TAKEOVER_SESSION_STATUS.RELEASING
-    );
+  assertTakeoverSessionTransition(
+    TAKEOVER_SESSION_STATUS.ACTIVE,
+    TAKEOVER_SESSION_STATUS.RELEASING
+  );
 
-    assertTakeoverSessionTransition(
-      TAKEOVER_SESSION_STATUS.RELEASING,
-      TAKEOVER_SESSION_STATUS.RELEASED
-    );
+  assertTakeoverSessionTransition(
+    TAKEOVER_SESSION_STATUS.RELEASING,
+    TAKEOVER_SESSION_STATUS.RELEASED
+  );
 
-    const lease =
-      await this
-        .takeoverRepository
-        .releaseControlLease({
-          organizationId:
-            input.organizationId,
+  const lease =
+    await this
+      .takeoverRepository
+      .releaseControlLease({
+        organizationId:
+          input.organizationId,
 
-          environmentId:
-            input.environmentId,
+        environmentId:
+          input.environmentId,
 
-          leaseId:
-            input.leaseId,
+        leaseId:
+          input.leaseId,
 
-          releasedByUserId:
-            input.actorUserId,
+        /*
+         * Canonical Phase-23 repository argument.
+         *
+         * Do NOT use the historical releasedByUserId alias here.
+         */
+        actorUserId:
+          input.actorUserId,
 
-          reason:
-            input.reason ||
-            "Human operator returned control",
+        reason:
+          input.reason ||
+          "Human operator returned control",
 
-          force:
-            Boolean(
-              input.force
-            ),
-        });
+        force:
+          Boolean(
+            input.force
+          ),
 
-    return {
-      lease,
+        metadata: {
+          ...(
+            input.metadata ||
+            {}
+          ),
 
-      humanControlActive:
-        false,
+          requiresFreshEvaluation:
+            true,
 
-      requiresFreshEvaluation:
-        true,
+          stalePlanResumeAllowed:
+            false,
 
-      stalePlanResumeAllowed:
-        false,
+          executionAuthorized:
+            false,
+        },
+      });
 
-      executionAuthorized:
-        false,
-    };
-  }
+  return {
+    lease,
+
+    humanControlActive:
+      false,
+
+    requiresFreshEvaluation:
+      true,
+
+    stalePlanResumeAllowed:
+      false,
+
+    executionAuthorized:
+      false,
+  };
+}
 
 
   async expireControl(

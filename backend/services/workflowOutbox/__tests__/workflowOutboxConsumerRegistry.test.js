@@ -24,6 +24,7 @@ describe(
     let executionWorker;
     let verificationWorker;
     let lifecycleWorker;
+    let humanNotificationWorker;
 
     let handlers;
 
@@ -98,6 +99,30 @@ describe(
                   false,
               }),
         };
+
+        humanNotificationWorker = {
+  process:
+    jest.fn()
+      .mockResolvedValue({
+        processed:
+          true,
+
+        delivered:
+          true,
+
+        duplicate:
+          false,
+
+        humanControlGranted:
+          false,
+
+        acknowledgementGranted:
+          false,
+
+        executionAuthorized:
+          false,
+      }),
+};
       }
     );
 
@@ -113,6 +138,8 @@ describe(
         verificationWorker,
 
         lifecycleWorker,
+
+        humanNotificationWorker,
 
         prefetch:
           1,
@@ -194,95 +221,146 @@ describe(
     );
 
 
-    test(
-      "registers all three durable consumers",
-      async () => {
-        const registry =
-          createRegistry();
+   test(
+  "registers all four durable consumers",
+  async () => {
+    const registry =
+      createRegistry();
 
-        const result =
-          await registry
-            .start();
+    const result =
+      await registry
+        .start();
 
-        expect(
-          result.started
-        )
-          .toBe(
-            true
-          );
 
-        expect(
-          queueService
-            .consumeEvents
-        )
-          .toHaveBeenCalledTimes(
-            3
-          );
+    expect(
+      result.started
+    )
+      .toBe(
+        true
+      );
 
-        expect(
-          queueService
-            .consumeEvents
-        )
-          .toHaveBeenCalledWith(
-            WORKFLOW_OUTBOX_TOPIC
-              .EXECUTION,
 
-            WORKFLOW_OUTBOX_QUEUE
-              .EXECUTION,
+    expect(
+      result.registrations
+    )
+      .toHaveLength(
+        4
+      );
 
-            expect.any(
-              Function
-            ),
 
-            {
-              prefetch:
-                1,
-            }
-          );
+    expect(
+      queueService
+        .consumeEvents
+    )
+      .toHaveBeenCalledTimes(
+        4
+      );
 
-        expect(
-          queueService
-            .consumeEvents
-        )
-          .toHaveBeenCalledWith(
-            WORKFLOW_OUTBOX_TOPIC
-              .VERIFICATION,
 
-            WORKFLOW_OUTBOX_QUEUE
-              .VERIFICATION,
+    /*
+     * EXECUTION
+     */
 
-            expect.any(
-              Function
-            ),
+    expect(
+      queueService
+        .consumeEvents
+    )
+      .toHaveBeenCalledWith(
+        WORKFLOW_OUTBOX_TOPIC
+          .EXECUTION,
 
-            {
-              prefetch:
-                1,
-            }
-          );
+        WORKFLOW_OUTBOX_QUEUE
+          .EXECUTION,
 
-        expect(
-          queueService
-            .consumeEvents
-        )
-          .toHaveBeenCalledWith(
-            WORKFLOW_OUTBOX_TOPIC
-              .LIFECYCLE,
+        expect.any(
+          Function
+        ),
 
-            WORKFLOW_OUTBOX_QUEUE
-              .LIFECYCLE,
+        {
+          prefetch:
+            1,
+        }
+      );
 
-            expect.any(
-              Function
-            ),
 
-            {
-              prefetch:
-                1,
-            }
-          );
-      }
-    );
+    /*
+     * VERIFICATION
+     */
+
+    expect(
+      queueService
+        .consumeEvents
+    )
+      .toHaveBeenCalledWith(
+        WORKFLOW_OUTBOX_TOPIC
+          .VERIFICATION,
+
+        WORKFLOW_OUTBOX_QUEUE
+          .VERIFICATION,
+
+        expect.any(
+          Function
+        ),
+
+        {
+          prefetch:
+            1,
+        }
+      );
+
+
+    /*
+     * LIFECYCLE
+     */
+
+    expect(
+      queueService
+        .consumeEvents
+    )
+      .toHaveBeenCalledWith(
+        WORKFLOW_OUTBOX_TOPIC
+          .LIFECYCLE,
+
+        WORKFLOW_OUTBOX_QUEUE
+          .LIFECYCLE,
+
+        expect.any(
+          Function
+        ),
+
+        {
+          prefetch:
+            1,
+        }
+      );
+
+
+    /*
+     * PHASE 23.3 HUMAN NOTIFICATION
+     */
+
+    expect(
+      queueService
+        .consumeEvents
+    )
+      .toHaveBeenCalledWith(
+        WORKFLOW_OUTBOX_TOPIC
+          .HUMAN_NOTIFICATION,
+
+        WORKFLOW_OUTBOX_QUEUE
+          .HUMAN_NOTIFICATION,
+
+        expect.any(
+          Function
+        ),
+
+        {
+          prefetch:
+            1,
+        }
+      );
+  }
+);
 
 
     test(
@@ -322,7 +400,7 @@ describe(
             .consumeEvents
         )
           .toHaveBeenCalledTimes(
-            3
+            4
           );
       }
     );
@@ -578,6 +656,236 @@ describe(
       }
     );
 
+test(
+  "human notification event reaches HumanNotificationWorker",
+  async () => {
+    const registry =
+      createRegistry();
+
+
+    await registry.start();
+
+
+    const handler =
+      handlers.get(
+        WORKFLOW_OUTBOX_TOPIC
+          .HUMAN_NOTIFICATION
+      );
+
+
+    expect(
+      handler
+    )
+      .toEqual(
+        expect.any(
+          Function
+        )
+      );
+
+
+    const incoming =
+      event({
+        notificationRequestId:
+          "nreq-1",
+
+        escalationId:
+          "esc-1",
+
+        humanTaskId:
+          "task-1",
+
+        assignmentId:
+          "assignment-1",
+
+        notificationEventType:
+          "HUMAN_ESCALATION_REQUIRED",
+
+        severity:
+          "CRITICAL",
+
+        title:
+          "AIRA escalation",
+
+        message:
+          "Human intervention required",
+
+        target: {
+          targetType:
+            "INTEGRATION",
+
+          provider:
+            "slack",
+
+          integrationId:
+            "int-slack-1",
+        },
+
+        acknowledgementGranted:
+          false,
+
+        humanControlGranted:
+          false,
+
+        executionAuthorized:
+          false,
+      });
+
+
+    const result =
+      await handler(
+        incoming
+      );
+
+
+    expect(
+      humanNotificationWorker
+        .process
+    )
+      .toHaveBeenCalledTimes(
+        1
+      );
+
+
+    expect(
+      humanNotificationWorker
+        .process
+    )
+      .toHaveBeenCalledWith(
+        expect.objectContaining({
+          organizationId:
+            "org-1",
+
+          environmentId:
+            "prod",
+
+          incidentId:
+            "incident-1",
+
+          notificationRequestId:
+            "nreq-1",
+
+          escalationId:
+            "esc-1",
+
+          executionAuthorized:
+            false,
+        })
+      );
+
+
+    expect(
+      incoming.ack
+    )
+      .toHaveBeenCalledTimes(
+        1
+      );
+
+
+    expect(
+      incoming.nack
+    )
+      .not
+      .toHaveBeenCalled();
+
+
+    expect(
+      result
+        .acknowledged
+    )
+      .toBe(
+        true
+      );
+
+
+    expect(
+      result
+        .stage
+    )
+      .toBe(
+        "human-notification"
+      );
+
+
+    expect(
+      result
+        .executionAuthorized
+    )
+      .toBe(
+        false
+      );
+  }
+);
+
+test(
+  "human notification transport cannot manufacture execution authority",
+  async () => {
+    const registry =
+      createRegistry();
+
+
+    await registry.start();
+
+
+    const handler =
+      handlers.get(
+        WORKFLOW_OUTBOX_TOPIC
+          .HUMAN_NOTIFICATION
+      );
+
+
+    const incoming =
+      event({
+        notificationRequestId:
+          "nreq-1",
+
+        escalationId:
+          "esc-1",
+
+        executionAuthorized:
+          true,
+      });
+
+
+    await expect(
+      handler(
+        incoming
+      )
+    )
+      .rejects
+      .toMatchObject({
+        code:
+          "OUTBOX_UNSAFE_AUTHORITY",
+
+        stage:
+          "human-notification",
+
+        retryable:
+          false,
+      });
+
+
+    expect(
+      humanNotificationWorker
+        .process
+    )
+      .not
+      .toHaveBeenCalled();
+
+
+    expect(
+      incoming.ack
+    )
+      .not
+      .toHaveBeenCalled();
+
+
+    expect(
+      incoming.nack
+    )
+      .not
+      .toHaveBeenCalled();
+  }
+);
 
     test(
       "worker exception is propagated without manual nack",

@@ -1,0 +1,124 @@
+{
+  "phase": "23.8",
+  "certification": "PASS",
+  "passed": true,
+  "total": 10,
+  "passedCount": 10,
+  "failedCount": 0,
+  "failedCases": [],
+  "results": [
+    {
+      "id": "SOURCE_SCOPE_READ",
+      "passed": true,
+      "detail": null,
+      "observed": 1,
+      "expected": 1
+    },
+    {
+      "id": "FOREIGN_SCOPE_READ",
+      "passed": true,
+      "detail": null,
+      "observed": 0,
+      "expected": 0
+    },
+    {
+      "id": "FOREIGN_SCOPE_WRITE",
+      "passed": true,
+      "detail": null,
+      "observed": 0,
+      "expected": 0
+    },
+    {
+      "id": "DATABASE_AUTHORITY_FORGERY",
+      "passed": true,
+      "detail": null,
+      "observed": "REJECTED",
+      "expected": "REJECTED"
+    },
+    {
+      "id": "CONCURRENT_CONTROL_ACQUISITION",
+      "passed": true,
+      "detail": null,
+      "observed": {
+        "winners": 1,
+        "losers": 1,
+        "activeLeaseCount": 1
+      },
+      "expected": {
+        "winners": 1,
+        "losers": 1,
+        "activeLeaseCount": 1
+      }
+    },
+    {
+      "id": "LEASE_OWNER_MISMATCH",
+      "passed": true,
+      "detail": null,
+      "observed": "REJECTED",
+      "expected": "REJECTED"
+    },
+    {
+      "id": "EXPIRED_LEASE_HEARTBEAT",
+      "passed": true,
+      "detail": null,
+      "observed": {
+        "heartbeatMethod": true,
+        "expiredDomainError": true,
+        "expiredLifecycleEvent": true,
+        "expiredLeaseStatus": true,
+        "durableLeaseExpiry": true,
+        "durableSessionExpiry": true,
+        "postCommitError": true
+      },
+      "expected": {
+        "heartbeatMethod": true,
+        "expiredDomainError": "HUMAN_CONTROL_LEASE_EXPIRED",
+        "expiredLifecycleEvent": "CONTROL_LEASE_EXPIRED",
+        "durableLeaseExpiry": true,
+        "durableSessionExpiry": true,
+        "postCommitError": true
+      }
+    },
+    {
+      "id": "RETURN_CONTROL_FENCE",
+      "passed": true,
+      "detail": null,
+      "observed": true,
+      "expected": true
+    },
+    {
+      "id": "STALE_PLAN_RESUME",
+      "passed": true,
+      "detail": null,
+      "observed": false,
+      "expected": false
+    },
+    {
+      "id": "FINAL_EXECUTION_AUTHORITY_AUDIT",
+      "passed": true,
+      "detail": null,
+      "observed": 0,
+      "expected": 0
+    }
+  ],
+  "stalePlanResumeAllowed": false,
+  "executionAuthorized": false,
+  "certificationType": "TENANT_AND_ADVERSARIAL",
+  "timestamp": "2026-09-02T14:51:34.773Z",
+  "scope": {
+    "organizationId": "aira-dev-org",
+    "environmentId": "env_aira_development",
+    "organizationUuid": "7644e288-cb54-4f7c-adcc-afc73e202041",
+    "environmentUuid": "31b283ea-22b1-4786-80ec-7ba889cdd7b4"
+  },
+  "safety": {
+    "humanControlIsExecutionAuthorization": false,
+    "returnControlIsResume": false,
+    "stalePlanResumeAllowed": false,
+    "crossTenantReadAllowed": false,
+    "crossTenantWriteAllowed": false,
+    "multipleControlWinnersAllowed": false,
+    "leaseTheftAllowed": false,
+    "executionAuthorized": false
+  }
+}

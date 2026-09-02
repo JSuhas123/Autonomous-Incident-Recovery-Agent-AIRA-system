@@ -19,6 +19,21 @@ const {
     "./workflowOutboxDispatcher"
   );
 
+  const {
+  OUTBOX_EVENT_TYPE,
+} =
+  require(
+    "./workflowOutboxContracts"
+  );
+
+
+const {
+  createHumanNotificationRoute,
+} =
+  require(
+    "./humanNotificationOutboxQueueAdapter"
+  );
+
 const {
   WorkflowOutboxDeliveryCoordinator,
 } =
@@ -101,6 +116,9 @@ const WORKFLOW_OUTBOX_TOPIC =
 
     LIFECYCLE:
       "aira.workflow.lifecycle.requested",
+
+    HUMAN_NOTIFICATION:
+      "aira.workflow.human-notification.requested",
   });
 
 
@@ -114,6 +132,9 @@ const WORKFLOW_OUTBOX_QUEUE =
 
     LIFECYCLE:
       "aira.workflow.lifecycle",
+
+    HUMAN_NOTIFICATION:
+      "aira.workflow.human-notification",
   });
 
 
@@ -262,6 +283,21 @@ class WorkflowOutboxComposition {
     const publishers =
       routingRegistry
         .createPublishers();
+            publishers[
+      OUTBOX_EVENT_TYPE
+        .HUMAN_NOTIFICATION_REQUESTED
+    ] =
+      createHumanNotificationRoute({
+        publisher:
+          this.createStagePublisher({
+            stage:
+              "human-notification",
+
+            topic:
+              WORKFLOW_OUTBOX_TOPIC
+                .HUMAN_NOTIFICATION,
+          }),
+      });
 
 
     const dispatcher =
@@ -685,7 +721,10 @@ class WorkflowOutboxComposition {
         return WORKFLOW_OUTBOX_QUEUE
           .LIFECYCLE;
 
-
+            case "human-notification":
+        return WORKFLOW_OUTBOX_QUEUE
+          .HUMAN_NOTIFICATION;
+          
       default:
         throw Object.assign(
           new Error(
@@ -728,6 +767,10 @@ class WorkflowOutboxComposition {
 
       case "lifecycle":
         return 6;
+
+
+      case "human-notification":
+        return 8;
 
 
       default:

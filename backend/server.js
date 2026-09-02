@@ -572,7 +572,10 @@ const paymentWebhookRoutes =
   require(
     "./routes/paymentWebhookRoutes"
   );
-
+const incidentCommandRoutes =
+  require(
+    "./routes/incidentCommandRoutes"
+  );
 
 const {
   getKillSwitchManager,
@@ -1105,6 +1108,16 @@ app.use(
   organizationContextMiddleware,
 
   serviceAccountRoutes
+);
+
+app.use(
+  "/api/v1/incidents/:incidentId/command",
+
+  sessionAuthMiddleware,
+
+  browserEnvironmentContext,
+
+  incidentCommandRoutes
 );
 
 app.use(

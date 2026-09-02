@@ -1,9 +1,11 @@
 "use strict";
 
+
 const fs =
   require(
     "node:fs"
   );
+
 
 const path =
   require(
@@ -21,13 +23,35 @@ const scriptPath =
   );
 
 
+function semanticMatch(
+  source,
+  pattern
+) {
+  expect(
+    source
+  ).toMatch(
+    pattern
+  );
+}
+
+
 describe(
   "Phase 23.1E live certification architecture",
   () => {
     let source;
 
+
     beforeAll(
       () => {
+        expect(
+          fs.existsSync(
+            scriptPath
+          )
+        ).toBe(
+          true
+        );
+
+
         source =
           fs.readFileSync(
             scriptPath,
@@ -44,7 +68,9 @@ describe(
           fs.existsSync(
             scriptPath
           )
-        ).toBe(true);
+        ).toBe(
+          true
+        );
       }
     );
 
@@ -58,17 +84,20 @@ describe(
           "../persistence/postgres"
         );
 
+
         expect(
           source
         ).toContain(
           "PostgresTenantScope"
         );
 
+
         expect(
           source
         ).toContain(
           "PostgresHumanOperationsRepository"
         );
+
 
         expect(
           source
@@ -82,18 +111,21 @@ describe(
     test(
       "certifies every human operations table",
       () => {
+        const requiredTables = [
+          "tasks",
+          "assignments",
+          "acknowledgements",
+          "resolutions",
+          "takeover_sessions",
+          "control_leases",
+          "task_status_history",
+          "takeover_events",
+        ];
+
+
         for (
           const table
-          of [
-            "tasks",
-            "assignments",
-            "acknowledgements",
-            "resolutions",
-            "takeover_sessions",
-            "control_leases",
-            "task_status_history",
-            "takeover_events",
-          ]
+          of requiredTables
         ) {
           expect(
             source
@@ -114,6 +146,7 @@ describe(
           "relrowsecurity"
         );
 
+
         expect(
           source
         ).toContain(
@@ -131,6 +164,7 @@ describe(
         ).toContain(
           "foreignScopeReadCount"
         );
+
 
         expect(
           source
@@ -150,6 +184,7 @@ describe(
           "foreignScopeUpdateCount"
         );
 
+
         expect(
           source
         ).toContain(
@@ -162,17 +197,11 @@ describe(
     test(
       "attempts real database execution-authority violation",
       () => {
-        expect(
-          source
-        ).toContain(
-          "execution_authorized ="
+        semanticMatch(
+          source,
+          /execution_authorized\s*=\s*TRUE/i
         );
 
-        expect(
-          source
-        ).toContain(
-          "TRUE"
-        );
 
         expect(
           source
@@ -192,10 +221,13 @@ describe(
           "Promise.allSettled"
         );
 
+
         const matches =
           source.match(
-            /\.acquireControlLease\(/g
-          ) || [];
+            /\.acquireControlLease\s*\(/g
+          ) ||
+          [];
+
 
         expect(
           matches.length
@@ -207,24 +239,61 @@ describe(
 
 
     test(
-      "requires exactly one concurrent winner",
+      "requires exactly one concurrent winner and one loser",
       () => {
-        expect(
-          source
-        ).toContain(
-          "winners.length === 1"
+        /*
+         * Concurrency certification:
+         *
+         * Two acquisition attempts race.
+         *
+         * Exactly:
+         *
+         *   1 fulfilled winner
+         *   1 rejected loser
+         *
+         * must remain.
+         *
+         * Whitespace is intentionally ignored because Prettier may format:
+         *
+         *   winners.length ===
+         *     1
+         */
+        semanticMatch(
+          source,
+          /winners\.length\s*===\s*1/
         );
+
+
+        semanticMatch(
+          source,
+          /losers\.length\s*===\s*1/
+        );
+
+
+        semanticMatch(
+          source,
+          /activeLeaseCount\s*===\s*1/
+        );
+
 
         expect(
           source
         ).toContain(
-          "losers.length === 1"
+          "PHASE23_CONCURRENT_LEASE_WINNER_COUNT"
         );
+
 
         expect(
           source
         ).toContain(
-          "activeLeaseCount === 1"
+          "PHASE23_CONCURRENT_LEASE_LOSER_COUNT"
+        );
+
+
+        expect(
+          source
+        ).toContain(
+          "PHASE23_DATABASE_MULTIPLE_ACTIVE_LEASES"
         );
       }
     );
@@ -233,11 +302,11 @@ describe(
     test(
       "never treats takeover authorization as control",
       () => {
-        expect(
-          source
-        ).toContain(
-          "controlGranted ==="
+        semanticMatch(
+          source,
+          /controlGranted\s*===/
         );
+
 
         expect(
           source
@@ -251,11 +320,11 @@ describe(
     test(
       "requires fresh evaluation after control release",
       () => {
-        expect(
-          source
-        ).toContain(
-          "requiresFreshEvaluation ==="
+        semanticMatch(
+          source,
+          /requiresFreshEvaluation\s*===/
         );
+
 
         expect(
           source
@@ -269,11 +338,11 @@ describe(
     test(
       "explicitly prohibits stale plan resume",
       () => {
-        expect(
-          source
-        ).toContain(
-          "stalePlanResumeAllowed ==="
+        semanticMatch(
+          source,
+          /stalePlanResumeAllowed\s*===/
         );
+
 
         expect(
           source
@@ -285,13 +354,20 @@ describe(
 
 
     test(
-      "audits final execution authority as zero",
+      "audits final execution authority as exactly zero",
       () => {
+        semanticMatch(
+          source,
+          /authorityCount\s*===\s*0/
+        );
+
+
         expect(
           source
         ).toContain(
-          "authorityCount === 0"
+          "PHASE23_EXECUTION_AUTHORITY_LEAK"
         );
+
 
         expect(
           source
@@ -305,11 +381,11 @@ describe(
     test(
       "live certification performs cleanup",
       () => {
-        expect(
-          source
-        ).toContain(
-          "async function cleanup"
+        semanticMatch(
+          source,
+          /async\s+function\s+cleanup\s*\(/
         );
+
 
         expect(
           source
@@ -329,11 +405,13 @@ describe(
           "kubectl "
         );
 
+
         expect(
           source
         ).not.toContain(
           "docker "
         );
+
 
         expect(
           source

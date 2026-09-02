@@ -1,24 +1,20 @@
 "use strict";
 
+
 /*
  * ============================================================================
- * AIRA PHASE 11.3
- * WORKFLOW OUTBOX CONTRACTS
+ * AIRA WORKFLOW OUTBOX CONTRACTS
  * ============================================================================
  *
- * The workflow outbox provides durable cross-worker handoff intent.
+ * Workflow Outbox provides durable cross-worker handoff intent.
  *
- * IMPORTANT:
+ * It NEVER grants execution authority.
  *
- * An outbox event is NOT execution authorization.
- *
- * An outbox event may only cause work to enter an existing protected
- * worker boundary.
- *
- * Infrastructure mutation must still pass through ExecutionWorker and
- * its persisted authorization + immutable-plan validation.
+ * Phase 23.3 extends the existing outbox with durable human-notification
+ * delivery intent.
  * ============================================================================
  */
+
 
 const OUTBOX_STATUS =
   Object.freeze({
@@ -37,6 +33,7 @@ const OUTBOX_STATUS =
     DEAD_LETTER:
       "DEAD_LETTER",
   });
+
 
 const OUTBOX_EVENT_TYPE =
   Object.freeze({
@@ -69,7 +66,18 @@ const OUTBOX_EVENT_TYPE =
 
     LIFECYCLE_FAILED:
       "LIFECYCLE_FAILED",
+
+
+    /*
+     * ========================================================================
+     * PHASE 23.3
+     * ========================================================================
+     */
+
+    HUMAN_NOTIFICATION_REQUESTED:
+      "HUMAN_NOTIFICATION_REQUESTED",
   });
+
 
 const OUTBOX_AGGREGATE_TYPE =
   Object.freeze({
@@ -84,7 +92,15 @@ const OUTBOX_AGGREGATE_TYPE =
 
     LIFECYCLE:
       "LIFECYCLE",
+
+
+    /*
+     * Phase 23 notification request is itself the durable aggregate.
+     */
+    HUMAN_NOTIFICATION:
+      "HUMAN_NOTIFICATION",
   });
+
 
 const OUTBOX_DELIVERY_DECISION =
   Object.freeze({
@@ -107,6 +123,7 @@ const OUTBOX_DELIVERY_DECISION =
       "BLOCK",
   });
 
+
 const OUTBOX_FAILURE_CLASS =
   Object.freeze({
     RETRYABLE:
@@ -118,6 +135,7 @@ const OUTBOX_FAILURE_CLASS =
     UNKNOWN:
       "UNKNOWN",
   });
+
 
 const OUTBOX_ERROR_CODE =
   Object.freeze({
@@ -170,14 +188,18 @@ const OUTBOX_ERROR_CODE =
       "OUTBOX_UNSAFE_AUTHORITY",
   });
 
+
 const DEFAULT_OUTBOX_LEASE_MS =
   60 * 1000;
+
 
 const DEFAULT_OUTBOX_MAX_ATTEMPTS =
   10;
 
+
 const DEFAULT_OUTBOX_RETRY_BASE_MS =
   1000;
+
 
 function isKnownOutboxStatus(
   value
@@ -189,6 +211,7 @@ function isKnownOutboxStatus(
   );
 }
 
+
 function isKnownOutboxEventType(
   value
 ) {
@@ -198,6 +221,7 @@ function isKnownOutboxEventType(
     value
   );
 }
+
 
 function isKnownOutboxAggregateType(
   value
@@ -209,12 +233,14 @@ function isKnownOutboxAggregateType(
   );
 }
 
+
 function assertNoExecutionAuthority(
   payload = {}
 ) {
   if (
     payload?.executionAuthorized ===
       true ||
+
     payload?.authorizationGranted ===
       true
   ) {
@@ -222,6 +248,7 @@ function assertNoExecutionAuthority(
       new Error(
         "Workflow outbox payload cannot grant execution authority"
       ),
+
       {
         code:
           OUTBOX_ERROR_CODE
@@ -230,8 +257,10 @@ function assertNoExecutionAuthority(
     );
   }
 
+
   return true;
 }
+
 
 module.exports = {
   OUTBOX_STATUS,

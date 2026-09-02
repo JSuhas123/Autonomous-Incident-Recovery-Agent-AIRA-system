@@ -1,9 +1,11 @@
 "use strict";
 
+
 const express =
   require(
     "express"
   );
+
 
 const {
   PERMISSIONS,
@@ -12,12 +14,14 @@ const {
     "../constants/permissions"
   );
 
+
 const {
   requirePermission,
 } =
   require(
     "../middleware/authorizationMiddleware"
   );
+
 
 const {
   listTasks,
@@ -28,10 +32,23 @@ const {
   acknowledgeTask,
   resolveTask,
   cancelTask,
-  escalateTask,
 } =
   require(
     "../services/humanOperations/humanTaskService"
+  );
+
+
+/*
+ * Phase 23.2D:
+ *
+ * The historical route remains API-compatible, but no longer writes
+ * obsolete status ESCALATED.
+ */
+const {
+  escalateTask,
+} =
+  require(
+    "../services/humanOperations/humanTaskEscalationCompatibilityService"
   );
 
 

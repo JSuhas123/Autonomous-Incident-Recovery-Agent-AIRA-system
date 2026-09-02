@@ -1,0 +1,135 @@
+{
+  "phase": "23",
+  "subphase": "23.9",
+  "certification": "PASS",
+  "frozen": true,
+  "passed": true,
+  "total": 10,
+  "passedCount": 10,
+  "failedCount": 0,
+  "failedCases": [],
+  "certifications": [
+    {
+      "id": "PHASE23_1_LIVE_CONTROL_FOUNDATION",
+      "passed": true,
+      "detail": "certify-phase23-1-live.js exited successfully",
+      "expected": 0,
+      "observed": 0
+    },
+    {
+      "id": "PHASE23_1F_DURABLE_LEASE_EXPIRY",
+      "passed": true,
+      "detail": "certify-phase23-1f-lease-expiry-live.js exited successfully",
+      "expected": 0,
+      "observed": 0
+    },
+    {
+      "id": "PHASE23_8_TENANT_ADVERSARIAL",
+      "passed": true,
+      "detail": "certify-phase23-8-adversarial-live.js exited successfully",
+      "expected": 0,
+      "observed": 0
+    },
+    {
+      "id": "PHASE23_DATABASE_SCHEMA",
+      "passed": true,
+      "detail": null,
+      "expected": [
+        "tasks",
+        "assignments",
+        "acknowledgements",
+        "resolutions",
+        "takeover_sessions",
+        "control_leases",
+        "task_status_history",
+        "takeover_events",
+        "escalations",
+        "incident_handoff_packages",
+        "control_return_fences"
+      ],
+      "observed": {
+        "existing": [
+          "acknowledgements",
+          "assignments",
+          "control_leases",
+          "control_return_fences",
+          "escalations",
+          "incident_handoff_packages",
+          "resolutions",
+          "takeover_events",
+          "takeover_sessions",
+          "task_status_history",
+          "tasks"
+        ],
+        "missing": []
+      }
+    },
+    {
+      "id": "PHASE23_DATABASE_RLS",
+      "passed": true,
+      "detail": null,
+      "expected": "RLS ENABLED + FORCE RLS on every authoritative Phase-23 table",
+      "observed": "PASS"
+    },
+    {
+      "id": "PHASE23_ACTIVE_LEASE_UNIQUENESS",
+      "passed": true,
+      "detail": null,
+      "expected": "maximum 1 ACTIVE lease per incident",
+      "observed": []
+    },
+    {
+      "id": "PHASE23_RETURN_CONTROL_FENCE",
+      "passed": true,
+      "detail": null,
+      "expected": "trg_control_return_fence present",
+      "observed": true
+    },
+    {
+      "id": "PHASE23_STALE_PLAN_FENCE",
+      "passed": true,
+      "detail": null,
+      "expected": 0,
+      "observed": 0
+    },
+    {
+      "id": "PHASE23_EXECUTION_AUTHORITY_AUDIT",
+      "passed": true,
+      "detail": null,
+      "expected": 0,
+      "observed": 0
+    },
+    {
+      "id": "PHASE23_FINAL_FREEZE",
+      "passed": true,
+      "detail": null,
+      "expected": "PHASE 23 may freeze only after all safety certifications pass",
+      "observed": "all preceding certification gates passed"
+    }
+  ],
+  "humanControlIsExecutionAuthorization": false,
+  "stalePlanResumeAllowed": false,
+  "executionAuthorized": false,
+  "timestamp": "2026-09-02T14:51:35.308Z",
+  "certificationType": "PHASE23_FINAL_CLOSED_LOOP",
+  "architecture": {
+    "transactionalAuthority": "PostgreSQL",
+    "coordination": "Redis",
+    "eventTransport": "RabbitMQ",
+    "vectorMemory": "Qdrant"
+  },
+  "permanentSafetyLaws": {
+    "assignmentIsControl": false,
+    "acknowledgementIsControl": false,
+    "notificationIsControl": false,
+    "handoffIsControl": false,
+    "takeoverRequestIsControl": false,
+    "takeoverAuthorizationIsControl": false,
+    "activeLeaseIsHumanControlAuthority": true,
+    "humanControlIsExecutionAuthorization": false,
+    "returnControlIsResume": false,
+    "stalePlanResumeAllowed": false,
+    "executionAuthorized": false
+  },
+  "phase23Frozen": true
+}

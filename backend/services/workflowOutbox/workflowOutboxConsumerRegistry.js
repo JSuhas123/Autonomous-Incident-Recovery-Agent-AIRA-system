@@ -8,6 +8,11 @@ const {
     "./workflowOutboxComposition"
   );
 
+  const humanNotificationWorker =
+  require(
+    "../../workers/humanNotificationWorker"
+  );
+  
 const executionWorker =
   require(
     "../../workers/executionWorker"
@@ -125,6 +130,10 @@ class WorkflowOutboxConsumerRegistry {
       options.lifecycleWorker ||
       lifecycleWorker;
 
+    this.humanNotificationWorker =
+      options.humanNotificationWorker ||
+      humanNotificationWorker;
+
     this.prefetch =
       this.normalizePrefetch(
         options.prefetch ??
@@ -147,138 +156,211 @@ class WorkflowOutboxConsumerRegistry {
   // ==========================================================================
 
   async start() {
-    if (
-      this.started
-    ) {
-      return {
-        started:
-          false,
-
-        alreadyStarted:
-          true,
-
-        registrations:
-          [
-            ...this.registrations,
-          ],
-
-        executionAuthorized:
-          false,
-      };
-    }
-
-    this.assertTransportReady();
-
-    this.assertQueueContract();
-
-    const registrations =
-      [];
-
-    try {
-      registrations.push(
-        await this.registerConsumer({
-          stage:
-            "execution",
-
-          topic:
-            WORKFLOW_OUTBOX_TOPIC
-              .EXECUTION,
-
-          queueName:
-            WORKFLOW_OUTBOX_QUEUE
-              .EXECUTION,
-
-          worker:
-            this.executionWorker,
-        })
-      );
-
-      registrations.push(
-        await this.registerConsumer({
-          stage:
-            "verification",
-
-          topic:
-            WORKFLOW_OUTBOX_TOPIC
-              .VERIFICATION,
-
-          queueName:
-            WORKFLOW_OUTBOX_QUEUE
-              .VERIFICATION,
-
-          worker:
-            this.verificationWorker,
-        })
-      );
-
-      registrations.push(
-        await this.registerConsumer({
-          stage:
-            "lifecycle",
-
-          topic:
-            WORKFLOW_OUTBOX_TOPIC
-              .LIFECYCLE,
-
-          queueName:
-            WORKFLOW_OUTBOX_QUEUE
-              .LIFECYCLE,
-
-          worker:
-            this.lifecycleWorker,
-        })
-      );
-    } catch (
-      error
-    ) {
-      /*
-       * Some consumers may already have been registered successfully.
-       *
-       * QueueService does not currently provide cancellation handles,
-       * therefore we preserve the real state instead of pretending the
-       * registration was rolled back.
-       */
-      this.registrations =
-        registrations;
-
-      throw Object.assign(
-        error,
-        {
-          outboxConsumerRegistrations:
-            [
-              ...registrations,
-            ],
-        }
-      );
-    }
-
-    this.registrations =
-      registrations;
-
-    this.started =
-      true;
-
-    this.safeLog(
-      "info",
-      `[workflow-outbox] durable consumers registered count=${registrations.length}`
-    );
-
+  if (
+    this.started
+  ) {
     return {
       started:
-        true,
+        false,
 
       alreadyStarted:
-        false,
+        true,
 
       registrations:
         [
-          ...registrations,
+          ...this.registrations,
         ],
 
       executionAuthorized:
         false,
     };
   }
+
+  this.assertTransportReady();
+
+  this.assertQueueContract();
+
+  const registrations =
+    [];
+
+  try {
+    /*
+     * ========================================================================
+     * EXECUTION
+     * ========================================================================
+     */
+
+    registrations.push(
+      await this.registerConsumer({
+        stage:
+          "execution",
+
+        topic:
+          WORKFLOW_OUTBOX_TOPIC
+            .EXECUTION,
+
+        queueName:
+          WORKFLOW_OUTBOX_QUEUE
+            .EXECUTION,
+
+        worker:
+          this.executionWorker,
+      })
+    );
+
+
+    /*
+     * ========================================================================
+     * VERIFICATION
+     * ========================================================================
+     */
+
+    registrations.push(
+      await this.registerConsumer({
+        stage:
+          "verification",
+
+        topic:
+          WORKFLOW_OUTBOX_TOPIC
+            .VERIFICATION,
+
+        queueName:
+          WORKFLOW_OUTBOX_QUEUE
+            .VERIFICATION,
+
+        worker:
+          this.verificationWorker,
+      })
+    );
+
+
+    /*
+     * ========================================================================
+     * LIFECYCLE
+     * ========================================================================
+     */
+
+    registrations.push(
+      await this.registerConsumer({
+        stage:
+          "lifecycle",
+
+        topic:
+          WORKFLOW_OUTBOX_TOPIC
+            .LIFECYCLE,
+
+        queueName:
+          WORKFLOW_OUTBOX_QUEUE
+            .LIFECYCLE,
+
+        worker:
+          this.lifecycleWorker,
+      })
+    );
+
+
+    /*
+     * ========================================================================
+     * PHASE 23.3 — HUMAN NOTIFICATION
+     * ========================================================================
+     *
+     * Notification transport is deliberately registered through the same
+     * durable Workflow Outbox consumer architecture as execution,
+     * verification and lifecycle.
+     *
+     * This consumer:
+     *
+     *   - reloads canonical notification state from PostgreSQL
+     *   - performs provider delivery
+     *   - records attempts durably
+     *   - preserves RabbitMQ retry / DLX semantics
+     *
+     * It NEVER grants:
+     *
+     *   - acknowledgement
+     *   - takeover
+     *   - human control
+     *   - execution authorization
+     */
+
+    registrations.push(
+      await this.registerConsumer({
+        stage:
+          "human-notification",
+
+        topic:
+          WORKFLOW_OUTBOX_TOPIC
+            .HUMAN_NOTIFICATION,
+
+        queueName:
+          WORKFLOW_OUTBOX_QUEUE
+            .HUMAN_NOTIFICATION,
+
+        worker:
+          this.humanNotificationWorker,
+      })
+    );
+  } catch (
+    error
+  ) {
+    /*
+     * Some consumers may already have been registered successfully.
+     *
+     * QueueService does not currently provide cancellation handles,
+     * therefore we preserve the REAL partial-registration state rather
+     * than pretending registration rolled back.
+     *
+     * Example:
+     *
+     *   execution          registered
+     *   verification       registered
+     *   lifecycle          registered
+     *   human-notification failed
+     *
+     * registrations[] must continue reflecting the first three.
+     */
+
+    this.registrations =
+      registrations;
+
+    throw Object.assign(
+      error,
+      {
+        outboxConsumerRegistrations:
+          [
+            ...registrations,
+          ],
+      }
+    );
+  }
+
+  this.registrations =
+    registrations;
+
+  this.started =
+    true;
+
+  this.safeLog(
+    "info",
+    `[workflow-outbox] durable consumers registered count=${registrations.length}`
+  );
+
+  return {
+    started:
+      true,
+
+    alreadyStarted:
+      false,
+
+    registrations:
+      [
+        ...registrations,
+      ],
+
+    executionAuthorized:
+      false,
+  };
+}
 
   // ==========================================================================
   // REGISTER ONE CONSUMER
