@@ -48,10 +48,10 @@
     "postgres:backfill": "node scripts/postgres-backfill.js",
     "postgres:backfill:dry-run": "node scripts/postgres-backfill.js --dry-run",
     "postgres:verify": "node scripts/postgres-verify.js",
-    "deps:up": "docker compose -f ../docker-compose.yml up -d --wait postgres redis rabbitmq qdrant",
-    "deps:down": "docker compose -f ../docker-compose.yml stop postgres redis rabbitmq qdrant",
-    "deps:status": "docker compose -f ../docker-compose.yml ps postgres redis rabbitmq qdrant",
-    "deps:logs": "docker compose -f ../docker-compose.yml logs --tail=30 postgres redis rabbitmq qdrant"
+    "deps:up": "docker compose -f ../docker-compose.yml up -d --wait postgres redis rabbitmq qdrant minio",
+    "deps:down": "docker compose -f ../docker-compose.yml stop postgres redis rabbitmq qdrant minio",
+    "deps:status": "docker compose -f ../docker-compose.yml ps postgres redis rabbitmq qdrant minio",
+    "deps:logs": "docker compose -f ../docker-compose.yml logs --tail=30 postgres redis rabbitmq qdrant minio"
   },
   "engines": {
     "node": ">=18"
@@ -60,6 +60,7 @@
     "@aws-sdk/client-cloudwatch": "^3.1109.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.1109.0",
     "@aws-sdk/client-resource-groups-tagging-api": "^3.1109.0",
+    "@aws-sdk/client-s3": "^3.1109.0",
     "@azure/arm-resources": "^7.0.0",
     "@azure/identity": "^4.13.1",
     "@azure/monitor-query": "^1.3.3",
