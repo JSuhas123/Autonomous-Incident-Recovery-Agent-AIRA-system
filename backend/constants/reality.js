@@ -383,6 +383,52 @@ const REALITY_VISIBILITY =
   });
 
 
+/*
+ * Frozen Phase 23R architecture invariants.
+ *
+ * These are deliberately boolean assertions rather than
+ * descriptive strings because the architecture contract
+ * validates every invariant fail-closed.
+ */
+
+
+const REALITY_ARCHITECTURE_INVARIANTS =
+  Object.freeze({
+    RAW_DATASET_MUST_BE_NORMALIZED:
+      true,
+
+    GROUND_TRUTH_NEVER_ENTERS_AGENT_CONTEXT:
+      true,
+
+    EVIDENCE_AND_EVALUATION_CHANNELS_ARE_SEPARATE:
+      true,
+
+    BENCHMARK_SCORE_IS_NOT_PRODUCTION_PROOF:
+      true,
+
+    REPLAY_NEVER_GRANTS_EXECUTION_AUTHORIZATION:
+      true,
+
+    PHASE_23_HUMAN_CONTROL_SEMANTICS_ARE_FROZEN:
+      true,
+
+    POSTGRES_IS_CANONICAL_REALITY_METADATA_AUTHORITY:
+      true,
+
+    OBJECT_STORAGE_IS_NOT_TRANSACTIONAL_AUTHORITY:
+      true,
+
+    QDRANT_IS_NOT_SOURCE_OF_TRUTH:
+      true,
+
+    REDIS_IS_NOT_REPLAY_HISTORY_AUTHORITY:
+      true,
+
+    BENCHMARK_PASS_IS_NOT_PRODUCTION_AUTHORIZATION:
+      true,
+  });
+
+
 const EVIDENCE_GRADE_ORDER =
   Object.freeze([
     EVIDENCE_GRADE.E0,
@@ -627,6 +673,8 @@ module.exports = {
   REALITY_ARTIFACT_KIND,
 
   REALITY_VISIBILITY,
+
+  REALITY_ARCHITECTURE_INVARIANTS,
 
   SOURCE_KIND_ALLOWED_EVIDENCE_GRADES,
 

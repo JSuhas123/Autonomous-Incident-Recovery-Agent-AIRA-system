@@ -9,6 +9,11 @@ from intelligence.reality.adapters.aira_raw_bundle import (
     normalize as normalize_raw_bundle,
 )
 
+from intelligence.reality.adapters.external_benchmark import (
+    ADAPTER_NAME as EXTERNAL_BENCHMARK_ADAPTER,
+    normalize as normalize_external_benchmark,
+)
+
 from intelligence.reality.adapters.public_incident_timeline import (
     ADAPTER_NAME as PUBLIC_INCIDENT_ADAPTER,
     normalize as normalize_public_incident,
@@ -24,6 +29,9 @@ from intelligence.reality.normalization.reality_case_normalizer import (
 ADAPTERS = {
     RAW_BUNDLE_ADAPTER:
         normalize_raw_bundle,
+
+    EXTERNAL_BENCHMARK_ADAPTER:
+        normalize_external_benchmark,
 
     PUBLIC_INCIDENT_ADAPTER:
         normalize_public_incident,
