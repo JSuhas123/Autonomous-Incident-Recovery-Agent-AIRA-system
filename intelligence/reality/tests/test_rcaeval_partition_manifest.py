@@ -5,6 +5,7 @@ import unittest
 
 from intelligence.reality.corpus.rcaeval_partition_manifest import (
     EXPECTED_SUITE_COUNTS,
+    EXPECTED_SUITE_FAMILY_COUNTS,
     EXPECTED_TOTAL_CASES,
     RCAEVAL_CORPUS_MANIFEST_VERSION,
     build_rcaeval_partition_manifest,
@@ -20,7 +21,54 @@ def full_rows():
     rows = []
 
     for (
-        suite,
+        dataset,
+        count,
+    ) in EXPECTED_SUITE_COUNTS.items():
+        (
+            suite,
+            system,
+        ) = dataset.split(
+            "-",
+            1,
+        )
+
+        for index in range(
+            count
+        ):
+            rows.append({
+                "case":
+                    (
+                        f"{suite.lower()}"
+                        f"{system.lower()}_"
+                        f"service{index % 5}_"
+                        f"fault{index % 7}_"
+                        f"{index}"
+                    ),
+
+                "dataset":
+                    dataset,
+
+                "suite":
+                    suite,
+
+                "system":
+                    system.lower(),
+
+                "root_cause_service":
+                    f"service{index % 5}",
+
+                "fault":
+                    f"fault{index % 7}",
+            })
+
+    return rows
+
+
+def legacy_full_rows():
+    rows = []
+
+    for (
+        dataset,
         count,
     ) in EXPECTED_SUITE_COUNTS.items():
         for index in range(
@@ -29,14 +77,14 @@ def full_rows():
             rows.append({
                 "case":
                     (
-                        f"{suite.lower()}_"
+                        f"{dataset.lower()}_"
                         f"service{index % 5}_"
                         f"fault{index % 7}_"
                         f"{index}"
                     ),
 
                 "suite":
-                    suite,
+                    dataset,
 
                 "root_cause_service":
                     f"service{index % 5}",
@@ -56,7 +104,7 @@ class RCAEvalPartitionManifestTests(
     ):
         self.assertEqual(
             RCAEVAL_CORPUS_MANIFEST_VERSION,
-            "23R.13.0",
+            "23R.13.1",
         )
 
 
@@ -76,6 +124,71 @@ class RCAEvalPartitionManifestTests(
         )
 
 
+    def test_published_schema_maps_dataset_not_suite_family(
+        self
+    ):
+        manifest = (
+            build_rcaeval_partition_manifest(
+                full_rows()
+            )
+        )
+
+        self.assertEqual(
+            manifest[
+                "suiteCounts"
+            ],
+            EXPECTED_SUITE_COUNTS,
+        )
+
+        self.assertEqual(
+            manifest[
+                "suiteFamilyCounts"
+            ],
+            EXPECTED_SUITE_FAMILY_COUNTS,
+        )
+
+        self.assertTrue(
+            all(
+                case[
+                    "suite"
+                ]
+                ==
+                case[
+                    "dataset"
+                ]
+
+                for case
+                in manifest[
+                    "cases"
+                ]
+            )
+        )
+
+
+    def test_legacy_nine_way_suite_fixture_remains_supported(
+        self
+    ):
+        manifest = (
+            build_rcaeval_partition_manifest(
+                legacy_full_rows()
+            )
+        )
+
+        self.assertEqual(
+            manifest[
+                "suiteCounts"
+            ],
+            EXPECTED_SUITE_COUNTS,
+        )
+
+        self.assertEqual(
+            manifest[
+                "suiteFamilyCounts"
+            ],
+            EXPECTED_SUITE_FAMILY_COUNTS,
+        )
+
+
     def test_repetitions_of_same_fault_group_do_not_cross_partitions(
         self
     ):
@@ -84,8 +197,14 @@ class RCAEvalPartitionManifestTests(
                 "case":
                     f"re2ob_checkout_cpu_{i}",
 
-                "suite":
+                "dataset":
                     "RE2-OB",
+
+                "suite":
+                    "RE2",
+
+                "system":
+                    "ob",
 
                 "root_cause_service":
                     "checkout",
@@ -225,6 +344,32 @@ class RCAEvalPartitionManifestTests(
         self.assertEqual(
             captured.exception.code,
             "REALITY_RCAEVAL_MANIFEST_CASE_DUPLICATE",
+        )
+
+
+    def test_unknown_dataset_fails_build(
+        self
+    ):
+        row = dict(
+            full_rows()[0]
+        )
+
+        row[
+            "dataset"
+        ] = "RE9-XX"
+
+        with self.assertRaises(
+            RealityNormalizationError
+        ) as captured:
+            build_rcaeval_partition_manifest(
+                [
+                    row
+                ]
+            )
+
+        self.assertEqual(
+            captured.exception.code,
+            "REALITY_RCAEVAL_MANIFEST_DATASET_INVALID",
         )
 
 

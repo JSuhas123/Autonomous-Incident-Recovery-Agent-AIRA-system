@@ -2,6 +2,15 @@
 
 Ground-truth-bearing RCAEval index fields are used only to build evaluator-side
 partitions. They are never emitted into replay-visible case payloads.
+
+RCAEval's published case index uses:
+- ``dataset`` for the nine concrete benchmark datasets (RE1-OB ... RE3-TT)
+- ``suite`` for the three benchmark families (RE1, RE2, RE3)
+- ``system`` for the three systems (ob, ss, tt)
+
+Older AIRA fixtures used ``suite`` for the nine concrete dataset identifiers.
+This module accepts both shapes, but canonicalizes every manifest case to the
+nine-dataset identity required by the certified 735-case coverage contract.
 """
 
 from __future__ import annotations
@@ -23,7 +32,7 @@ from intelligence.reality.normalization.reality_case_normalizer import (
 
 
 RCAEVAL_CORPUS_MANIFEST_VERSION = (
-    "23R.13.0"
+    "23R.13.1"
 )
 
 
@@ -62,6 +71,18 @@ EXPECTED_SUITE_COUNTS = {
 }
 
 
+EXPECTED_SUITE_FAMILY_COUNTS = {
+    "RE1":
+        375,
+
+    "RE2":
+        270,
+
+    "RE3":
+        90,
+}
+
+
 PARTITIONS = (
     "RETRIEVAL",
     "DEVELOPMENT",
@@ -97,6 +118,20 @@ PARTITION_BUCKETS = {
 }
 
 
+SYSTEM_CODES = frozenset({
+    "OB",
+    "SS",
+    "TT",
+})
+
+
+SUITE_FAMILIES = frozenset({
+    "RE1",
+    "RE2",
+    "RE3",
+})
+
+
 def _error(
     code: str,
     message: str,
@@ -107,6 +142,31 @@ def _error(
     )
 
 
+def _optional_text(
+    row: Mapping[
+        str,
+        Any,
+    ],
+    key: str,
+) -> str | None:
+    value = row.get(
+        key
+    )
+
+    if value is None:
+        return None
+
+    text = str(
+        value
+    ).strip()
+
+    return (
+        text
+        or
+        None
+    )
+
+
 def _required(
     row: Mapping[
         str,
@@ -114,27 +174,122 @@ def _required(
     ],
     key: str,
 ) -> str:
-    value = (
-        row.get(
-            key
-        )
+    value = _optional_text(
+        row,
+        key,
     )
 
-    if (
-        value is None
-        or
-        not str(
-            value
-        ).strip()
-    ):
+    if value is None:
         raise _error(
             "REALITY_RCAEVAL_MANIFEST_FIELD_REQUIRED",
             f"{key} is required",
         )
 
-    return str(
-        value
-    ).strip()
+    return value
+
+
+def _canonical_dataset(
+    row: Mapping[
+        str,
+        Any,
+    ],
+) -> str:
+    """Return one of the nine certified RCAEval dataset identifiers.
+
+    Current RCAEval index schema:
+        dataset=RE1-OB, suite=RE1, system=ob
+
+    Legacy AIRA fixture schema:
+        suite=RE1-OB
+    """
+
+    dataset = _optional_text(
+        row,
+        "dataset",
+    )
+
+    if dataset is not None:
+        candidate = dataset.upper()
+
+        if candidate not in EXPECTED_SUITE_COUNTS:
+            raise _error(
+                "REALITY_RCAEVAL_MANIFEST_DATASET_INVALID",
+                (
+                    "unknown RCAEval dataset: "
+                    f"{dataset}"
+                ),
+            )
+
+        return candidate
+
+    suite = _required(
+        row,
+        "suite",
+    ).upper()
+
+    if suite in EXPECTED_SUITE_COUNTS:
+        return suite
+
+    if suite in SUITE_FAMILIES:
+        system = _required(
+            row,
+            "system",
+        ).upper()
+
+        if system not in SYSTEM_CODES:
+            raise _error(
+                "REALITY_RCAEVAL_MANIFEST_SYSTEM_INVALID",
+                (
+                    "unknown RCAEval system: "
+                    f"{system}"
+                ),
+            )
+
+        candidate = (
+            f"{suite}-{system}"
+        )
+
+        if candidate in EXPECTED_SUITE_COUNTS:
+            return candidate
+
+    raise _error(
+        "REALITY_RCAEVAL_MANIFEST_DATASET_REQUIRED",
+        (
+            "RCAEval row must provide a certified "
+            "dataset identifier via dataset, or via "
+            "legacy suite, or via suite + system"
+        ),
+    )
+
+
+def _suite_family(
+    row: Mapping[
+        str,
+        Any,
+    ],
+    dataset: str,
+) -> str:
+    suite = _optional_text(
+        row,
+        "suite",
+    )
+
+    if suite is not None:
+        candidate = suite.upper()
+
+        if candidate in SUITE_FAMILIES:
+            return candidate
+
+        if candidate in EXPECTED_SUITE_COUNTS:
+            return candidate.split(
+                "-",
+                1,
+            )[0]
+
+    return dataset.split(
+        "-",
+        1,
+    )[0]
 
 
 def _group_key(
@@ -142,13 +297,11 @@ def _group_key(
         str,
         Any,
     ],
+    dataset: str,
 ) -> str:
     return "\0".join(
         (
-            _required(
-                row,
-                "suite",
-            ),
+            dataset,
 
             _required(
                 row,
@@ -246,6 +399,10 @@ def build_rcaeval_partition_manifest(
         str
     ] = Counter()
 
+    suite_family_counts: Counter[
+        str
+    ] = Counter()
+
     partition_counts: Counter[
         str
     ] = Counter()
@@ -277,10 +434,16 @@ def build_rcaeval_partition_manifest(
             )
         )
 
-        suite = (
-            _required(
+        dataset = (
+            _canonical_dataset(
+                raw
+            )
+        )
+
+        suite_family = (
+            _suite_family(
                 raw,
-                "suite",
+                dataset,
             )
         )
 
@@ -299,7 +462,8 @@ def build_rcaeval_partition_manifest(
 
         group_key = (
             _group_key(
-                raw
+                raw,
+                dataset,
             )
         )
 
@@ -331,7 +495,11 @@ def build_rcaeval_partition_manifest(
             )
 
         suite_counts[
-            suite
+            dataset
+        ] += 1
+
+        suite_family_counts[
+            suite_family
         ] += 1
 
         partition_counts[
@@ -343,7 +511,13 @@ def build_rcaeval_partition_manifest(
                 case_id,
 
             "suite":
-                suite,
+                dataset,
+
+            "dataset":
+                dataset,
+
+            "suiteFamily":
+                suite_family,
 
             "partition":
                 partition,
@@ -360,10 +534,6 @@ def build_rcaeval_partition_manifest(
             "evidenceGrade":
                 "E2",
 
-            
-             # Benchmark certification data is deliberately
-             # excluded from direct model training.
-             
             "trainingEligible":
                 False,
 
@@ -401,6 +571,13 @@ def build_rcaeval_partition_manifest(
             dict(
                 sorted(
                     suite_counts.items()
+                )
+            ),
+
+        "suiteFamilyCounts":
+            dict(
+                sorted(
+                    suite_family_counts.items()
                 )
             ),
 
@@ -500,8 +677,22 @@ def certify_complete_rcaeval_manifest(
         raise _error(
             "REALITY_RCAEVAL_MANIFEST_SUITE_COVERAGE_INVALID",
             (
-                "RCAEval suite counts do not match "
+                "RCAEval dataset counts do not match "
                 "the certified 735-case corpus"
+            ),
+        )
+
+    if (
+        manifest.get(
+            "suiteFamilyCounts"
+        ) !=
+        EXPECTED_SUITE_FAMILY_COUNTS
+    ):
+        raise _error(
+            "REALITY_RCAEVAL_MANIFEST_SUITE_FAMILY_COVERAGE_INVALID",
+            (
+                "RCAEval RE1/RE2/RE3 family counts do not "
+                "match the certified 735-case corpus"
             ),
         )
 
@@ -559,6 +750,30 @@ def certify_complete_rcaeval_manifest(
     for case in cases:
         if (
             case.get(
+                "suite"
+            ) not in
+            EXPECTED_SUITE_COUNTS
+            or
+            case.get(
+                "dataset"
+            ) not in
+            EXPECTED_SUITE_COUNTS
+            or
+            case.get(
+                "suiteFamily"
+            ) not in
+            EXPECTED_SUITE_FAMILY_COUNTS
+        ):
+            raise _error(
+                "REALITY_RCAEVAL_MANIFEST_DATASET_INVALID",
+                (
+                    "every RCAEval case must carry a "
+                    "certified dataset and suite family"
+                ),
+            )
+
+        if (
+            case.get(
                 "evidenceGrade"
             ) !=
             "E2"
@@ -613,6 +828,9 @@ def certify_complete_rcaeval_manifest(
 
         "suiteCounts":
             EXPECTED_SUITE_COUNTS,
+
+        "suiteFamilyCounts":
+            EXPECTED_SUITE_FAMILY_COUNTS,
 
         "executionAuthorized":
             False,
