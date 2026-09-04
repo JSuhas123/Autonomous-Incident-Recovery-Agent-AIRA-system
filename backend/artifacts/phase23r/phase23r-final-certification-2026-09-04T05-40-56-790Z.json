@@ -1,0 +1,192 @@
+{
+  "version": "23R.FINAL.0",
+  "phase": "23R",
+  "status": "PASS",
+  "certification": "PHASE_23R_COMPLETE_CERTIFIED_FROZEN",
+  "generatedAt": "2026-09-04T05:40:56.767Z",
+  "evidence": {
+    "frozenCorpus": {
+      "status": "FROZEN",
+      "phaseGate": "23R.13U",
+      "freezeHash": "8ec3bcaab9f32d4c9dbf044f5d163993ed4585070925822a69a07b0814a52c38",
+      "groundTruthAgentVisible": false,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "externalReality": {
+      "status": "PASS",
+      "caseCount": 1335,
+      "certificationHash": "31eafdd695a3ce1985847bc5046a32c28488c74d54dc82d8987aa32467e05afd",
+      "groundTruthAgentVisible": false,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "externalPromotion": {
+      "combinedManifestHash": "5a31c0a683f70274be16ef23257b21d325ad0f988cd18fd6d9ec05da5a9b8366",
+      "groundTruthAgentVisible": false,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "inventory": {
+      "present": true,
+      "executionAuthorized": false,
+      "productionCertified": false,
+      "groundTruthAgentVisible": false
+    },
+    "scaleCompletion": {
+      "status": "PASS",
+      "executionAuthorized": false,
+      "productionCertified": false,
+      "groundTruthAgentVisible": false
+    },
+    "generatedCorpus": {
+      "present": true,
+      "requiredCategories": {
+        "HEALTHY_BASELINE": 500,
+        "NOISY_DERIVATIVE": 5000,
+        "MULTI_FAULT": 250,
+        "CASCADING_FAILURE": 250,
+        "AMBIGUOUS_EVIDENCE": 250,
+        "RECOVERY_OUTCOME": 500
+      },
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "executableWorkloads": {
+      "airaReliabilityLab": true,
+      "openTelemetryAstronomyShop": true,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "googleCluster": {
+      "sampleCount": 500,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "publicIncidents": {
+      "googleCloudPublicIncidentReferences": 100,
+      "wikimediaPublicIncidentReconstructions": 100,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "liveCertification": {
+      "version": "23R.10G.2.2",
+      "status": "PASS",
+      "certificationHash": "de4a6bccefc31b23f4d53e39ba3a693fd33641c1f743ee634a7841dcaf19705b",
+      "replayRunId": "replay_5780a0817c674db793d3f0b9b56a1369",
+      "environmentReplayRunId": "envreplay_1cfc9814ee3a4015bd075a904430a8f1",
+      "experimentRunId": "exprun_3b1bf7f9-3137-4490-abcd-c4e01d1ecfc7",
+      "incidentId": "1ac0ce80f4501f3c0f62215e",
+      "diagnosisRunId": "diag_6efb37e99c849908b6afc458",
+      "authorizationId": "execa_28ccbae3be473162a0c12dae",
+      "executionRequestId": "execreq_bfd2390d5b3e7c3aee96e7a2",
+      "verificationOutcome": "VERIFIED_RECOVERY",
+      "labStatus": "AVAILABLE",
+      "groundTruthAgentVisible": false,
+      "executionAuthorized": false,
+      "productionCertified": false
+    },
+    "regression": {
+      "evidenceType": "OPERATOR_ATTESTED_PRECONDITION",
+      "phase21Regression": "PASS",
+      "phase22Regression": "PASS",
+      "phase23Regression": "PASS",
+      "phase23RRegression": "PASS",
+      "note": "Regression suites were completed immediately before final Phase-23R certification. This final certifier validates persisted Phase-23R evidence and does not rerun those suites."
+    },
+    "physicalEvidence": {
+      "corpusFreeze": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-corpus-freeze.json",
+        "fileSha256": "998c6a54d76cc8c62932da5a062ad0f28b958d24f992413a1a7a56133b7952ca"
+      },
+      "corpusInventory": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-corpus-inventory.json",
+        "fileSha256": "95d1bebf06eb9f2d5a3b551599093e0ea7138bac2e539749b8290b1974917ce8"
+      },
+      "executableWorkloads": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-executable-workload-capture-manifest.json",
+        "fileSha256": "b6557d770c22699a24e54f7ad67eaf40ed271fb7fdda99a97e5444713992501c"
+      },
+      "externalCertification": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-external-reality-integrity-certification.json",
+        "fileSha256": "a47524942e07853f7a0ee56c1cdcd4a46cee2e06015fcde164f1362af11f485a"
+      },
+      "externalPromotion": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-external-reality-promotion-manifest.json",
+        "fileSha256": "512786f6a7a42ebcc86c8720e02c0dc61466514e4d242d99e449f272e0bfd64d"
+      },
+      "generatedCorpus": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-generated-corpus-manifest.json",
+        "fileSha256": "4fcde3f547d5ff2708e7af660e1e39a7ca6afc499fc4996209c137bc9da39b9e"
+      },
+      "googlePublicIncidents": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-google-cloud-public-incident-acquisition-manifest.json",
+        "fileSha256": "33b994c71b9ba5aae585be46b3eec7f335299b43094f0488d7fb3ac6d9dbf9a4"
+      },
+      "googleCluster": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-google-cluster-acquisition-manifest.json",
+        "fileSha256": "86a90fb52e226e375861e7e8f79737e80e5f39b9d471760cb3738997692c1c1e"
+      },
+      "publicIncidentPreparation": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-public-incident-preparation-manifest.json",
+        "fileSha256": "a2f6e67f94769748014e818d5585d170d7f3865b5f5e97c81dbbd29f9fda80f6"
+      },
+      "scaleCompletion": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-scale-completion-manifest.json",
+        "fileSha256": "f3b3838ed2893126ff97086010b99be74dee901d12a121c822f078d222c87cec"
+      },
+      "wikimedia": {
+        "path": "C:\\Users\\J SUHAS\\OneDrive\\Desktop\\AIRA-DATA\\manifests\\phase23r13-wikimedia-public-incident-reconstruction-manifest.json",
+        "fileSha256": "cef2e321cc1a2ba6073591e1fc4d2b5542db54534e5adfab2f82254a27031d12"
+      }
+    }
+  },
+  "invariants": {
+    "rawDatasetFormatIsNotAiraInternalFormat": true,
+    "benchmarkScoreIsNotProductionProof": true,
+    "groundTruthAgentVisible": false,
+    "evidenceChannelSeparatedFromEvaluationChannel": true,
+    "replayGrantsExecutionAuthority": false,
+    "benchmarkEvaluatorActsAsAgent": false,
+    "syntheticEvidenceIsProductionEvidence": false,
+    "benchmarkPassIsProductionAuthorization": false,
+    "researchOnlyDataCommercialLeakage": 0,
+    "finalHoldoutRetrievalLeakage": 0,
+    "noisyDerivativeTreatedAsIndependentEvidence": false,
+    "providerTranslationTreatedAsIndependentEvidence": false,
+    "corpusExecutionAuthority": false,
+    "replayAuthorizationBypass": 0,
+    "unauthorizedExecutionObserved": 0,
+    "humanOperationsBoundaryPreserved": true,
+    "productionCertified": false,
+    "executionAuthorized": false
+  },
+  "gates": {
+    "phase23rArchitecture": "PASS",
+    "externalReality": "PASS",
+    "corpusScale": "PASS",
+    "corpusFreeze13U": "FROZEN",
+    "livePreflight10G1": "PASS",
+    "liveClosedLoop10G2": "PASS",
+    "recoveryVerification": "VERIFIED_RECOVERY",
+    "phase21Regression": "PASS",
+    "phase22Regression": "PASS",
+    "phase23Regression": "PASS",
+    "phase23RRegression": "PASS"
+  },
+  "finalState": {
+    "phase23RComplete": true,
+    "phase23RCertified": true,
+    "phase23RFrozen": true,
+    "realityCertified": true,
+    "corpusFrozen": true,
+    "liveReplayCertified": true,
+    "groundTruthAgentVisible": false,
+    "executionAuthorized": false,
+    "productionCertified": false
+  },
+  "groundTruthAgentVisible": false,
+  "executionAuthorized": false,
+  "productionCertified": false,
+  "certificationHash": "ec7e8fb897413afd59d75f4e78f17c664e8bbc6ba20214b425a50a92e13ae693"
+}
