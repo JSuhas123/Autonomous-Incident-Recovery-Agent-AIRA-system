@@ -1,224 +1,815 @@
-import { authApi } from '@/api/client'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { useAuthStore } from '@/store/authStore'
-import type { SafeMembership, SafeOrganization, SafeUser } from '@/types'
-import { motion } from 'framer-motion'
-import { Eye, EyeOff, Zap } from 'lucide-react'
-import { useState } from 'react'
-import { Link, Navigate, useNavigate } from 'react-router-dom'
+import {
+  authApi,
+} from '@/api/client'
+
+import {
+  AuthProductShell,
+} from '@/components/auth/AuthProductShell'
+
+import {
+  Button,
+} from '@/components/ui/button'
+
+import {
+  Input,
+} from '@/components/ui/input'
+
+import {
+  Label,
+} from '@/components/ui/label'
+
+import {
+  useAuthStore,
+} from '@/store/authStore'
+
+import type {
+  SafeMembership,
+  SafeOrganization,
+  SafeUser,
+} from '@/types'
+
+import {
+  Building2,
+  Check,
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  Mail,
+  UserRound,
+} from 'lucide-react'
+
+import {
+  useState,
+} from 'react'
+
+import {
+  Link,
+  Navigate,
+  useNavigate,
+} from 'react-router-dom'
+
 
 interface FormState {
   fullName: string
+
   email: string
+
   password: string
+
   organizationName: string
+
   terms: boolean
 }
 
-const INITIAL_FORM: FormState = {
-  fullName: '',
-  email: '',
-  password: '',
-  organizationName: '',
-  terms: false,
-}
 
-export default function SignupPage() {
-  const { setAuthenticated, status } = useAuthStore()
-  const navigate = useNavigate()
+type ErrorState =
+  Partial<
+    Record<
+      keyof FormState,
+      string
+    >
+  >
 
-  const [form, setForm] = useState<FormState>(INITIAL_FORM)
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({})
-  const [globalError, setGlobalError] = useState<string | null>(null)
 
-  if (status === 'authenticated') return <Navigate to="/dashboard" replace />
+const INITIAL_FORM:
+  FormState = {
+    fullName: '',
 
-  function validate() {
-    const e: Partial<Record<keyof FormState, string>> = {}
-    if (!form.fullName.trim()) e.fullName = 'Full name is required'
-    else if (form.fullName.trim().length > 100) e.fullName = 'Full name must be 100 characters or fewer'
-    if (!form.email.trim()) e.email = 'Email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email address'
-    if (!form.password) e.password = 'Password is required'
-    else if (form.password.length < 12) e.password = 'Password must be at least 12 characters'
-    else if (form.password.length > 1024) e.password = 'Password is too long'
-    if (!form.organizationName.trim()) e.organizationName = 'Organization name is required'
-    else if (form.organizationName.trim().length > 100) e.organizationName = 'Organization name must be 100 characters or fewer'
-    if (!form.terms) e.terms = 'You must accept the terms to continue'
-    return e
+    email: '',
+
+    password: '',
+
+    organizationName: '',
+
+    terms: false,
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const errs = validate()
-    if (Object.keys(errs).length) { setErrors(errs); return }
+
+const PASSWORD_REQUIREMENTS = [
+  'At least 12 characters',
+  'Use a unique organization password',
+  'Stored using the AIRA password security layer',
+]
+
+
+export default function SignupPage() {
+  const status =
+    useAuthStore(
+      (state) =>
+        state.status,
+    )
+
+  const setAuthenticated =
+    useAuthStore(
+      (state) =>
+        state.setAuthenticated,
+    )
+
+  const navigate =
+    useNavigate()
+
+  const [
+    form,
+    setForm,
+  ] =
+    useState<FormState>(
+      INITIAL_FORM,
+    )
+
+  const [
+    showPassword,
+    setShowPassword,
+  ] =
+    useState(false)
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(false)
+
+  const [
+    errors,
+    setErrors,
+  ] =
+    useState<ErrorState>(
+      {},
+    )
+
+  const [
+    globalError,
+    setGlobalError,
+  ] =
+    useState<
+      string | null
+    >(null)
+
+
+  if (
+    status ===
+    'authenticated'
+  ) {
+    return (
+      <Navigate
+        to="/dashboard"
+        replace
+      />
+    )
+  }
+
+
+  function validate():
+    ErrorState {
+    const next:
+      ErrorState = {}
+
+    const fullName =
+      form.fullName.trim()
+
+    const email =
+      form.email.trim()
+
+    const organizationName =
+      form
+        .organizationName
+        .trim()
+
+    if (!fullName) {
+      next.fullName =
+        'Full name is required.'
+    } else if (
+      fullName.length >
+      100
+    ) {
+      next.fullName =
+        'Full name must be 100 characters or fewer.'
+    }
+
+    if (!email) {
+      next.email =
+        'Work email is required.'
+    } else if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        .test(email)
+    ) {
+      next.email =
+        'Enter a valid work email address.'
+    }
+
+    if (!form.password) {
+      next.password =
+        'Password is required.'
+    } else if (
+      form.password.length <
+      12
+    ) {
+      next.password =
+        'Password must contain at least 12 characters.'
+    } else if (
+      form.password.length >
+      1024
+    ) {
+      next.password =
+        'Password is too long.'
+    }
+
+    if (!organizationName) {
+      next.organizationName =
+        'Organization name is required.'
+    } else if (
+      organizationName.length >
+      100
+    ) {
+      next.organizationName =
+        'Organization name must be 100 characters or fewer.'
+    }
+
+    if (!form.terms) {
+      next.terms =
+        'Accept the terms to create the organization.'
+    }
+
+    return next
+  }
+
+
+  async function handleSubmit(
+    event:
+      React.FormEvent,
+  ) {
+    event.preventDefault()
+
+    const nextErrors =
+      validate()
+
+    if (
+      Object.keys(
+        nextErrors,
+      ).length
+    ) {
+      setErrors(
+        nextErrors,
+      )
+
+      return
+    }
+
     setErrors({})
     setGlobalError(null)
     setLoading(true)
+
     try {
-      const data = await authApi.register({
-        fullName: form.fullName.trim(),
-        email: form.email.trim(),
-        password: form.password,
-        organizationName: form.organizationName.trim(),
-      })
+      const data =
+        await authApi.register({
+          fullName:
+            form
+              .fullName
+              .trim(),
+
+          email:
+            form
+              .email
+              .trim(),
+
+          password:
+            form.password,
+
+          organizationName:
+            form
+              .organizationName
+              .trim(),
+        })
+
       setAuthenticated({
-        user: data.user as SafeUser,
-        organization: data.organization as SafeOrganization | null,
-        membership: data.membership as SafeMembership | null,
-        session: null,
-        csrfToken: data.csrfToken,
+        user:
+          data.user as
+            SafeUser,
+
+        organization:
+          data.organization as
+            SafeOrganization |
+            null,
+
+        membership:
+          data.membership as
+            SafeMembership |
+            null,
+
+        session:
+          null,
+
+        csrfToken:
+          data.csrfToken,
       })
-      navigate('/dashboard', { replace: true })
-    } catch (err: any) {
-      if (err?.status === 409) {
-        setErrors({ email: 'An account with this email already exists' })
-      } else if (err?.status === 400 && err?.details) {
-        const fieldErrs: Partial<Record<keyof FormState, string>> = {}
-        for (const d of err.details as Array<{ field: string; message: string }>) {
-          fieldErrs[d.field as keyof FormState] = d.message
+
+      /*
+       * Phase 25.2A:
+       *
+       * The canonical organization bootstrap has completed.
+       *
+       * 25.2B / 25.4 will replace this with the authoritative
+       * ProductContext landing destination after server
+       * product-context resolution is connected.
+       */
+      navigate(
+        '/dashboard',
+        {
+          replace: true,
+        },
+      )
+    } catch (
+      error: any
+    ) {
+      if (
+        error?.status ===
+        409
+      ) {
+        setErrors({
+          email:
+            'An account with this email already exists.',
+        })
+      } else if (
+        error?.status ===
+          400 &&
+        error?.details
+      ) {
+        const response =
+          error.details as {
+            details?: Array<{
+              field: string
+              message: string
+            }>
+          }
+
+        const fieldErrors:
+          ErrorState = {}
+
+        for (
+          const detail
+          of
+          response.details ??
+          []
+        ) {
+          if (
+            detail.field in
+            INITIAL_FORM
+          ) {
+            fieldErrors[
+              detail.field as
+                keyof FormState
+            ] =
+              detail.message
+          }
         }
-        setErrors(fieldErrs)
+
+        setErrors(
+          fieldErrors,
+        )
       } else {
-        setGlobalError(err?.message || 'Registration failed. Please try again.')
+        setGlobalError(
+          error?.message ||
+            'Registration failed. Please try again.',
+        )
       }
     } finally {
       setLoading(false)
     }
   }
 
-  function field(key: keyof FormState) {
-    return (e: React.ChangeEvent<HTMLInputElement>) =>
-      setForm((p) => ({ ...p, [key]: e.target.value }))
+
+  function updateText(
+    key:
+      | 'fullName'
+      | 'email'
+      | 'password'
+      | 'organizationName',
+  ) {
+    return (
+      event:
+        React.ChangeEvent<HTMLInputElement>,
+    ) => {
+      const value =
+        event.target.value
+
+      setForm(
+        (current) => ({
+          ...current,
+
+          [key]:
+            value,
+        }),
+      )
+
+      if (
+        errors[key]
+      ) {
+        setErrors(
+          (current) => ({
+            ...current,
+
+            [key]:
+              undefined,
+          }),
+        )
+      }
+    }
   }
 
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <motion.div
-        className="w-full max-w-md space-y-6"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, ease: 'easeOut' }}
+    <AuthProductShell
+      eyebrow="Create your AIRA workspace"
+      title="Start in controlled observation."
+      description="Create the organization control plane first. AIRA begins with bounded defaults and a development environment before infrastructure recovery is ever considered."
+    >
+      <form
+        onSubmit={
+          handleSubmit
+        }
+        className="space-y-5"
+        noValidate
       >
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/20 glow-primary">
-            <Zap className="w-7 h-7 text-primary" />
+        {globalError && (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/30 bg-destructive/[0.08] px-4 py-3 text-sm text-destructive"
+          >
+            {globalError}
           </div>
-          <div className="text-center">
-            <h1 className="text-2xl font-bold text-gradient">AIRA</h1>
-            <p className="text-muted-foreground text-sm">AI-Driven Incident Response & Recovery</p>
+        )}
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label
+              htmlFor="fullName"
+            >
+              Full name
+            </Label>
+
+            <div className="relative">
+              <UserRound className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+              <Input
+                id="fullName"
+                type="text"
+                value={
+                  form.fullName
+                }
+                onChange={
+                  updateText(
+                    'fullName',
+                  )
+                }
+                placeholder="Jane Smith"
+                autoComplete="name"
+                aria-invalid={
+                  Boolean(
+                    errors.fullName,
+                  )
+                }
+                aria-describedby={
+                  errors.fullName
+                    ? 'fullName-error'
+                    : undefined
+                }
+                className={[
+                  'h-11 pl-10',
+                  'bg-background/60',
+                  errors.fullName
+                    ? 'border-destructive'
+                    : '',
+                ].join(' ')}
+              />
+            </div>
+
+            {errors.fullName && (
+              <p
+                id="fullName-error"
+                className="text-xs text-destructive"
+              >
+                {
+                  errors.fullName
+                }
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label
+              htmlFor="organizationName"
+            >
+              Organization
+            </Label>
+
+            <div className="relative">
+              <Building2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+              <Input
+                id="organizationName"
+                type="text"
+                value={
+                  form.organizationName
+                }
+                onChange={
+                  updateText(
+                    'organizationName',
+                  )
+                }
+                placeholder="Acme Technologies"
+                autoComplete="organization"
+                aria-invalid={
+                  Boolean(
+                    errors
+                      .organizationName,
+                  )
+                }
+                aria-describedby={
+                  errors
+                    .organizationName
+                    ? 'organization-error'
+                    : undefined
+                }
+                className={[
+                  'h-11 pl-10',
+                  'bg-background/60',
+                  errors
+                    .organizationName
+                    ? 'border-destructive'
+                    : '',
+                ].join(' ')}
+              />
+            </div>
+
+            {errors
+              .organizationName && (
+              <p
+                id="organization-error"
+                className="text-xs text-destructive"
+              >
+                {
+                  errors
+                    .organizationName
+                }
+              </p>
+            )}
           </div>
         </div>
 
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle>Create account</CardTitle>
-            <CardDescription>Set up your team workspace in seconds</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-              {globalError && (
-                <p role="alert" className="text-sm text-destructive text-center">{globalError}</p>
+        <div className="space-y-2">
+          <Label
+            htmlFor="email"
+          >
+            Work email
+          </Label>
+
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+            <Input
+              id="email"
+              type="email"
+              value={
+                form.email
+              }
+              onChange={
+                updateText(
+                  'email',
+                )
+              }
+              placeholder="you@company.com"
+              autoComplete="email"
+              aria-invalid={
+                Boolean(
+                  errors.email,
+                )
+              }
+              aria-describedby={
+                errors.email
+                  ? 'email-error'
+                  : undefined
+              }
+              className={[
+                'h-11 pl-10',
+                'bg-background/60',
+                errors.email
+                  ? 'border-destructive'
+                  : '',
+              ].join(' ')}
+            />
+          </div>
+
+          {errors.email && (
+            <p
+              id="email-error"
+              className="text-xs text-destructive"
+            >
+              {errors.email}
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <Label
+            htmlFor="password"
+          >
+            Password
+          </Label>
+
+          <div className="relative">
+            <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+            <Input
+              id="password"
+              type={
+                showPassword
+                  ? 'text'
+                  : 'password'
+              }
+              value={
+                form.password
+              }
+              onChange={
+                updateText(
+                  'password',
+                )
+              }
+              placeholder="At least 12 characters"
+              autoComplete="new-password"
+              aria-invalid={
+                Boolean(
+                  errors.password,
+                )
+              }
+              aria-describedby={
+                errors.password
+                  ? 'password-error'
+                  : 'password-help'
+              }
+              className={[
+                'h-11 pl-10 pr-11',
+                'bg-background/60',
+                errors.password
+                  ? 'border-destructive'
+                  : '',
+              ].join(' ')}
+            />
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowPassword(
+                  (current) =>
+                    !current,
+                )
+              }
+              className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              aria-label={
+                showPassword
+                  ? 'Hide password'
+                  : 'Show password'
+              }
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
               )}
-              <div className="space-y-1.5">
-                <Label htmlFor="fullName">Full name</Label>
-                <Input
-                  id="fullName"
-                  type="text"
-                  placeholder="Jane Smith"
-                  value={form.fullName}
-                  onChange={field('fullName')}
-                  autoComplete="name"
-                  aria-describedby={errors.fullName ? 'fullName-error' : undefined}
-                  className={errors.fullName ? 'border-destructive' : ''}
-                />
-                {errors.fullName && <p id="fullName-error" className="text-xs text-destructive">{errors.fullName}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="email">Work email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@company.com"
-                  value={form.email}
-                  onChange={field('email')}
-                  autoComplete="email"
-                  aria-describedby={errors.email ? 'email-error' : undefined}
-                  className={errors.email ? 'border-destructive' : ''}
-                />
-                {errors.email && <p id="email-error" className="text-xs text-destructive">{errors.email}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="At least 12 characters"
-                    value={form.password}
-                    onChange={field('password')}
-                    autoComplete="new-password"
-                    className={`pr-10 ${errors.password ? 'border-destructive' : ''}`}
-                    aria-describedby={errors.password ? 'password-error' : undefined}
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+            </button>
+          </div>
+
+          {errors.password ? (
+            <p
+              id="password-error"
+              className="text-xs text-destructive"
+            >
+              {
+                errors.password
+              }
+            </p>
+          ) : (
+            <div
+              id="password-help"
+              className="grid gap-1 pt-1 sm:grid-cols-3"
+            >
+              {PASSWORD_REQUIREMENTS.map(
+                (
+                  requirement,
+                ) => (
+                  <span
+                    key={
+                      requirement
+                    }
+                    className="flex items-start gap-1.5 text-[10px] leading-4 text-muted-foreground"
                   >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-                {errors.password && <p id="password-error" className="text-xs text-destructive">{errors.password}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="organizationName">Organization name</Label>
-                <Input
-                  id="organizationName"
-                  type="text"
-                  placeholder="Acme Corp"
-                  value={form.organizationName}
-                  onChange={field('organizationName')}
-                  autoComplete="organization"
-                  aria-describedby={errors.organizationName ? 'org-error' : undefined}
-                  className={errors.organizationName ? 'border-destructive' : ''}
-                />
-                {errors.organizationName && <p id="org-error" className="text-xs text-destructive">{errors.organizationName}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <div className="flex items-start gap-2">
-                  <input
-                    id="terms"
-                    type="checkbox"
-                    checked={form.terms}
-                    onChange={(e) => setForm((p) => ({ ...p, terms: e.target.checked }))}
-                    className="mt-0.5 accent-primary"
-                    aria-describedby={errors.terms ? 'terms-error' : undefined}
-                  />
-                  <Label htmlFor="terms" className="font-normal text-sm cursor-pointer leading-snug">
-                    I agree to the terms of service and privacy policy
-                  </Label>
-                </div>
-                {errors.terms && <p id="terms-error" className="text-xs text-destructive">{errors.terms}</p>}
-              </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Creating account…' : 'Create account'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+                    <Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" />
+
+                    {
+                      requirement
+                    }
+                  </span>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/40 p-3.5 transition-colors hover:bg-secondary/40">
+            <input
+              id="terms"
+              type="checkbox"
+              checked={
+                form.terms
+              }
+              onChange={
+                (event) => {
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      terms:
+                        event
+                          .target
+                          .checked,
+                    }),
+                  )
+
+                  if (
+                    errors.terms
+                  ) {
+                    setErrors(
+                      (
+                        current,
+                      ) => ({
+                        ...current,
+
+                        terms:
+                          undefined,
+                      }),
+                    )
+                  }
+                }
+              }
+              className="mt-0.5 h-4 w-4 accent-primary"
+            />
+
+            <span>
+              <span className="block text-sm font-medium text-foreground">
+                Create an organization workspace
+              </span>
+
+              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                I agree to the terms of service and privacy policy.
+                The first account becomes the organization owner.
+              </span>
+            </span>
+          </label>
+
+          {errors.terms && (
+            <p className="mt-1.5 text-xs text-destructive">
+              {errors.terms}
+            </p>
+          )}
+        </div>
+
+        <Button
+          type="submit"
+          disabled={
+            loading
+          }
+          className="h-11 w-full font-medium shadow-[0_0_28px_hsl(var(--primary)/0.14)]"
+        >
+          {loading
+            ? 'Creating secure workspace…'
+            : 'Create organization'}
+        </Button>
+
+        <div className="relative py-1">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+
+          <div className="relative flex justify-center">
+            <span className="bg-background px-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              Existing organization
+            </span>
+          </div>
+        </div>
 
         <p className="text-center text-sm text-muted-foreground">
-          Already have an account?{' '}
-          <Link to="/login" className="text-primary hover:underline">Sign in</Link>
+          Already have access?
+          {' '}
+
+          <Link
+            to="/login"
+            className="font-medium text-primary transition-colors hover:text-primary/80"
+          >
+            Sign in to AIRA
+          </Link>
         </p>
-      </motion.div>
-    </div>
+      </form>
+    </AuthProductShell>
   )
 }

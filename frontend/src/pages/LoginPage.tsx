@@ -1,163 +1,603 @@
-﻿import { authApi } from '@/api/client'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { toast } from '@/hooks/useToast'
-import { useAuthStore } from '@/store/authStore'
-import type { SafeMembership, SafeOrganization, SafeUser } from '@/types'
-import { motion } from 'framer-motion'
-import { Eye, EyeOff, Zap } from 'lucide-react'
-import { useState } from 'react'
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom'
+﻿import {
+  authApi,
+} from '@/api/client'
+
+import {
+  AuthProductShell,
+} from '@/components/auth/AuthProductShell'
+
+import {
+  Button,
+} from '@/components/ui/button'
+
+import {
+  Input,
+} from '@/components/ui/input'
+
+import {
+  Label,
+} from '@/components/ui/label'
+
+import {
+  toast,
+} from '@/hooks/useToast'
+
+import {
+  useAuthStore,
+} from '@/store/authStore'
+
+import type {
+  SafeMembership,
+  SafeOrganization,
+  SafeUser,
+} from '@/types'
+
+import {
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  Mail,
+  ShieldCheck,
+} from 'lucide-react'
+
+import {
+  useState,
+} from 'react'
+
+import {
+  Link,
+  Navigate,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom'
+
+
+interface LoginForm {
+  email: string
+
+  password: string
+
+  rememberMe: boolean
+}
+
+
+type LoginErrors =
+  Partial<
+    Record<
+      'email' |
+      'password',
+      string
+    >
+  >
+
 
 export default function LoginPage() {
-  const { setAuthenticated, status } = useAuthStore()
-  const navigate = useNavigate()
-  const location = useLocation()
-  const from = (location.state as any)?.from?.pathname || '/dashboard'
+  const status =
+    useAuthStore(
+      (state) =>
+        state.status,
+    )
 
-  const [form, setForm] = useState({ email: '', password: '', rememberMe: false })
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [errors, setErrors] = useState<Partial<Record<'email' | 'password', string>>>({})
-  const [globalError, setGlobalError] = useState<string | null>(null)
+  const setAuthenticated =
+    useAuthStore(
+      (state) =>
+        state.setAuthenticated,
+    )
 
-  if (status === 'authenticated') return <Navigate to={from} replace />
+  const navigate =
+    useNavigate()
 
-  function validate() {
-    const e: Partial<Record<'email' | 'password', string>> = {}
-    if (!form.email.trim()) e.email = 'Email is required'
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Enter a valid email address'
-    if (!form.password) e.password = 'Password is required'
-    return e
+  const location =
+    useLocation()
+
+  const locationState =
+    location.state as
+      | {
+          from?: {
+            pathname?: string
+          }
+        }
+      | null
+
+  const from =
+    locationState
+      ?.from
+      ?.pathname ||
+    '/dashboard'
+
+  const [
+    form,
+    setForm,
+  ] =
+    useState<LoginForm>({
+      email: '',
+
+      password: '',
+
+      rememberMe: false,
+    })
+
+  const [
+    showPassword,
+    setShowPassword,
+  ] =
+    useState(false)
+
+  const [
+    loading,
+    setLoading,
+  ] =
+    useState(false)
+
+  const [
+    errors,
+    setErrors,
+  ] =
+    useState<LoginErrors>(
+      {},
+    )
+
+  const [
+    globalError,
+    setGlobalError,
+  ] =
+    useState<
+      string | null
+    >(null)
+
+
+  if (
+    status ===
+    'authenticated'
+  ) {
+    return (
+      <Navigate
+        to={from}
+        replace
+      />
+    )
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    const errs = validate()
-    if (Object.keys(errs).length) { setErrors(errs); return }
+
+  function validate():
+    LoginErrors {
+    const next:
+      LoginErrors = {}
+
+    const email =
+      form.email.trim()
+
+    if (!email) {
+      next.email =
+        'Work email is required.'
+    } else if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        .test(email)
+    ) {
+      next.email =
+        'Enter a valid email address.'
+    }
+
+    if (
+      !form.password
+    ) {
+      next.password =
+        'Password is required.'
+    }
+
+    return next
+  }
+
+
+  async function handleSubmit(
+    event:
+      React.FormEvent,
+  ) {
+    event.preventDefault()
+
+    const nextErrors =
+      validate()
+
+    if (
+      Object.keys(
+        nextErrors,
+      ).length
+    ) {
+      setErrors(
+        nextErrors,
+      )
+
+      return
+    }
+
     setErrors({})
     setGlobalError(null)
     setLoading(true)
+
     try {
-      const data = await authApi.login({
-        email: form.email.trim(),
-        password: form.password,
-        rememberMe: form.rememberMe,
-      })
+      const data =
+        await authApi.login({
+          email:
+            form
+              .email
+              .trim(),
+
+          password:
+            form.password,
+
+          rememberMe:
+            form.rememberMe,
+        })
+
       setAuthenticated({
-        user: data.user as SafeUser,
-        organization: data.organization as SafeOrganization | null,
-        membership: data.membership as SafeMembership | null,
-        session: null,
-        csrfToken: data.csrfToken,
+        user:
+          data.user as
+            SafeUser,
+
+        organization:
+          data.organization as
+            SafeOrganization |
+            null,
+
+        membership:
+          data.membership as
+            SafeMembership |
+            null,
+
+        session:
+          null,
+
+        csrfToken:
+          data.csrfToken,
       })
-      navigate(from, { replace: true })
-    } catch (err: any) {
-      if (err?.status === 401) {
-        setGlobalError('Invalid email or password')
-      } else if (err?.status === 403) {
-        setGlobalError(err.message || 'Account access denied')
+
+      navigate(
+        from,
+        {
+          replace: true,
+        },
+      )
+    } catch (
+      error: any
+    ) {
+      if (
+        error?.status ===
+        401
+      ) {
+        setGlobalError(
+          'The email or password is incorrect.',
+        )
+      } else if (
+        error?.status ===
+        403
+      ) {
+        setGlobalError(
+          error?.message ||
+            'This account cannot currently access the organization.',
+        )
       } else {
-        toast.error('Login failed', err?.message)
+        toast.error(
+          'Login failed',
+          error?.message,
+        )
+
+        setGlobalError(
+          'AIRA could not complete the secure sign-in request.',
+        )
       }
     } finally {
       setLoading(false)
     }
   }
 
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <motion.div
-        className="w-full max-w-md space-y-6"
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.3, ease: 'easeOut' }}
+    <AuthProductShell
+      eyebrow="Secure platform access"
+      title="Return to reliability operations."
+      description="Sign in to your organization-scoped AIRA control plane. Your role, permissions and active environment are resolved again by the backend before protected operations are exposed."
+    >
+      <form
+        onSubmit={
+          handleSubmit
+        }
+        className="space-y-5"
+        noValidate
       >
-        <div className="flex flex-col items-center gap-3">
-          <div className="flex items-center justify-center w-14 h-14 rounded-2xl bg-primary/20 glow-primary">
-            <Zap className="w-7 h-7 text-primary" />
+        {globalError && (
+          <div
+            role="alert"
+            className="rounded-xl border border-destructive/30 bg-destructive/[0.08] px-4 py-3 text-sm leading-5 text-destructive"
+          >
+            {
+              globalError
+            }
           </div>
-          <div className="text-center">
-            <h1 className="text-2xl font-bold text-gradient">AIRA</h1>
-            <p className="text-muted-foreground text-sm">AI-Driven Incident Response & Recovery</p>
+        )}
+
+        <div className="space-y-2">
+          <Label
+            htmlFor="email"
+          >
+            Work email
+          </Label>
+
+          <div className="relative">
+            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+            <Input
+              id="email"
+              type="email"
+              value={
+                form.email
+              }
+              onChange={
+                (event) => {
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      email:
+                        event
+                          .target
+                          .value,
+                    }),
+                  )
+
+                  if (
+                    errors.email
+                  ) {
+                    setErrors(
+                      (
+                        current,
+                      ) => ({
+                        ...current,
+
+                        email:
+                          undefined,
+                      }),
+                    )
+                  }
+                }
+              }
+              placeholder="you@company.com"
+              autoComplete="email"
+              autoFocus
+              aria-invalid={
+                Boolean(
+                  errors.email,
+                )
+              }
+              aria-describedby={
+                errors.email
+                  ? 'login-email-error'
+                  : undefined
+              }
+              className={[
+                'h-11 pl-10',
+                'bg-background/60',
+                errors.email
+                  ? 'border-destructive'
+                  : '',
+              ].join(' ')}
+            />
+          </div>
+
+          {errors.email && (
+            <p
+              id="login-email-error"
+              className="text-xs text-destructive"
+            >
+              {
+                errors.email
+              }
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label
+              htmlFor="password"
+            >
+              Password
+            </Label>
+
+            <span className="text-[11px] text-muted-foreground">
+              Organization credentials
+            </span>
+          </div>
+
+          <div className="relative">
+            <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+
+            <Input
+              id="password"
+              type={
+                showPassword
+                  ? 'text'
+                  : 'password'
+              }
+              value={
+                form.password
+              }
+              onChange={
+                (event) => {
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      password:
+                        event
+                          .target
+                          .value,
+                    }),
+                  )
+
+                  if (
+                    errors.password
+                  ) {
+                    setErrors(
+                      (
+                        current,
+                      ) => ({
+                        ...current,
+
+                        password:
+                          undefined,
+                      }),
+                    )
+                  }
+                }
+              }
+              placeholder="Your password"
+              autoComplete="current-password"
+              aria-invalid={
+                Boolean(
+                  errors.password,
+                )
+              }
+              aria-describedby={
+                errors.password
+                  ? 'login-password-error'
+                  : undefined
+              }
+              className={[
+                'h-11 pl-10 pr-11',
+                'bg-background/60',
+                errors.password
+                  ? 'border-destructive'
+                  : '',
+              ].join(' ')}
+            />
+
+            <button
+              type="button"
+              onClick={() =>
+                setShowPassword(
+                  (current) =>
+                    !current,
+                )
+              }
+              className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+              aria-label={
+                showPassword
+                  ? 'Hide password'
+                  : 'Show password'
+              }
+            >
+              {showPassword ? (
+                <EyeOff className="h-4 w-4" />
+              ) : (
+                <Eye className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+
+          {errors.password && (
+            <p
+              id="login-password-error"
+              className="text-xs text-destructive"
+            >
+              {
+                errors.password
+              }
+            </p>
+          )}
+        </div>
+
+        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-card/40 px-4 py-3 transition-colors hover:bg-secondary/40">
+          <div className="flex items-center gap-3">
+            <input
+              id="rememberMe"
+              type="checkbox"
+              checked={
+                form.rememberMe
+              }
+              onChange={
+                (event) =>
+                  setForm(
+                    (
+                      current,
+                    ) => ({
+                      ...current,
+
+                      rememberMe:
+                        event
+                          .target
+                          .checked,
+                    }),
+                  )
+              }
+              className="h-4 w-4 accent-primary"
+            />
+
+            <div>
+              <span className="block text-sm font-medium">
+                Keep me signed in
+              </span>
+
+              <span className="block text-[11px] text-muted-foreground">
+                Use only on a trusted device.
+              </span>
+            </div>
+          </div>
+
+          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+        </label>
+
+        <Button
+          type="submit"
+          disabled={
+            loading
+          }
+          className="h-11 w-full font-medium shadow-[0_0_28px_hsl(var(--primary)/0.14)]"
+        >
+          {loading
+            ? 'Establishing secure session…'
+            : 'Enter AIRA'}
+        </Button>
+
+        <div className="rounded-xl border border-border/70 bg-secondary/20 px-4 py-3">
+          <div className="flex gap-3">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+
+            <p className="text-xs leading-5 text-muted-foreground">
+              Signing in identifies you. Your organization membership,
+              environment access and operational permissions are evaluated
+              independently before protected functionality is exposed.
+            </p>
           </div>
         </div>
 
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle>Sign in</CardTitle>
-            <CardDescription>Enter your email and password to access the dashboard</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-              {globalError && (
-                <p role="alert" className="text-sm text-destructive text-center">{globalError}</p>
-              )}
-              <div className="space-y-1.5">
-                <Label htmlFor="email">Work email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@company.com"
-                  value={form.email}
-                  onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))}
-                  autoComplete="email"
-                  aria-describedby={errors.email ? 'email-error' : undefined}
-                  className={errors.email ? 'border-destructive' : ''}
-                />
-                {errors.email && <p id="email-error" className="text-xs text-destructive">{errors.email}</p>}
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="password">Password</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="Your password"
-                    value={form.password}
-                    onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))}
-                    autoComplete="current-password"
-                    className={`pr-10 ${errors.password ? 'border-destructive' : ''}`}
-                    aria-describedby={errors.password ? 'password-error' : undefined}
-                  />
-                  <button
-                    type="button"
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    onClick={() => setShowPassword((v) => !v)}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-                {errors.password && <p id="password-error" className="text-xs text-destructive">{errors.password}</p>}
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  id="rememberMe"
-                  type="checkbox"
-                  checked={form.rememberMe}
-                  onChange={(e) => setForm((p) => ({ ...p, rememberMe: e.target.checked }))}
-                  className="accent-primary"
-                />
-                <Label htmlFor="rememberMe" className="font-normal text-sm cursor-pointer">
-                  Remember me for 30 days
-                </Label>
-              </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Signing inâ€¦' : 'Sign in'}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        <div className="relative py-1">
+          <div className="absolute inset-0 flex items-center">
+            <span className="w-full border-t border-border" />
+          </div>
+
+          <div className="relative flex justify-center">
+            <span className="bg-background px-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+              New organization
+            </span>
+          </div>
+        </div>
 
         <p className="text-center text-sm text-muted-foreground">
-          Don&apos;t have an account?{' '}
-          <Link to="/signup" className="text-primary hover:underline">Create one</Link>
+          Need an AIRA workspace?
+          {' '}
+
+          <Link
+            to="/signup"
+            className="font-medium text-primary transition-colors hover:text-primary/80"
+          >
+            Create organization
+          </Link>
         </p>
-      </motion.div>
-    </div>
+      </form>
+    </AuthProductShell>
   )
 }
-

@@ -1,38 +1,61 @@
-import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
-import { Sidebar } from './Sidebar'
-import { TopBar } from './TopBar'
+import {
+  Outlet,
+} from 'react-router-dom'
+
+import {
+  ProductCommandPalette,
+} from './ProductCommandPalette'
+
+import {
+  ProductSidebar,
+} from './ProductSidebar'
+
+import {
+  ProductTopBar,
+} from './ProductTopBar'
+
+import {
+  ProductRouteGuard,
+} from '@/product/ProductRouteGuard'
+
+import {
+  useProductRuntimeStore,
+} from '@/store/productRuntimeStore'
+
 
 export function AppLayout() {
-  const [sidebarOpen, setSidebarOpen] = useState(false)
+  const collapsed =
+    useProductRuntimeStore(
+      (state) =>
+        state.sidebarCollapsed,
+    )
+
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      {/* Desktop sidebar */}
-      <aside className="hidden lg:flex w-64 flex-shrink-0">
-        <Sidebar />
-      </aside>
+    <div className="min-h-screen bg-background">
+      <ProductSidebar />
 
-      {/* Mobile sidebar overlay */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setSidebarOpen(false)}
-          />
-          <aside className="relative w-64 h-full z-50">
-            <Sidebar onNavigate={() => setSidebarOpen(false)} />
-          </aside>
-        </div>
-      )}
+      <div
+        className={[
+          'min-h-screen transition-[padding-left] duration-200',
 
-      {/* Main content */}
-      <div className="flex flex-col flex-1 overflow-hidden">
-        <TopBar onMenuClick={() => setSidebarOpen(true)} />
-        <main className="flex-1 overflow-y-auto p-6">
-          <Outlet />
+          collapsed
+            ? 'lg:pl-[76px]'
+            : 'lg:pl-[252px]',
+        ].join(' ')}
+      >
+        <ProductTopBar />
+
+        <main className="min-h-[calc(100vh-4rem)]">
+          <ProductRouteGuard>
+            <div className="mx-auto w-full max-w-[1800px] p-4 sm:p-6">
+              <Outlet />
+            </div>
+          </ProductRouteGuard>
         </main>
       </div>
+
+      <ProductCommandPalette />
     </div>
   )
 }
