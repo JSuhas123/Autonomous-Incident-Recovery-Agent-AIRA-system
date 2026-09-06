@@ -2,7 +2,7 @@
 
 /**
  * ============================================================================
- * AIRA PHASE 25.0A
+ * AIRA PHASE 25
  * PRODUCT PERSONA CONTRACT
  * ============================================================================
  *
@@ -50,6 +50,7 @@ const {
   "./roles"
 );
 
+
 // ============================================================================
 // PRODUCT PERSONAS
 // ============================================================================
@@ -72,6 +73,7 @@ const PRODUCT_PERSONAS =
       "executive",
   });
 
+
 const PRODUCT_PERSONA_VALUES =
   Object.freeze(
     Object.values(
@@ -79,22 +81,11 @@ const PRODUCT_PERSONA_VALUES =
     )
   );
 
+
 // ============================================================================
 // DEFAULT ROLE -> PERSONA
 // ============================================================================
 
-/**
- * This mapping controls the DEFAULT product experience.
- *
- * It does not alter authorization.
- *
- * Owners may eventually select between Administration and Executive
- * presentation modes because they already possess the underlying
- * permissions.
- *
- * Viewer maps to Executive because that experience is intentionally
- * high-level and read-oriented.
- */
 const DEFAULT_PERSONA_BY_ROLE =
   Object.freeze({
     [ORGANIZATION_ROLES.OWNER]:
@@ -126,6 +117,7 @@ const DEFAULT_PERSONA_BY_ROLE =
         .EXECUTIVE,
   });
 
+
 // ============================================================================
 // PERSONA METADATA
 // ============================================================================
@@ -151,6 +143,7 @@ const PRODUCT_PERSONA_METADATA =
           "/overview",
       }),
 
+
     [PRODUCT_PERSONAS.OPERATIONS]:
       Object.freeze({
         id:
@@ -170,6 +163,7 @@ const PRODUCT_PERSONA_METADATA =
           "/operations",
       }),
 
+
     [PRODUCT_PERSONAS.DEVELOPER]:
       Object.freeze({
         id:
@@ -185,9 +179,18 @@ const PRODUCT_PERSONA_METADATA =
         description:
           "Service-focused reliability, incidents, changes, recommendations and engineering guidance.",
 
+        /*
+         * Canonical Phase-25 developer workspace.
+         *
+         * This intentionally matches:
+         *
+         * frontend/src/product/product.personas.ts
+         * frontend/src/product/product.navigation.ts
+         */
         defaultLandingPath:
-          "/my-services",
+          "/services",
       }),
+
 
     [PRODUCT_PERSONAS.GOVERNANCE]:
       Object.freeze({
@@ -208,6 +211,7 @@ const PRODUCT_PERSONA_METADATA =
           "/governance",
       }),
 
+
     [PRODUCT_PERSONAS.EXECUTIVE]:
       Object.freeze({
         id:
@@ -223,10 +227,19 @@ const PRODUCT_PERSONA_METADATA =
         description:
           "High-level reliability, business impact, recovery coverage and operational risk.",
 
+        /*
+         * Executive and Administration both enter through /overview.
+         *
+         * ProductOverviewPage selects the correct presentation using the
+         * server-authoritative persona.
+         *
+         * Persona remains presentation only.
+         */
         defaultLandingPath:
-          "/reliability",
+          "/overview",
       }),
   });
+
 
 // ============================================================================
 // HELPERS
@@ -245,6 +258,7 @@ function isKnownProductPersona(
   );
 }
 
+
 function getDefaultPersonaForRole(
   role
 ) {
@@ -258,6 +272,7 @@ function getDefaultPersonaForRole(
     );
   }
 
+
   return (
     DEFAULT_PERSONA_BY_ROLE[
       role.trim()
@@ -266,6 +281,7 @@ function getDefaultPersonaForRole(
       .EXECUTIVE
   );
 }
+
 
 function getProductPersonaMetadata(
   persona
@@ -278,12 +294,14 @@ function getProductPersonaMetadata(
       : PRODUCT_PERSONAS
           .EXECUTIVE;
 
+
   return (
     PRODUCT_PERSONA_METADATA[
       normalized
     ]
   );
 }
+
 
 // ============================================================================
 // EXPORTS

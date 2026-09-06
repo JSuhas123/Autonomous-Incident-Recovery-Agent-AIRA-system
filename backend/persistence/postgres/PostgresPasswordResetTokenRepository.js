@@ -10,18 +10,9 @@ const Base =
     "./PostgresIdentityRepositoryBase"
   );
 
-/*
- * Password-reset credential material is immutable.
- *
- * Only lifecycle terminal fields may ever change:
- *
- * usedAt
- * revokedAt
- */
 const TERMINAL_FIELDS =
   new Set([
     "usedAt",
-
     "revokedAt",
   ]);
 
@@ -34,19 +25,15 @@ function assertTerminalOnlyUpdate(
 
   const keys =
     Object.keys(
-      set ||
-      {}
+      set || {}
     );
 
   const invalid =
     keys.filter(
-      (
-        key
-      ) =>
-        !TERMINAL_FIELDS
-          .has(
-            key
-          )
+      (key) =>
+        !TERMINAL_FIELDS.has(
+          key
+        )
     );
 
   if (
@@ -56,7 +43,6 @@ function assertTerminalOnlyUpdate(
       new Error(
         "Password reset tokens are immutable except for terminal used/revoked state"
       ),
-
       {
         code:
           "TOKEN_IMMUTABLE_FIELD",
@@ -78,24 +64,17 @@ class PostgresPasswordResetTokenRepository
     this.repository =
       new Base(
         options,
-
         {
           table:
             "identity.password_reset_tokens",
 
           columns: [
             "legacy_mongo_id",
-
             "user_id",
-
             "token_hash",
-
             "expires_at",
-
             "used_at",
-
             "revoked_at",
-
             "created_at",
           ],
 
@@ -115,7 +94,6 @@ class PostgresPasswordResetTokenRepository
 
           identifierColumns: [
             "legacy_mongo_id",
-
             "id::text",
           ],
         }
@@ -154,9 +132,7 @@ class PostgresPasswordResetTokenRepository
 
   updateOne(
     filter,
-
     update,
-
     ...args
   ) {
     assertTerminalOnlyUpdate(
@@ -167,10 +143,59 @@ class PostgresPasswordResetTokenRepository
       .repository
       .updateOne(
         filter,
-
         update,
-
         ...args
+      );
+  }
+
+  /*
+   * Atomic one-time password-reset token claim.
+   */
+  async consumeActiveToken(
+    tokenHash,
+    usedAt =
+      new Date(),
+    transaction =
+      null
+  ) {
+    const result =
+      await this
+        .repository
+        .support
+        .query(
+          transaction,
+
+          `
+          UPDATE identity.password_reset_tokens
+          SET used_at = $2
+          WHERE token_hash = $1
+            AND used_at IS NULL
+            AND revoked_at IS NULL
+            AND expires_at > $2
+          RETURNING *
+          `,
+
+          [
+            tokenHash,
+            usedAt,
+          ]
+        );
+
+    if (
+      !result.rows[0]
+    ) {
+      return null;
+    }
+
+    return this
+      .repository
+      .mapRow(
+        result.rows[0],
+        {
+          includeTokenHash:
+            true,
+        },
+        transaction
       );
   }
 }

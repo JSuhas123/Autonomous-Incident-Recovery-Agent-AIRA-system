@@ -5,36 +5,36 @@ const crypto =
 
 const {
   userRepository,
-
   passwordCredentialRepository,
-
   passwordResetTokenRepository,
-
   userSessionRepository,
-} = require(
-  "../../persistence/repositories"
-);
+} =
+  require(
+    "../../persistence/repositories"
+  );
 
 const {
   hashPassword,
-} = require(
-  "./passwordService"
-);
+} =
+  require(
+    "./passwordService"
+  );
 
 const {
   record:
     auditRecord,
-} = require(
-  "./identityAuditService"
-);
+} =
+  require(
+    "./identityAuditService"
+  );
 
 const {
   AUTH_EVENT_TYPES,
-
   AUTH_EVENT_OUTCOMES,
-} = require(
-  "../../constants/authEvents"
-);
+} =
+  require(
+    "../../constants/authEvents"
+  );
 
 const RESET_TOKEN_BYTES =
   32;
@@ -42,22 +42,23 @@ const RESET_TOKEN_BYTES =
 const DEFAULT_RESET_TTL_MINUTES =
   30;
 
+
 /*
- * --------------------------------------------------------------------------
+ * ============================================================================
  * HELPERS
- * --------------------------------------------------------------------------
+ * ============================================================================
  */
 
 function normalizeEmail(
   email
 ) {
   return String(
-    email ||
-    ""
+    email || ""
   )
     .trim()
     .toLowerCase();
 }
+
 
 function tokenHash(
   rawToken
@@ -68,16 +69,15 @@ function tokenHash(
     )
     .update(
       String(
-        rawToken ||
-        ""
+        rawToken || ""
       ),
-
       "utf8"
     )
     .digest(
       "hex"
     );
 }
+
 
 function safeResetFailure(
   message =
@@ -94,8 +94,12 @@ function safeResetFailure(
   error.code =
     "PASSWORD_RESET_INVALID";
 
+  error.executionAuthorized =
+    false;
+
   return error;
 }
+
 
 function resetTtlMinutes() {
   const parsed =
@@ -105,7 +109,6 @@ function resetTtlMinutes() {
         String(
           DEFAULT_RESET_TTL_MINUTES
         ),
-
       10
     );
 
@@ -113,10 +116,8 @@ function resetTtlMinutes() {
     !Number.isFinite(
       parsed
     ) ||
-    parsed <
-      5 ||
-    parsed >
-      120
+    parsed < 5 ||
+    parsed > 120
   ) {
     return DEFAULT_RESET_TTL_MINUTES;
   }
@@ -124,20 +125,20 @@ function resetTtlMinutes() {
   return parsed;
 }
 
+
 function frontendBaseUrl() {
   return String(
     process.env
       .FRONTEND_URL ||
-
-    process.env
-      .APP_URL ||
-
-    "http://localhost:5173"
+      process.env
+        .APP_URL ||
+      "http://localhost:5173"
   ).replace(
     /\/$/,
     ""
   );
 }
+
 
 function isDevelopmentTokenExposureAllowed() {
   return (
@@ -147,15 +148,15 @@ function isDevelopmentTokenExposureAllowed() {
   );
 }
 
+
 /*
- * --------------------------------------------------------------------------
+ * ============================================================================
  * REVOKE OUTSTANDING RESET TOKENS
- * --------------------------------------------------------------------------
+ * ============================================================================
  */
 
 async function revokeOutstandingResetTokens(
   userId,
-
   reason =
     "superseded"
 ) {
@@ -173,8 +174,7 @@ async function revokeOutstandingResetTokens(
 
   for (
     const token
-    of tokens ||
-      []
+    of tokens || []
   ) {
     if (
       token.usedAt ||
@@ -187,8 +187,7 @@ async function revokeOutstandingResetTokens(
       token.expiresAt &&
       new Date(
         token.expiresAt
-      ) <=
-        now
+      ) <= now
     ) {
       continue;
     }
@@ -199,7 +198,6 @@ async function revokeOutstandingResetTokens(
           _id:
             token._id,
         },
-
         {
           $set: {
             revokedAt:
@@ -214,22 +212,21 @@ async function revokeOutstandingResetTokens(
 
   return {
     revokedCount,
-
     reason,
   };
 }
 
+
 /*
- * --------------------------------------------------------------------------
+ * ============================================================================
  * REQUEST PASSWORD RESET
- * --------------------------------------------------------------------------
+ * ============================================================================
  */
 
 async function requestPasswordReset(
   {
     email,
   },
-
   {
     ip =
       null,
@@ -244,10 +241,9 @@ async function requestPasswordReset(
     );
 
   /*
-   * Always perform cryptographic token generation.
+   * Generate cryptographic work regardless of whether the account exists.
    *
-   * This helps keep unknown-user requests closer to the
-   * valid-user execution path.
+   * This reduces timing differences between known and unknown accounts.
    */
   const rawToken =
     crypto
@@ -281,10 +277,7 @@ async function requestPasswordReset(
     null;
 
   /*
-   * Public response remains generic.
-   *
-   * Only eligible active users receive a persisted reset
-   * credential.
+   * Outward response remains generic.
    */
   if (
     user &&
@@ -293,7 +286,6 @@ async function requestPasswordReset(
   ) {
     await revokeOutstandingResetTokens(
       user._id,
-
       "superseded_by_new_request"
     );
 
@@ -314,6 +306,14 @@ async function requestPasswordReset(
           null,
       });
 
+    /*
+     * Password-reset request audit is best-effort because exposing
+     * different HTTP behaviour for known and unknown accounts would
+     * create an enumeration signal.
+     *
+     * The security-critical PASSWORD_CHANGED event below remains
+     * part of the successful reset path.
+     */
     await auditRecord(
       AUTH_EVENT_TYPES
         .PASSWORD_RESET_REQUESTED,
@@ -349,19 +349,20 @@ async function requestPasswordReset(
         },
       }
     ).catch(
-      () => {}
+      (
+        error
+      ) => {
+        console.error(
+          "[password-reset] Audit write failed for reset request:",
+          error.message
+        );
+      }
     );
 
     /*
      * Development only.
      *
-     * AIRA currently has only a stubbed infrastructure email
-     * service, not a real outbound delivery provider.
-     *
-     * Therefore local development receives the reset URL so
-     * the complete reset flow can be tested.
-     *
-     * Production NEVER exposes the raw reset token in the API.
+     * Production MUST never expose the raw bearer reset token.
      */
     if (
       isDevelopmentTokenExposureAllowed()
@@ -387,19 +388,18 @@ async function requestPasswordReset(
   };
 }
 
+
 /*
- * --------------------------------------------------------------------------
+ * ============================================================================
  * RESET PASSWORD
- * --------------------------------------------------------------------------
+ * ============================================================================
  */
 
 async function resetPassword(
   {
     token,
-
     password,
   },
-
   {
     ip =
       null,
@@ -410,13 +410,10 @@ async function resetPassword(
 ) {
   const rawToken =
     String(
-      token ||
-      ""
+      token || ""
     ).trim();
 
-  if (
-    !rawToken
-  ) {
+  if (!rawToken) {
     throw safeResetFailure();
   }
 
@@ -425,23 +422,41 @@ async function resetPassword(
       rawToken
     );
 
+  const now =
+    new Date();
+
   /*
-   * Reset tokens are stored only as SHA-256 hashes.
+   * ========================================================================
+   * PHASE 25.2H — ATOMIC ONE-TIME CONSUMPTION
+   * ========================================================================
    *
-   * The raw bearer credential exists only in the reset link.
+   * Old sequence:
+   *
+   *   SELECT token
+   *   check used_at
+   *   change password
+   *   UPDATE used_at
+   *
+   * Two concurrent requests could both pass the SELECT/check.
+   *
+   * New sequence:
+   *
+   *   UPDATE ...
+   *   WHERE token_hash = ?
+   *     AND used_at IS NULL
+   *     AND revoked_at IS NULL
+   *     AND expires_at > NOW()
+   *   RETURNING ...
+   *
+   * PostgreSQL therefore allows exactly one winner.
+   * ========================================================================
    */
+
   const resetRecord =
     await passwordResetTokenRepository
-      .findOne(
-        {
-          tokenHash:
-            hashedToken,
-        },
-
-        {
-          includeTokenHash:
-            true,
-        }
+      .consumeActiveToken(
+        hashedToken,
+        now
       );
 
   if (
@@ -450,33 +465,10 @@ async function resetPassword(
     throw safeResetFailure();
   }
 
-  const now =
-    new Date();
-
-  if (
-    resetRecord
-      .usedAt ||
-
-    resetRecord
-      .revokedAt ||
-
-    !resetRecord
-      .expiresAt ||
-
-    new Date(
-      resetRecord
-        .expiresAt
-    ) <=
-      now
-  ) {
-    throw safeResetFailure();
-  }
-
   const user =
     await userRepository
       .findById(
-        resetRecord
-          .userId
+        resetRecord.userId
       );
 
   if (
@@ -494,7 +486,6 @@ async function resetPassword(
           userId:
             user._id,
         },
-
         {
           includePasswordHash:
             true,
@@ -508,9 +499,7 @@ async function resetPassword(
   }
 
   /*
-   * Reuse AIRA's canonical Argon2id password service.
-   *
-   * No alternate password hashing implementation is created.
+   * Reuse canonical Argon2id implementation.
    */
   const newPasswordHash =
     await hashPassword(
@@ -523,7 +512,6 @@ async function resetPassword(
         _id:
           credential._id,
       },
-
       {
         $set: {
           passwordHash:
@@ -539,7 +527,6 @@ async function resetPassword(
                   .hashVersion ||
                 1
               ),
-
               1
             ),
 
@@ -559,25 +546,13 @@ async function resetPassword(
     );
 
   /*
-   * One-time token consumption.
+   * Token is ALREADY consumed atomically.
+   *
+   * Do not perform another usedAt mutation here.
    */
-  await passwordResetTokenRepository
-    .updateOne(
-      {
-        _id:
-          resetRecord._id,
-      },
-
-      {
-        $set: {
-          usedAt:
-            now,
-        },
-      }
-    );
 
   /*
-   * Revoke all sibling password reset tokens.
+   * Revoke sibling reset tokens.
    */
   const siblingTokens =
     await passwordResetTokenRepository
@@ -588,8 +563,7 @@ async function resetPassword(
 
   for (
     const sibling
-    of siblingTokens ||
-      []
+    of siblingTokens || []
   ) {
     if (
       String(
@@ -598,9 +572,7 @@ async function resetPassword(
         String(
           resetRecord._id
         ) ||
-
       sibling.usedAt ||
-
       sibling.revokedAt
     ) {
       continue;
@@ -612,7 +584,6 @@ async function resetPassword(
           _id:
             sibling._id,
         },
-
         {
           $set: {
             revokedAt:
@@ -623,11 +594,9 @@ async function resetPassword(
   }
 
   /*
-   * Security requirement:
+   * Password reset revokes ALL active sessions.
    *
-   * A password reset invalidates all active browser sessions.
-   *
-   * The user must authenticate again using the new password.
+   * Reset != login.
    */
   await userSessionRepository
     .updateMany(
@@ -638,7 +607,6 @@ async function resetPassword(
         status:
           "active",
       },
-
       {
         $set: {
           status:
@@ -653,6 +621,11 @@ async function resetPassword(
       }
     );
 
+  /*
+   * Security-critical evidence.
+   *
+   * Successful password mutation must have an audit record.
+   */
   await auditRecord(
     AUTH_EVENT_TYPES
       .PASSWORD_CHANGED,
@@ -686,8 +659,6 @@ async function resetPassword(
             : null,
       },
     }
-  ).catch(
-    () => {}
   );
 
   return {
@@ -702,8 +673,8 @@ async function resetPassword(
   };
 }
 
+
 module.exports = {
   requestPasswordReset,
-
   resetPassword,
 };

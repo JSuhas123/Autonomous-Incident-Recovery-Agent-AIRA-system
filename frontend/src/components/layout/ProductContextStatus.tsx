@@ -1,5 +1,6 @@
 import {
   Database,
+  LoaderCircle,
   ShieldCheck,
   TriangleAlert,
 } from 'lucide-react'
@@ -12,23 +13,57 @@ import {
 export function ProductContextStatus() {
   const source =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.contextSource,
+    )
+
+  const status =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state.contextStatus,
+    )
+
+  const tenantEpoch =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state.tenantEpoch,
     )
 
 
   if (
-    source ===
-    'authoritative'
+    status ===
+      'transitioning' ||
+    status ===
+      'loading'
   ) {
     return (
       <div
-        className="flex items-center gap-1.5 text-[10px] text-emerald-300"
-        title="Organization, environment and permissions were resolved by the AIRA backend."
+        className="flex items-center gap-1.5 text-[10px] text-cyan-300"
+        title={`Tenant epoch ${tenantEpoch}`}
       >
-        <ShieldCheck className="h-3 w-3" />
+        <LoaderCircle className="h-3 w-3 animate-spin" />
 
-        Server context
+        Resolving server context
+      </div>
+    )
+  }
+
+
+  if (
+    status ===
+    'error'
+  ) {
+    return (
+      <div className="flex items-center gap-1.5 text-[10px] text-red-300">
+        <TriangleAlert className="h-3 w-3" />
+
+        Context error
       </div>
     )
   }
@@ -36,16 +71,18 @@ export function ProductContextStatus() {
 
   if (
     source ===
-    'session_preview'
+      'authoritative' &&
+    status ===
+      'ready'
   ) {
     return (
       <div
-        className="flex items-center gap-1.5 text-[10px] text-amber-300"
-        title="Temporary Phase 25 frontend preview. Final authority will come from /product/context."
+        className="flex items-center gap-1.5 text-[10px] text-emerald-300"
+        title={`Backend-authoritative tenant context · epoch ${tenantEpoch}`}
       >
-        <TriangleAlert className="h-3 w-3" />
+        <ShieldCheck className="h-3 w-3" />
 
-        Preview context
+        Server context
       </div>
     )
   }

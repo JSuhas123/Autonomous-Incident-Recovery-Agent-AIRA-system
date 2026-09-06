@@ -18,60 +18,87 @@ import type {
 
 import {
   useEffect,
-  useRef,
 } from 'react'
 
+
+function isAbortError(
+  error: unknown,
+): boolean {
+  if (
+    error instanceof DOMException &&
+    error.name === 'AbortError'
+  ) {
+    return true
+  }
+
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      error.name === 'AbortError',
+  )
+}
+
+
 /**
- * Bootstraps:
+ * Restores the authoritative browser session.
  *
- * User
- * Organization
- * Membership
- * Session
- * CSRF
- * Default/active Environment
- * Available Environments
+ * SECURITY:
+ * - session comes from backend
+ * - organization comes from backend
+ * - environment catalogue comes from backend
+ * - localStorage environment ID is only a preference
  *
- * Must be mounted once at the application root.
+ * IMPORTANT:
+ * There is intentionally NO useRef "bootstrapped" guard.
+ *
+ * React StrictMode can execute:
+ *
+ * effect -> cleanup -> effect
+ *
+ * The former useRef guard caused the first request to be aborted and
+ * prevented the second bootstrap from running, leaving auth status stuck
+ * at "loading" forever after refresh.
  */
 export function useSessionBootstrap() {
   const status =
     useAuthStore(
-      (state) => state.status,
+      (state) =>
+        state.status,
     )
 
-  const bootstrapped =
-    useRef(false)
+  useEffect(
+    () => {
+      const controller =
+        new AbortController()
 
-  useEffect(() => {
-    if (
-      bootstrapped.current
-    ) {
-      return
-    }
+      let disposed =
+        false
 
-    bootstrapped.current =
-      true
 
-    const controller =
-      new AbortController()
-
-    const bootstrap =
-      async () => {
+      async function bootstrap() {
         const store =
           useAuthStore.getState()
 
         store.setLoading()
 
         try {
-          /*
-           * First establish trusted server-side session,
-           * organization and default environment.
-           */
+          // ------------------------------------------------------------------
+          // 1. Restore trusted server session.
+          // ------------------------------------------------------------------
+
           const data =
             await authApi.session(
               controller.signal,
             )
+
+          if (
+            disposed ||
+            controller.signal.aborted
+          ) {
+            return
+          }
+
 
           if (
             !data.authenticated
@@ -80,10 +107,12 @@ export function useSessionBootstrap() {
             return
           }
 
+
           const sessionEnvironment =
             data.environment as
               | EnvironmentSummary
               | null
+
 
           store.setAuthenticated({
             user:
@@ -111,9 +140,11 @@ export function useSessionBootstrap() {
               sessionEnvironment,
           })
 
-          /*
-           * Then retrieve the complete environment catalogue.
-           */
+
+          // ------------------------------------------------------------------
+          // 2. Load server-authorized environment catalogue.
+          // ------------------------------------------------------------------
+
           store.setEnvironmentsLoading(
             true,
           )
@@ -124,32 +155,46 @@ export function useSessionBootstrap() {
                 controller.signal,
               )
 
+            if (
+              disposed ||
+              controller.signal.aborted
+            ) {
+              return
+            }
+
+
             const environments =
-              response.environments
+              Array.isArray(
+                response.environments,
+              )
+                ? response.environments
+                : []
+
 
             store.setAvailableEnvironments(
               environments,
             )
 
-            /*
-             * Browser preference is convenience only.
-             *
-             * It is accepted only if the ID appears in the
-             * server-authorized organization environment list.
-             */
+
+            // ----------------------------------------------------------------
+            // 3. Browser preference is allowed only when server authorized.
+            // ----------------------------------------------------------------
+
             const persistedId =
               getPersistedEnvironmentId()
+
 
             const persistedEnvironment =
               persistedId
                 ? environments.find(
                     (environment) =>
                       environment.id ===
-                      persistedId &&
+                        persistedId &&
                       environment.status !==
                         'archived',
-                  )
+                  ) ?? null
                 : null
+
 
             const sessionEnvironmentFromList =
               sessionEnvironment
@@ -157,8 +202,9 @@ export function useSessionBootstrap() {
                     (environment) =>
                       environment.id ===
                       sessionEnvironment.id,
-                  )
+                  ) ?? null
                 : null
+
 
             const firstUsableEnvironment =
               environments.find(
@@ -173,49 +219,64 @@ export function useSessionBootstrap() {
               ) ??
               null
 
+
             const selectedEnvironment =
               persistedEnvironment ??
               sessionEnvironmentFromList ??
               firstUsableEnvironment
 
+
+            if (
+              disposed ||
+              controller.signal.aborted
+            ) {
+              return
+            }
+
+
             store.setActiveEnvironment(
               selectedEnvironment,
             )
           } finally {
-            store.setEnvironmentsLoading(
-              false,
-            )
+            if (
+              !disposed &&
+              !controller.signal.aborted
+            ) {
+              useAuthStore
+                .getState()
+                .setEnvironmentsLoading(
+                  false,
+                )
+            }
           }
         } catch (error: unknown) {
           if (
-            error instanceof DOMException &&
-            error.name ===
-              'AbortError'
+            disposed ||
+            isAbortError(error)
           ) {
             return
           }
 
-          if (
-            error &&
-            typeof error ===
-              'object' &&
-            'name' in error &&
-            error.name ===
-              'AbortError'
-          ) {
-            return
-          }
-
-          store.setUnauthenticated()
+          useAuthStore
+            .getState()
+            .setUnauthenticated()
         }
       }
 
-    void bootstrap()
 
-    return () => {
-      controller.abort()
-    }
-  }, [])
+      void bootstrap()
+
+
+      return () => {
+        disposed =
+          true
+
+        controller.abort()
+      }
+    },
+    [],
+  )
+
 
   return status
 }

@@ -21,6 +21,7 @@ import {
   ProtectedRoute,
 } from './ProtectedRoute'
 
+
 // -----------------------------------------------------------------------------
 // PUBLIC PRODUCT ENTRY
 // -----------------------------------------------------------------------------
@@ -32,6 +33,7 @@ const EntryPage =
         '@/pages/EntryPage'
       ),
   )
+
 
 // -----------------------------------------------------------------------------
 // PUBLIC AUTHENTICATION
@@ -45,6 +47,7 @@ const LoginPage =
       ),
   )
 
+
 const SignupPage =
   lazy(
     () =>
@@ -52,6 +55,7 @@ const SignupPage =
         '@/pages/SignupPage'
       ),
   )
+
 
 const ForgotPasswordPage =
   lazy(
@@ -61,6 +65,7 @@ const ForgotPasswordPage =
       ),
   )
 
+
 const ResetPasswordPage =
   lazy(
     () =>
@@ -68,6 +73,7 @@ const ResetPasswordPage =
         '@/pages/ResetPasswordPage'
       ),
   )
+
 
 const EmailVerificationPendingPage =
   lazy(
@@ -77,6 +83,7 @@ const EmailVerificationPendingPage =
       ),
   )
 
+
 const VerifyEmailPage =
   lazy(
     () =>
@@ -84,6 +91,64 @@ const VerifyEmailPage =
         '@/pages/VerifyEmailPage'
       ),
   )
+
+
+// -----------------------------------------------------------------------------
+// PRODUCT PERSONA ENTRY
+// -----------------------------------------------------------------------------
+
+const ProductEntryRedirect =
+  lazy(
+    () =>
+      import(
+        '@/product/ProductEntryRedirect'
+      ).then(
+        (
+          module,
+        ) => ({
+          default:
+            module
+              .ProductEntryRedirect,
+        }),
+      ),
+  )
+
+
+const ProductOverviewPage =
+  lazy(
+    () =>
+      import(
+        '@/features/overview/ProductOverviewPage'
+      ),
+  )
+
+
+const OperationsOverviewPage =
+  lazy(
+    () =>
+      import(
+        '@/features/operations/OperationsOverviewPage'
+      ),
+  )
+
+
+const DeveloperOverviewPage =
+  lazy(
+    () =>
+      import(
+        '@/features/developer/DeveloperOverviewPage'
+      ),
+  )
+
+
+const GovernanceOverviewPage =
+  lazy(
+    () =>
+      import(
+        '@/features/governance/GovernanceOverviewPage'
+      ),
+  )
+
 
 // -----------------------------------------------------------------------------
 // PROTECTED ACCOUNT SECURITY
@@ -97,25 +162,10 @@ const AccountSecurityPage =
       ),
   )
 
+
 // -----------------------------------------------------------------------------
 // EXISTING APPLICATION PAGES
 // -----------------------------------------------------------------------------
-
-const DashboardPage =
-  lazy(
-    () =>
-      import(
-        '@/pages/DashboardPage'
-      ),
-  )
-
-const ServicesPage =
-  lazy(
-    () =>
-      import(
-        '@/pages/ServicesPage'
-      ),
-  )
 
 const ServiceDetailPage =
   lazy(
@@ -125,6 +175,7 @@ const ServiceDetailPage =
       ),
   )
 
+
 const MonitoringPage =
   lazy(
     () =>
@@ -132,6 +183,7 @@ const MonitoringPage =
         '@/pages/MonitoringPage'
       ),
   )
+
 
 const InsightsPage =
   lazy(
@@ -141,6 +193,7 @@ const InsightsPage =
       ),
   )
 
+
 const RecoveryPage =
   lazy(
     () =>
@@ -148,6 +201,7 @@ const RecoveryPage =
         '@/pages/RecoveryPage'
       ),
   )
+
 
 const TeamPage =
   lazy(
@@ -157,6 +211,7 @@ const TeamPage =
       ),
   )
 
+
 const IncidentListPage =
   lazy(
     () =>
@@ -164,6 +219,7 @@ const IncidentListPage =
         '@/pages/IncidentListPage'
       ),
   )
+
 
 const IncidentDetailPage =
   lazy(
@@ -173,6 +229,7 @@ const IncidentDetailPage =
       ),
   )
 
+
 const RecoveryTimelinePage =
   lazy(
     () =>
@@ -180,6 +237,7 @@ const RecoveryTimelinePage =
         '@/pages/RecoveryTimelinePage'
       ),
   )
+
 
 const RecoveryExecutionPage =
   lazy(
@@ -189,6 +247,7 @@ const RecoveryExecutionPage =
       ),
   )
 
+
 const PoliciesPage =
   lazy(
     () =>
@@ -196,6 +255,7 @@ const PoliciesPage =
         '@/pages/PoliciesPage'
       ),
   )
+
 
 const ApprovalsPage =
   lazy(
@@ -205,6 +265,7 @@ const ApprovalsPage =
       ),
   )
 
+
 const AuditLogsPage =
   lazy(
     () =>
@@ -212,6 +273,7 @@ const AuditLogsPage =
         '@/pages/AuditLogsPage'
       ),
   )
+
 
 const AnalyticsPage =
   lazy(
@@ -221,6 +283,7 @@ const AnalyticsPage =
       ),
   )
 
+
 const ReportsPage =
   lazy(
     () =>
@@ -228,6 +291,7 @@ const ReportsPage =
         '@/pages/ReportsPage'
       ),
   )
+
 
 const IntegrationsPage =
   lazy(
@@ -237,6 +301,7 @@ const IntegrationsPage =
       ),
   )
 
+
 const ClusterPage =
   lazy(
     () =>
@@ -244,6 +309,7 @@ const ClusterPage =
         '@/pages/ClusterPage'
       ),
   )
+
 
 const SettingsPage =
   lazy(
@@ -253,6 +319,7 @@ const SettingsPage =
       ),
   )
 
+
 const ProfilePage =
   lazy(
     () =>
@@ -260,6 +327,7 @@ const ProfilePage =
         '@/pages/ProfilePage'
       ),
   )
+
 
 const NotificationsPage =
   lazy(
@@ -269,6 +337,7 @@ const NotificationsPage =
       ),
   )
 
+
 const RunbooksPage =
   lazy(
     () =>
@@ -276,6 +345,7 @@ const RunbooksPage =
         '@/pages/RunbooksPage'
       ),
   )
+
 
 const PlaybooksPage =
   lazy(
@@ -285,6 +355,7 @@ const PlaybooksPage =
       ),
   )
 
+
 const RunbookDetailPage =
   lazy(
     () =>
@@ -292,6 +363,7 @@ const RunbookDetailPage =
         '@/pages/RunbookDetailPage'
       ),
   )
+
 
 const PlaybookDetailPage =
   lazy(
@@ -301,8 +373,10 @@ const PlaybookDetailPage =
       ),
   )
 
+
 function suspend(
-  component: ReactNode,
+  component:
+    ReactNode,
 ) {
   return (
     <Suspense
@@ -315,6 +389,7 @@ function suspend(
   )
 }
 
+
 export const router =
   createBrowserRouter([
     // -------------------------------------------------------------------------
@@ -322,7 +397,8 @@ export const router =
     // -------------------------------------------------------------------------
 
     {
-      path: '/',
+      path:
+        '/',
 
       element:
         suspend(
@@ -330,12 +406,14 @@ export const router =
         ),
     },
 
+
     // -------------------------------------------------------------------------
     // PUBLIC AUTHENTICATION
     // -------------------------------------------------------------------------
 
     {
-      path: '/login',
+      path:
+        '/login',
 
       element:
         suspend(
@@ -343,14 +421,17 @@ export const router =
         ),
     },
 
+
     {
-      path: '/signup',
+      path:
+        '/signup',
 
       element:
         suspend(
           <SignupPage />,
         ),
     },
+
 
     {
       path:
@@ -362,6 +443,7 @@ export const router =
         ),
     },
 
+
     {
       path:
         '/reset-password',
@@ -371,6 +453,7 @@ export const router =
           <ResetPasswordPage />,
         ),
     },
+
 
     {
       path:
@@ -382,6 +465,7 @@ export const router =
         ),
     },
 
+
     {
       path:
         '/verify-email',
@@ -391,6 +475,7 @@ export const router =
           <VerifyEmailPage />,
         ),
     },
+
 
     // -------------------------------------------------------------------------
     // PROTECTED AIRA APPLICATION
@@ -404,15 +489,55 @@ export const router =
       ),
 
       children: [
+        /*
+         * ====================================================================
+         * PRODUCT ENTRY
+         * ====================================================================
+         *
+         * Login and public entry currently navigate here.
+         *
+         * ProductEntryRedirect waits for server-authoritative ProductContext
+         * and then replaces /dashboard with the persona's canonical landing.
+         */
+
         {
           path:
             '/dashboard',
 
           element:
             suspend(
-              <DashboardPage />,
+              <ProductEntryRedirect />,
             ),
         },
+
+
+        /*
+         * ====================================================================
+         * PHASE-25 PERSONA LANDINGS
+         * ====================================================================
+         */
+
+        {
+          path:
+            '/overview',
+
+          element:
+            suspend(
+              <ProductOverviewPage />,
+            ),
+        },
+
+
+        {
+          path:
+            '/operations',
+
+          element:
+            suspend(
+              <OperationsOverviewPage />,
+            ),
+        },
+
 
         {
           path:
@@ -420,9 +545,27 @@ export const router =
 
           element:
             suspend(
-              <ServicesPage />,
+              <DeveloperOverviewPage />,
             ),
         },
+
+
+        {
+          path:
+            '/governance',
+
+          element:
+            suspend(
+              <GovernanceOverviewPage />,
+            ),
+        },
+
+
+        /*
+         * ====================================================================
+         * SERVICE DETAILS
+         * ====================================================================
+         */
 
         {
           path:
@@ -434,6 +577,13 @@ export const router =
             ),
         },
 
+
+        /*
+         * ====================================================================
+         * EXISTING OPERATIONAL APPLICATION
+         * ====================================================================
+         */
+
         {
           path:
             '/monitoring',
@@ -443,6 +593,7 @@ export const router =
               <MonitoringPage />,
             ),
         },
+
 
         {
           path:
@@ -454,6 +605,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/recovery',
@@ -463,6 +615,7 @@ export const router =
               <RecoveryPage />,
             ),
         },
+
 
         {
           path:
@@ -474,6 +627,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/runbooks/:runbookId',
@@ -483,6 +637,7 @@ export const router =
               <RunbookDetailPage />,
             ),
         },
+
 
         {
           path:
@@ -494,6 +649,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/playbooks/:playbookId',
@@ -503,6 +659,7 @@ export const router =
               <PlaybookDetailPage />,
             ),
         },
+
 
         {
           path:
@@ -514,6 +671,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/incidents',
@@ -523,6 +681,7 @@ export const router =
               <IncidentListPage />,
             ),
         },
+
 
         {
           path:
@@ -534,6 +693,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/incidents/:decisionId/timeline',
@@ -543,6 +703,7 @@ export const router =
               <RecoveryTimelinePage />,
             ),
         },
+
 
         {
           path:
@@ -554,6 +715,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/policies',
@@ -563,6 +725,7 @@ export const router =
               <PoliciesPage />,
             ),
         },
+
 
         {
           path:
@@ -574,6 +737,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/audit',
@@ -583,6 +747,7 @@ export const router =
               <AuditLogsPage />,
             ),
         },
+
 
         {
           path:
@@ -594,6 +759,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/reports',
@@ -603,6 +769,7 @@ export const router =
               <ReportsPage />,
             ),
         },
+
 
         {
           path:
@@ -614,6 +781,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/cluster',
@@ -623,6 +791,7 @@ export const router =
               <ClusterPage />,
             ),
         },
+
 
         {
           path:
@@ -634,6 +803,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/profile',
@@ -644,6 +814,7 @@ export const router =
             ),
         },
 
+
         {
           path:
             '/account/security',
@@ -653,6 +824,7 @@ export const router =
               <AccountSecurityPage />,
             ),
         },
+
 
         {
           path:
@@ -666,12 +838,14 @@ export const router =
       ],
     },
 
+
     // -------------------------------------------------------------------------
     // UNKNOWN ROUTE
     // -------------------------------------------------------------------------
 
     {
-      path: '*',
+      path:
+        '*',
 
       element: (
         <Navigate

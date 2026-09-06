@@ -12,37 +12,75 @@ import type {
 } from '@/product/product.runtime'
 
 
+export type ProductContextStatus =
+  | 'unavailable'
+  | 'loading'
+  | 'transitioning'
+  | 'ready'
+  | 'error'
+
+
 export interface ProductRuntimeOrganization {
-  id: string
+  id:
+    string
 
-  name: string
+  tenantId:
+    string | null
 
-  slug: string
-}
+  name:
+    string
 
+  slug:
+    string
 
-export interface ProductRuntimeEnvironment {
-  id: string
-
-  name: string
-
-  type:
-    | 'development'
-    | 'staging'
-    | 'production'
-    | 'unknown'
-
-  criticality?:
+  status?:
     string | null
 }
 
 
-interface ProductRuntimeState {
-  contextSource:
-    ProductContextSource
+export interface ProductRuntimeEnvironment {
+  id:
+    string
 
-  contextReady:
-    boolean
+  organizationId:
+    string | null
+
+  name:
+    string
+
+  slug?:
+    string | null
+
+  type:
+    | 'development'
+    | 'testing'
+    | 'staging'
+    | 'production'
+    | 'custom'
+    | 'unknown'
+
+  criticality?:
+    string | null
+
+  status?:
+    string | null
+
+  settings?: {
+    allowAutonomousExecution:
+      boolean
+
+    requireApprovalForDestructiveActions:
+      boolean
+
+    timezone:
+      string | null
+  } | null
+}
+
+
+interface HydrateProductContextInput {
+  source:
+    ProductContextSource
 
   userId:
     string | null
@@ -60,12 +98,55 @@ interface ProductRuntimeState {
     string[]
 
   organization:
-    ProductRuntimeOrganization |
-    null
+    ProductRuntimeOrganization | null
 
   environment:
-    ProductRuntimeEnvironment |
-    null
+    ProductRuntimeEnvironment | null
+
+  landingPath:
+    string
+
+  requestId?:
+    string | null
+}
+
+
+interface ProductRuntimeState {
+  contextSource:
+    ProductContextSource
+
+  contextStatus:
+    ProductContextStatus
+
+  contextReady:
+    boolean
+
+  contextError:
+    string | null
+
+  requestId:
+    string | null
+
+  userId:
+    string | null
+
+  membershipId:
+    string | null
+
+  role:
+    string | null
+
+  persona:
+    ProductPersona
+
+  permissions:
+    string[]
+
+  organization:
+    ProductRuntimeOrganization | null
+
+  environment:
+    ProductRuntimeEnvironment | null
 
   landingPath:
     string
@@ -81,36 +162,20 @@ interface ProductRuntimeState {
 
   hydrateProductContext:
     (
-      context: {
-        source:
-          ProductContextSource
+      context:
+        HydrateProductContextInput,
+    ) => void
 
-        userId:
-          string | null
+  markContextLoading:
+    () => void
 
-        membershipId:
-          string | null
+  beginTenantTransition:
+    () => void
 
-        role:
-          string | null
-
-        persona:
-          ProductPersona
-
-        permissions:
-          string[]
-
-        organization:
-          ProductRuntimeOrganization |
-          null
-
-        environment:
-          ProductRuntimeEnvironment |
-          null
-
-        landingPath:
-          string
-      }
+  markContextError:
+    (
+      message:
+        string,
     ) => void
 
   markContextUnavailable:
@@ -119,13 +184,13 @@ interface ProductRuntimeState {
   setSidebarCollapsed:
     (
       value:
-        boolean
+        boolean,
     ) => void
 
   setCommandOpen:
     (
       value:
-        boolean
+        boolean,
     ) => void
 
   incrementTenantEpoch:
@@ -143,17 +208,26 @@ const INITIAL_STATE = {
   contextSource:
     'unavailable' as const,
 
+  contextStatus:
+    'unavailable' as const,
+
   contextReady:
     false,
 
+  contextError:
+    null as string | null,
+
+  requestId:
+    null as string | null,
+
   userId:
-    null,
+    null as string | null,
 
   membershipId:
-    null,
+    null as string | null,
 
   role:
-    null,
+    null as string | null,
 
   persona:
     PRODUCT_PERSONAS
@@ -163,12 +237,10 @@ const INITIAL_STATE = {
     [] as string[],
 
   organization:
-    null as ProductRuntimeOrganization |
-    null,
+    null as ProductRuntimeOrganization | null,
 
   environment:
-    null as ProductRuntimeEnvironment |
-    null,
+    null as ProductRuntimeEnvironment | null,
 
   landingPath:
     '/overview',
@@ -186,18 +258,32 @@ const INITIAL_STATE = {
 
 export const useProductRuntimeStore =
   create<ProductRuntimeState>(
-    (set) => ({
+    (
+      set,
+    ) => ({
       ...INITIAL_STATE,
 
 
       hydrateProductContext:
-        (context) =>
+        (
+          context,
+        ) =>
           set({
             contextSource:
               context.source,
 
+            contextStatus:
+              'ready',
+
             contextReady:
               true,
+
+            contextError:
+              null,
+
+            requestId:
+              context.requestId ??
+              null,
 
             userId:
               context.userId,
@@ -226,6 +312,112 @@ export const useProductRuntimeStore =
 
             landingPath:
               context.landingPath,
+
+            commandOpen:
+              false,
+          }),
+
+
+      markContextLoading:
+        () =>
+          set({
+            contextSource:
+              'unavailable',
+
+            contextStatus:
+              'loading',
+
+            contextReady:
+              false,
+
+            contextError:
+              null,
+
+            requestId:
+              null,
+
+            permissions:
+              [],
+
+            organization:
+              null,
+
+            environment:
+              null,
+
+            commandOpen:
+              false,
+          }),
+
+
+      beginTenantTransition:
+        () =>
+          set(
+            (
+              state,
+            ) => ({
+              contextSource:
+                'unavailable',
+
+              contextStatus:
+                'transitioning',
+
+              contextReady:
+                false,
+
+              contextError:
+                null,
+
+              requestId:
+                null,
+
+              permissions:
+                [],
+
+              organization:
+                null,
+
+              environment:
+                null,
+
+              commandOpen:
+                false,
+
+              tenantEpoch:
+                state
+                  .tenantEpoch +
+                1,
+            }),
+          ),
+
+
+      markContextError:
+        (
+          contextError,
+        ) =>
+          set({
+            contextSource:
+              'unavailable',
+
+            contextStatus:
+              'error',
+
+            contextReady:
+              false,
+
+            contextError,
+
+            permissions:
+              [],
+
+            organization:
+              null,
+
+            environment:
+              null,
+
+            commandOpen:
+              false,
           }),
 
 
@@ -235,8 +427,17 @@ export const useProductRuntimeStore =
             contextSource:
               'unavailable',
 
+            contextStatus:
+              'unavailable',
+
             contextReady:
               false,
+
+            contextError:
+              null,
+
+            requestId:
+              null,
 
             userId:
               null,
@@ -262,6 +463,9 @@ export const useProductRuntimeStore =
 
             landingPath:
               '/overview',
+
+            commandOpen:
+              false,
           }),
 
 
@@ -286,9 +490,12 @@ export const useProductRuntimeStore =
       incrementTenantEpoch:
         () =>
           set(
-            (state) => ({
+            (
+              state,
+            ) => ({
               tenantEpoch:
-                state.tenantEpoch +
+                state
+                  .tenantEpoch +
                 1,
             }),
           ),
@@ -297,12 +504,26 @@ export const useProductRuntimeStore =
       clearTenantScopedState:
         () =>
           set(
-            (state) => ({
+            (
+              state,
+            ) => ({
               contextSource:
                 'unavailable',
 
+              contextStatus:
+                'transitioning',
+
               contextReady:
                 false,
+
+              contextError:
+                null,
+
+              requestId:
+                null,
+
+              permissions:
+                [],
 
               organization:
                 null,
@@ -310,11 +531,12 @@ export const useProductRuntimeStore =
               environment:
                 null,
 
-              permissions:
-                [],
+              commandOpen:
+                false,
 
               tenantEpoch:
-                state.tenantEpoch +
+                state
+                  .tenantEpoch +
                 1,
             }),
           ),

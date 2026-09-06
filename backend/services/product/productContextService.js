@@ -2,40 +2,27 @@
 
 /**
  * ============================================================================
- * AIRA PHASE 25.0B
- * PRODUCT CONTEXT SERVICE
+ * AIRA PHASE 25.4R + 25.5
+ * AUTHORITATIVE PRODUCT CONTEXT
  * ============================================================================
  *
- * Converts AIRA's canonical authenticated request context into the safe
- * product context consumed by the frontend.
+ * Product context is derived only after:
  *
- * SECURITY MODEL
- *
- * Request authentication
+ * authentication
  *      ↓
- * organization membership
+ * canonical organization membership
  *      ↓
- * canonical backend role
+ * canonical role
  *      ↓
  * canonical backend permissions
  *      ↓
- * product persona
+ * server-validated environment
+ *      ↓
+ * presentation persona
  *
- * IMPORTANT
- *
- * Product persona is derived AFTER authorization identity.
- *
- * Persona:
- *   - may change navigation
- *   - may change dashboard composition
- *   - may change landing page
- *
- * Persona may NOT:
- *   - grant permissions
- *   - authorize execution
- *   - alter autonomy
- *   - change organization
- *   - change environment
+ * Persona does not grant authorization.
+ * Browser organization/environment identifiers are not authoritative.
+ * Product context never grants recovery execution authority.
  * ============================================================================
  */
 
@@ -110,7 +97,9 @@ function uniqueStrings(
           (value) =>
             value.trim()
         )
-        .filter(Boolean)
+        .filter(
+          Boolean
+        )
     ),
   ];
 }
@@ -125,6 +114,7 @@ function safeOrganization(
   ) {
     return null;
   }
+
 
   return {
     id:
@@ -174,6 +164,18 @@ function safeEnvironment(
     return null;
   }
 
+
+  const settings =
+    environment
+      ?.settings &&
+    typeof environment
+      .settings ===
+      "object"
+      ? environment
+          .settings
+      : {};
+
+
   return {
     id:
       asString(
@@ -181,13 +183,13 @@ function safeEnvironment(
           ?._id ??
         environment
           ?.id
-      ),
+    ),
 
     organizationId:
       asString(
         environment
           ?.organizationId
-      ),
+    ),
 
     name:
       environment
@@ -215,6 +217,26 @@ function safeEnvironment(
       environment
         ?.status ??
       null,
+
+    settings: {
+      allowAutonomousExecution:
+        settings
+          .allowAutonomousExecution ===
+        true,
+
+      requireApprovalForDestructiveActions:
+        settings
+          .requireApprovalForDestructiveActions !==
+        false,
+
+      timezone:
+        typeof settings
+          .timezone ===
+        "string"
+          ? settings
+              .timezone
+          : null,
+    },
   };
 }
 
@@ -241,6 +263,7 @@ function buildProductContext(
     throw error;
   }
 
+
   const role =
     requestContext
       .role ??
@@ -249,7 +272,10 @@ function buildProductContext(
       ?.role ??
     null;
 
-  if (!role) {
+
+  if (
+    !role
+  ) {
     const error =
       new Error(
         "Organization membership role is required"
@@ -264,25 +290,19 @@ function buildProductContext(
     throw error;
   }
 
+
   const persona =
     getDefaultPersonaForRole(
       role
     );
+
 
   const personaMetadata =
     getProductPersonaMetadata(
       persona
     );
 
-  /*
-   * Permissions always come from AIRA's canonical backend role registry.
-   *
-   * We intentionally do NOT trust:
-   *
-   * requestContext.permissions
-   * browser permissions
-   * product persona permissions
-   */
+
   const permissions =
     uniqueStrings(
       getPermissionsForRole(
@@ -290,9 +310,93 @@ function buildProductContext(
       )
     );
 
+
+  const organization =
+    safeOrganization(
+      requestContext
+        .organization,
+
+      requestContext
+    );
+
+
+  if (
+    !organization
+      ?.id
+  ) {
+    const error =
+      new Error(
+        "Authoritative organization context is required"
+      );
+
+    error.code =
+      "PRODUCT_ORGANIZATION_CONTEXT_REQUIRED";
+
+    error.status =
+      403;
+
+    throw error;
+  }
+
+
+  const environment =
+    safeEnvironment(
+      requestContext
+        .environment
+    );
+
+
+  if (
+    !environment
+      ?.id
+  ) {
+    const error =
+      new Error(
+        "Authoritative environment context is required"
+      );
+
+    error.code =
+      "PRODUCT_ENVIRONMENT_CONTEXT_REQUIRED";
+
+    error.status =
+      409;
+
+    throw error;
+  }
+
+
+  /*
+   * Defense in depth:
+   *
+   * Environment middleware already performs the organization ownership
+   * validation. This check ensures the serialized product context cannot
+   * accidentally contradict the authoritative organization.
+   */
+  if (
+    environment
+      .organizationId &&
+    environment
+      .organizationId !==
+    organization.id
+  ) {
+    const error =
+      new Error(
+        "Environment does not belong to authoritative organization"
+      );
+
+    error.code =
+      "PRODUCT_ENVIRONMENT_ORGANIZATION_MISMATCH";
+
+    error.status =
+      403;
+
+    throw error;
+  }
+
+
   return {
     version:
-      "25.0",
+      "25.5",
 
     identity: {
       userId:
@@ -321,16 +425,20 @@ function buildProductContext(
 
       personaMetadata: {
         id:
-          personaMetadata.id,
+          personaMetadata
+            .id,
 
         label:
-          personaMetadata.label,
+          personaMetadata
+            .label,
 
         shortLabel:
-          personaMetadata.shortLabel,
+          personaMetadata
+            .shortLabel,
 
         description:
-          personaMetadata.description,
+          personaMetadata
+            .description,
 
         defaultLandingPath:
           personaMetadata
@@ -338,19 +446,9 @@ function buildProductContext(
       },
     },
 
-    organization:
-      safeOrganization(
-        requestContext
-          .organization,
+    organization,
 
-        requestContext
-      ),
-
-    environment:
-      safeEnvironment(
-        requestContext
-          .environment
-      ),
+    environment,
 
     request: {
       requestId:

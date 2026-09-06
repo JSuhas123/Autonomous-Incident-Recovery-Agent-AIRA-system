@@ -17,7 +17,9 @@ export const PRODUCT_PERSONAS = {
 
 
 export type ProductPersona =
-  (typeof PRODUCT_PERSONAS)[
+  (
+    typeof PRODUCT_PERSONAS
+  )[
     keyof typeof PRODUCT_PERSONAS
   ]
 
@@ -47,7 +49,9 @@ export const ORGANIZATION_ROLES = {
 
 
 export type OrganizationRole =
-  (typeof ORGANIZATION_ROLES)[
+  (
+    typeof ORGANIZATION_ROLES
+  )[
     keyof typeof ORGANIZATION_ROLES
   ]
 
@@ -110,6 +114,18 @@ export interface ProductOrganizationSummary {
 }
 
 
+export interface ProductEnvironmentSettings {
+  allowAutonomousExecution:
+    boolean
+
+  requireApprovalForDestructiveActions:
+    boolean
+
+  timezone:
+    string | null
+}
+
+
 export interface ProductEnvironmentSummary {
   id:
     string | null
@@ -146,6 +162,9 @@ export interface ProductEnvironmentSummary {
     | 'archived'
     | string
     | null
+
+  settings:
+    ProductEnvironmentSettings
 }
 
 
@@ -181,12 +200,10 @@ export interface ProductContext {
     ProductIdentity
 
   organization:
-    ProductOrganizationSummary |
-    null
+    ProductOrganizationSummary | null
 
   environment:
-    ProductEnvironmentSummary |
-    null
+    ProductEnvironmentSummary | null
 
   request:
     ProductRequestContext

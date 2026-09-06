@@ -22,48 +22,91 @@ export function ProductRouteGuard({
   const location =
     useLocation()
 
-  const contextReady =
+  const contextStatus =
     useProductRuntimeStore(
-      (state) =>
-        state.contextReady,
+      (
+        state,
+      ) =>
+        state.contextStatus,
+    )
+
+  const contextError =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state.contextError,
     )
 
   const persona =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.persona,
     )
 
   const permissions =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.permissions,
     )
 
   const landingPath =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.landingPath,
     )
 
 
-  /*
-   * Session bootstrap may still be resolving.
-   *
-   * Do not redirect until product presentation context exists.
-   */
-  if (!contextReady) {
+  if (
+    contextStatus ===
+      'loading' ||
+    contextStatus ===
+      'transitioning' ||
+    contextStatus ===
+      'unavailable'
+  ) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
           <div className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-primary/20 border-t-primary" />
 
           <p className="mt-4 text-sm font-medium">
-            Preparing AIRA workspace
+            Securing AIRA workspace
           </p>
 
           <p className="mt-1 text-xs text-muted-foreground">
-            Resolving organization and environment context.
+            Resolving authoritative organization and environment context.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+
+  if (
+    contextStatus ===
+    'error'
+  ) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center px-4">
+        <div className="max-w-lg rounded-2xl border border-red-400/20 bg-red-400/[0.04] p-6 text-center">
+          <p className="font-medium text-red-300">
+            AIRA could not establish a secure product context.
+          </p>
+
+          <p className="mt-2 text-sm text-muted-foreground">
+            {contextError ??
+              'Authoritative server context is unavailable.'}
+          </p>
+
+          <p className="mt-4 text-xs text-muted-foreground">
+            Product access remains blocked rather than falling back to browser authority.
           </p>
         </div>
       </div>
@@ -82,7 +125,9 @@ export function ProductRouteGuard({
     })
 
 
-  if (!permitted) {
+  if (
+    !permitted
+  ) {
     return (
       <Navigate
         replace

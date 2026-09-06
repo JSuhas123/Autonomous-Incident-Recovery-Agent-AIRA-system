@@ -1,7 +1,6 @@
 import {
   Bell,
   Building2,
-  ChevronDown,
   Command,
   Search,
   UserRound,
@@ -16,6 +15,14 @@ import {
 } from './ProductContextStatus'
 
 import {
+  useEnvironmentTransition,
+} from '@/hooks/useEnvironmentTransition'
+
+import {
+  useAuthStore,
+} from '@/store/authStore'
+
+import {
   useProductRuntimeStore,
 } from '@/store/productRuntimeStore'
 
@@ -23,68 +30,182 @@ import {
 export function ProductTopBar() {
   const organization =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.organization,
     )
 
   const environment =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.environment,
     )
 
   const persona =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.persona,
     )
 
   const role =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.role,
+    )
+
+  const contextStatus =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state.contextStatus,
     )
 
   const setCommandOpen =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.setCommandOpen,
     )
+
+
+  const activeEnvironment =
+    useAuthStore(
+      (
+        state,
+      ) =>
+        state.activeEnvironment,
+    )
+
+  const availableEnvironments =
+    useAuthStore(
+      (
+        state,
+      ) =>
+        state.availableEnvironments,
+    )
+
+  const environmentsLoading =
+    useAuthStore(
+      (
+        state,
+      ) =>
+        state.environmentsLoading,
+    )
+
+
+  const transitionEnvironment =
+    useEnvironmentTransition()
+
+
+  const transitionBlocked =
+    contextStatus ===
+      'transitioning' ||
+    contextStatus ===
+      'loading' ||
+    environmentsLoading
 
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center border-b border-border/70 bg-background/85 px-4 backdrop-blur-xl sm:px-6">
       <div className="flex min-w-0 flex-1 items-center gap-3">
-        <button
-          type="button"
-          className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-secondary/50"
-        >
+        <div className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5">
           <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
 
           <div className="hidden min-w-0 sm:block">
             <p className="truncate text-xs font-medium text-foreground">
-              {organization?.name ??
+              {organization
+                ?.name ??
                 'No organization'}
             </p>
 
             <p className="truncate text-[10px] text-muted-foreground">
-              {organization?.slug ??
+              {organization
+                ?.slug ??
                 'organization unavailable'}
             </p>
           </div>
-
-          <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground sm:block" />
-        </button>
+        </div>
 
 
         <div className="hidden h-6 w-px bg-border sm:block" />
 
 
-        <EnvironmentSafetyBadge
-          environment={
-            environment
-          }
-        />
+        <div className="flex items-center gap-2">
+          <EnvironmentSafetyBadge
+            environment={
+              environment
+            }
+          />
+
+
+          {availableEnvironments.length >
+            0 && (
+            <select
+              aria-label="Active AIRA environment"
+              value={
+                activeEnvironment
+                  ?.id ??
+                ''
+              }
+              disabled={
+                transitionBlocked
+              }
+              onChange={
+                (
+                  event,
+                ) => {
+                  const next =
+                    availableEnvironments
+                      .find(
+                        (
+                          candidate,
+                        ) =>
+                          candidate.id ===
+                          event.target
+                            .value,
+                      )
+
+                  if (
+                    next
+                  ) {
+                    void transitionEnvironment(
+                      next,
+                    )
+                  }
+                }
+              }
+              className="hidden h-9 max-w-[180px] rounded-lg border border-border bg-secondary/30 px-2 text-xs text-foreground outline-none transition-colors hover:bg-secondary/60 disabled:cursor-not-allowed disabled:opacity-50 md:block"
+            >
+              {availableEnvironments.map(
+                (
+                  candidate,
+                ) => (
+                  <option
+                    key={
+                      candidate.id
+                    }
+                    value={
+                      candidate.id
+                    }
+                  >
+                    {
+                      candidate.name
+                    }
+                  </option>
+                ),
+              )}
+            </select>
+          )}
+        </div>
 
 
         <div className="hidden xl:block">
@@ -96,12 +217,17 @@ export function ProductTopBar() {
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() =>
-            setCommandOpen(
-              true,
-            )
+          disabled={
+            contextStatus !==
+            'ready'
           }
-          className="hidden h-9 min-w-[220px] items-center justify-between rounded-lg border border-border bg-secondary/30 px-3 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 md:flex"
+          onClick={
+            () =>
+              setCommandOpen(
+                true,
+              )
+          }
+          className="hidden h-9 min-w-[220px] items-center justify-between rounded-lg border border-border bg-secondary/30 px-3 text-xs text-muted-foreground transition-colors hover:bg-secondary/60 disabled:cursor-not-allowed disabled:opacity-50 md:flex"
         >
           <span className="flex items-center gap-2">
             <Search className="h-3.5 w-3.5" />
@@ -119,7 +245,11 @@ export function ProductTopBar() {
 
         <button
           type="button"
-          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          disabled={
+            contextStatus !==
+            'ready'
+          }
+          className="relative flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="Notifications"
         >
           <Bell className="h-4 w-4" />
@@ -131,10 +261,7 @@ export function ProductTopBar() {
         <div className="hidden h-6 w-px bg-border sm:block" />
 
 
-        <button
-          type="button"
-          className="flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-secondary/50"
-        >
+        <div className="flex items-center gap-2 rounded-lg px-2 py-1.5">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-secondary/50">
             <UserRound className="h-4 w-4 text-muted-foreground" />
           </div>
@@ -156,9 +283,7 @@ export function ProductTopBar() {
                 : 'Product persona'}
             </p>
           </div>
-
-          <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground lg:block" />
-        </button>
+        </div>
       </div>
     </header>
   )

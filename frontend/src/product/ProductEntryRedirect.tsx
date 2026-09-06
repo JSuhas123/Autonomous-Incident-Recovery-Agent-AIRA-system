@@ -8,20 +8,27 @@ import {
 
 
 export function ProductEntryRedirect() {
-  const ready =
+  const status =
     useProductRuntimeStore(
-      (state) =>
-        state.contextReady,
+      (
+        state,
+      ) =>
+        state.contextStatus,
     )
 
   const landingPath =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.landingPath,
     )
 
 
-  if (!ready) {
+  if (
+    status !==
+    'ready'
+  ) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
@@ -32,7 +39,7 @@ export function ProductEntryRedirect() {
           </p>
 
           <p className="mt-1 text-xs text-muted-foreground">
-            Resolving your product experience.
+            Resolving your server-authoritative product experience.
           </p>
         </div>
       </div>
