@@ -1,48 +1,61 @@
 import {
-  getDefaultPersonaForRole,
-  getDefaultProductLandingPath,
+    getDefaultPersonaForRole,
+    getProductLandingPathForPersona,
 } from './product.personas'
 
 import type {
-  OrganizationRole,
+    OrganizationRole,
 } from './product.types'
 
 
 interface SessionUserLike {
-  id?: string | null
+  id?:
+    string | null
 
-  _id?: string | null
+  _id?:
+    string | null
 }
 
 
 interface SessionMembershipLike {
-  id?: string | null
+  id?:
+    string | null
 
-  _id?: string | null
+  _id?:
+    string | null
 
-  role?: string | null
+  role?:
+    string | null
 }
 
 
 interface SessionOrganizationLike {
-  id?: string | null
+  id?:
+    string | null
 
-  _id?: string | null
+  _id?:
+    string | null
 
-  name?: string | null
+  name?:
+    string | null
 
-  slug?: string | null
+  slug?:
+    string | null
 }
 
 
 interface SessionEnvironmentLike {
-  id?: string | null
+  id?:
+    string | null
 
-  _id?: string | null
+  _id?:
+    string | null
 
-  name?: string | null
+  name?:
+    string | null
 
-  type?: string | null
+  type?:
+    string | null
 
   environmentType?:
     string | null
@@ -78,13 +91,14 @@ interface BuildSessionPreviewInput {
 function normalizeId(
   value:
     unknown,
-) {
+): string | null {
   if (
     value === null ||
     value === undefined
   ) {
     return null
   }
+
 
   return String(
     value,
@@ -111,13 +125,16 @@ function normalizeEnvironmentType(
     case 'dev':
       return 'development'
 
+
     case 'staging':
     case 'stage':
       return 'staging'
 
+
     case 'production':
     case 'prod':
       return 'production'
+
 
     default:
       return 'unknown'
@@ -133,7 +150,9 @@ function normalizeOrganizationRole(
 ):
   OrganizationRole |
   null {
-  switch (value) {
+  switch (
+    value
+  ) {
     case 'owner':
     case 'admin':
     case 'platform_engineer':
@@ -143,6 +162,7 @@ function normalizeOrganizationRole(
     case 'viewer':
       return value
 
+
     default:
       return null
   }
@@ -150,13 +170,12 @@ function normalizeOrganizationRole(
 
 
 /**
- * IMPORTANT
+ * Temporary fallback presentation adapter.
  *
- * This adapter creates presentation state only.
+ * It must never invent browser permissions.
  *
- * It intentionally returns NO permissions because permissions must ultimately
- * come from authoritative ProductContext rather than being invented in the
- * browser.
+ * Once authoritative /api/v1/product/context succeeds,
+ * ProductContextProvider replaces this state.
  */
 export function buildSessionProductPreview({
   user,
@@ -206,8 +225,7 @@ export function buildSessionProductPreview({
               normalizeId(
                 organization.id ??
                 organization._id,
-              ) ??
-              '',
+              ) ?? '',
 
             name:
               organization.name ??
@@ -226,8 +244,7 @@ export function buildSessionProductPreview({
               normalizeId(
                 environment.id ??
                 environment._id,
-              ) ??
-              '',
+              ) ?? '',
 
             name:
               environment.name ??
@@ -248,7 +265,7 @@ export function buildSessionProductPreview({
         : null,
 
     landingPath:
-      getDefaultProductLandingPath(
+      getProductLandingPathForPersona(
         persona,
       ),
   }

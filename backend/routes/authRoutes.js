@@ -4,12 +4,17 @@ const express = require("express");
 const Joi = require("joi");
 
 const {
-  register,
   login,
   safeUser,
   safeOrg,
   safeMembership,
 } = require("../services/identity/authService");
+
+const {
+  ProductRegistrationService,
+} = require(
+  "../services/product/productRegistrationService"
+);
 
 const {
   revokeSession,
@@ -49,6 +54,9 @@ const EnvironmentService = require(
 );
 
 const router = express.Router();
+
+const productRegistrationService =
+  new ProductRegistrationService();
 
 /**
  * ------------------------------------------------------------------
@@ -174,11 +182,17 @@ function clientIp(req) {
  *
  * POST /api/v1/auth/register
  *
- * Existing registration behavior remains unchanged.
+ * Canonical Phase 25 registration:
  *
- * organizationBootstrapService is invoked from authService,
- * so newly created organizations receive their default
- * environment and Developer subscription there.
+ * ProductRegistrationService
+ *   -> authService.register()
+ *   -> organization bootstrap
+ *   -> default environment
+ *   -> organization profile
+ *   -> ProductContext bootstrap
+ *
+ * Product bootstrap remains presentation/product state only.
+ * It grants no execution authority.
  */
 
 router.post(
@@ -187,18 +201,19 @@ router.post(
   async (req, res, next) => {
     try {
       const result =
-        await register(
-          req.validatedBody,
-          {
-            ip:
-              clientIp(req),
+        await productRegistrationService
+          .register(
+            req.validatedBody,
+            {
+              ip:
+                clientIp(req),
 
-            userAgent:
-              req.headers[
-                "user-agent"
-              ] || null,
-          }
-        );
+              userAgent:
+                req.headers[
+                  "user-agent"
+                ] || null,
+            }
+          );
 
       setSessionCookie(
         res,
@@ -220,6 +235,12 @@ router.post(
 
           csrfToken:
             result.csrfToken,
+
+          productBootstrap:
+            result.productBootstrap,
+
+          executionAuthorized:
+            false,
         });
     } catch (error) {
       return next(error);
@@ -286,17 +307,6 @@ router.post(
  * ------------------------------------------------------------------
  *
  * GET /api/v1/auth/session
- *
- * This is now the primary browser bootstrap endpoint.
- *
- * It returns:
- *
- * - authenticated user
- * - organization
- * - membership
- * - active/default environment
- * - session metadata
- * - CSRF token
  */
 
 router.get(
@@ -390,13 +400,6 @@ router.get(
  * ------------------------------------------------------------------
  *
  * GET /api/v1/auth/context
- *
- * Safe debugging/bootstrap endpoint showing what AIRA has
- * resolved for the current authenticated request.
- *
- * IMPORTANT:
- * Never serialize req.context directly because it contains
- * internal model references.
  */
 
 router.get(
@@ -477,8 +480,6 @@ router.get(
  * ------------------------------------------------------------------
  *
  * GET /api/v1/auth/csrf
- *
- * GET is CSRF-safe.
  */
 
 router.get(
@@ -518,8 +519,6 @@ router.get(
  * ------------------------------------------------------------------
  * LOGOUT
  * ------------------------------------------------------------------
- *
- * POST /api/v1/auth/logout
  */
 
 router.post(
@@ -568,8 +567,6 @@ router.post(
  * ------------------------------------------------------------------
  * LOGOUT ALL
  * ------------------------------------------------------------------
- *
- * POST /api/v1/auth/logout-all
  */
 
 router.post(
@@ -598,14 +595,6 @@ router.post(
           : null
       );
 
-      /*
-       * Preserve the existing behavior:
-       * the browser's current session cookie is cleared.
-       *
-       * If we later want keepCurrent=true to truly preserve
-       * the current browser session, we'll change that
-       * deliberately in the enterprise identity phase.
-       */
       clearSessionCookie(
         res
       );

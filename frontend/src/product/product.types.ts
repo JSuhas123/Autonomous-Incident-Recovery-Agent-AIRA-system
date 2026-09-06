@@ -15,8 +15,12 @@ export const PRODUCT_PERSONAS = {
     'executive',
 } as const
 
+
 export type ProductPersona =
-  (typeof PRODUCT_PERSONAS)[keyof typeof PRODUCT_PERSONAS]
+  (typeof PRODUCT_PERSONAS)[
+    keyof typeof PRODUCT_PERSONAS
+  ]
+
 
 export const ORGANIZATION_ROLES = {
   OWNER:
@@ -41,55 +45,83 @@ export const ORGANIZATION_ROLES = {
     'viewer',
 } as const
 
+
 export type OrganizationRole =
-  (typeof ORGANIZATION_ROLES)[keyof typeof ORGANIZATION_ROLES]
+  (typeof ORGANIZATION_ROLES)[
+    keyof typeof ORGANIZATION_ROLES
+  ]
+
 
 export interface ProductPersonaMetadata {
-  id: ProductPersona
+  id:
+    ProductPersona
 
-  label: string
+  label:
+    string
 
-  shortLabel: string
+  shortLabel:
+    string
 
-  description: string
+  description:
+    string
 
-  defaultLandingPath: string
+  defaultLandingPath:
+    string
 }
+
 
 export interface ProductIdentity {
-  userId: string
+  userId:
+    string | null
 
-  organizationId: string
+  membershipId:
+    string | null
 
-  membershipId: string | null
+  role:
+    OrganizationRole |
+    string
 
-  role: OrganizationRole | string
+  permissions:
+    string[]
 
-  permissions: string[]
+  persona:
+    ProductPersona
 
-  persona: ProductPersona
+  personaMetadata:
+    ProductPersonaMetadata
 }
+
 
 export interface ProductOrganizationSummary {
-  id: string
+  id:
+    string | null
 
-  tenantId: string | null
+  tenantId:
+    string | null
 
-  name: string
+  name:
+    string | null
 
-  slug: string
+  slug:
+    string | null
 
-  status: string
+  status:
+    string | null
 }
 
+
 export interface ProductEnvironmentSummary {
-  id: string
+  id:
+    string | null
 
-  organizationId: string | null
+  organizationId:
+    string | null
 
-  name: string
+  name:
+    string | null
 
-  slug: string
+  slug:
+    string | null
 
   type:
     | 'development'
@@ -97,28 +129,80 @@ export interface ProductEnvironmentSummary {
     | 'staging'
     | 'production'
     | 'custom'
+    | string
+    | null
 
   criticality:
     | 'low'
     | 'medium'
     | 'high'
     | 'critical'
+    | string
+    | null
 
   status:
     | 'active'
     | 'maintenance'
     | 'archived'
+    | string
+    | null
 }
 
-export interface ProductContext {
-  identity: ProductIdentity
 
-  organization:
-    ProductOrganizationSummary
-
-  environment:
-    ProductEnvironmentSummary | null
-
+export interface ProductRequestContext {
   requestId:
     string | null
+
+  authenticationType:
+    string | null
+}
+
+
+export interface ProductSafetyContext {
+  personaGrantsAuthorization:
+    false
+
+  browserOrganizationAuthoritative:
+    false
+
+  browserEnvironmentAuthoritative:
+    false
+
+  executionAuthorized:
+    false
+}
+
+
+export interface ProductContext {
+  version:
+    string
+
+  identity:
+    ProductIdentity
+
+  organization:
+    ProductOrganizationSummary |
+    null
+
+  environment:
+    ProductEnvironmentSummary |
+    null
+
+  request:
+    ProductRequestContext
+
+  safety:
+    ProductSafetyContext
+}
+
+
+export interface ProductContextResponse {
+  success:
+    boolean
+
+  data:
+    ProductContext
+
+  executionAuthorized:
+    false
 }

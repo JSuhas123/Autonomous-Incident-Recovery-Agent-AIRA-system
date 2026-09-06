@@ -6,12 +6,12 @@ import {
   type ProductPersonaMetadata,
 } from './product.types'
 
+
 export const PRODUCT_PERSONA_METADATA:
   Record<ProductPersona, ProductPersonaMetadata> = {
     [PRODUCT_PERSONAS.ADMINISTRATION]: {
       id:
-        PRODUCT_PERSONAS
-          .ADMINISTRATION,
+        PRODUCT_PERSONAS.ADMINISTRATION,
 
       label:
         'Administration',
@@ -28,8 +28,7 @@ export const PRODUCT_PERSONA_METADATA:
 
     [PRODUCT_PERSONAS.OPERATIONS]: {
       id:
-        PRODUCT_PERSONAS
-          .OPERATIONS,
+        PRODUCT_PERSONAS.OPERATIONS,
 
       label:
         'Operations',
@@ -46,8 +45,7 @@ export const PRODUCT_PERSONA_METADATA:
 
     [PRODUCT_PERSONAS.DEVELOPER]: {
       id:
-        PRODUCT_PERSONAS
-          .DEVELOPER,
+        PRODUCT_PERSONAS.DEVELOPER,
 
       label:
         'Developer',
@@ -59,13 +57,12 @@ export const PRODUCT_PERSONA_METADATA:
         'Service-focused reliability, incidents, changes, recommendations and engineering guidance.',
 
       defaultLandingPath:
-        '/my-services',
+        '/services',
     },
 
     [PRODUCT_PERSONAS.GOVERNANCE]: {
       id:
-        PRODUCT_PERSONAS
-          .GOVERNANCE,
+        PRODUCT_PERSONAS.GOVERNANCE,
 
       label:
         'Governance',
@@ -82,8 +79,7 @@ export const PRODUCT_PERSONA_METADATA:
 
     [PRODUCT_PERSONAS.EXECUTIVE]: {
       id:
-        PRODUCT_PERSONAS
-          .EXECUTIVE,
+        PRODUCT_PERSONAS.EXECUTIVE,
 
       label:
         'Executive',
@@ -95,53 +91,58 @@ export const PRODUCT_PERSONA_METADATA:
         'High-level reliability, business impact, recovery coverage and operational risk.',
 
       defaultLandingPath:
-        '/reliability',
+        '/executive',
     },
   }
 
+
 const DEFAULT_PERSONA_BY_ROLE:
-  Partial<Record<OrganizationRole, ProductPersona>> = {
+  Partial<
+    Record<
+      OrganizationRole,
+      ProductPersona
+    >
+  > = {
     [ORGANIZATION_ROLES.OWNER]:
-      PRODUCT_PERSONAS
-        .ADMINISTRATION,
+      PRODUCT_PERSONAS.ADMINISTRATION,
 
     [ORGANIZATION_ROLES.ADMIN]:
-      PRODUCT_PERSONAS
-        .ADMINISTRATION,
+      PRODUCT_PERSONAS.ADMINISTRATION,
 
     [ORGANIZATION_ROLES.PLATFORM_ENGINEER]:
-      PRODUCT_PERSONAS
-        .OPERATIONS,
+      PRODUCT_PERSONAS.OPERATIONS,
 
     [ORGANIZATION_ROLES.DEVELOPER]:
-      PRODUCT_PERSONAS
-        .DEVELOPER,
+      PRODUCT_PERSONAS.DEVELOPER,
 
     [ORGANIZATION_ROLES.SECURITY_ANALYST]:
-      PRODUCT_PERSONAS
-        .GOVERNANCE,
+      PRODUCT_PERSONAS.GOVERNANCE,
 
     [ORGANIZATION_ROLES.AUDITOR]:
-      PRODUCT_PERSONAS
-        .GOVERNANCE,
+      PRODUCT_PERSONAS.GOVERNANCE,
 
     [ORGANIZATION_ROLES.VIEWER]:
-      PRODUCT_PERSONAS
-        .EXECUTIVE,
+      PRODUCT_PERSONAS.EXECUTIVE,
   }
 
+
 export function isProductPersona(
-  value: unknown,
+  value:
+    unknown,
 ): value is ProductPersona {
   return (
-    typeof value === 'string' &&
+    typeof value ===
+      'string' &&
     Object
-      .values(PRODUCT_PERSONAS)
+      .values(
+        PRODUCT_PERSONAS,
+      )
       .includes(
         value as ProductPersona,
       )
   )
 }
+
 
 export function getDefaultPersonaForRole(
   role:
@@ -153,6 +154,7 @@ export function getDefaultPersonaForRole(
     return PRODUCT_PERSONAS.EXECUTIVE
   }
 
+
   return (
     DEFAULT_PERSONA_BY_ROLE[
       role as OrganizationRole
@@ -160,6 +162,7 @@ export function getDefaultPersonaForRole(
     PRODUCT_PERSONAS.EXECUTIVE
   )
 }
+
 
 export function getProductPersonaMetadata(
   persona:
@@ -180,6 +183,7 @@ export function getProductPersonaMetadata(
     )
   }
 
+
   return (
     PRODUCT_PERSONA_METADATA[
       persona
@@ -187,6 +191,31 @@ export function getProductPersonaMetadata(
   )
 }
 
+
+/**
+ * Persona → presentation landing.
+ *
+ * IMPORTANT:
+ *
+ * This function accepts a ProductPersona.
+ *
+ * It does NOT derive permissions and it does NOT perform authorization.
+ */
+export function getProductLandingPathForPersona(
+  persona:
+    ProductPersona,
+): string {
+  return (
+    PRODUCT_PERSONA_METADATA[
+      persona
+    ].defaultLandingPath
+  )
+}
+
+
+/**
+ * Role → persona → presentation landing.
+ */
 export function getDefaultProductLandingPath(
   role:
     | string
@@ -198,9 +227,10 @@ export function getDefaultProductLandingPath(
       role,
     )
 
+
   return (
-    PRODUCT_PERSONA_METADATA[
-      persona
-    ].defaultLandingPath
+    getProductLandingPathForPersona(
+      persona,
+    )
   )
 }

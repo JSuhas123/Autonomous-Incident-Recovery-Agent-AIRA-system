@@ -1,4 +1,4 @@
-require("dotenv").config();
+﻿require("dotenv").config();
 
 /**
  * ============================================================================
@@ -52,6 +52,10 @@ if (
  * ============================================================================
  * STARTUP CONFIGURATION VALIDATION
  * ============================================================================
+ *
+ * Validation intentionally runs before the rest of the application is loaded.
+ * This prevents AIRA from partially booting with invalid persistence, security,
+ * queue, cache, CORS, or execution configuration.
  */
 
 const {
@@ -81,7 +85,6 @@ const http =
 // ============================================================================
 // PHASE 12.1 - AUTHORITATIVE AGENT INTELLIGENCE RUNTIME
 // ============================================================================
-
 const coverageRoutes =
   require(
     "./routes/coverageRoutes"
@@ -107,7 +110,7 @@ const {
   require(
     "./services/learning"
   );
-
+// CRITICAL: Initialize and validate feature flags before any other system starts
 const featureFlags =
   require(
     "./config/featureFlags"
@@ -137,7 +140,6 @@ const confidenceRoutes =
   require(
     "./routes/confidenceRoutes"
   );
-
 const selfObservabilityCollector =
   require(
     "./services/observability/selfObservabilityCollector"
@@ -230,7 +232,7 @@ const {
     "./services/monitoring/monitorScheduler"
   );
 
-const {
+  const {
   getPostgresConfig,
 } =
   require(
@@ -244,10 +246,7 @@ const {
     "./persistence/postgres"
   );
 
-// ============================================================================
-// PHASE 1 SAFETY
-// ============================================================================
-
+// PHASE 1 SAFETY: Import kill switch and sanitization middleware
 const {
   sanitizationMiddleware,
   testXSSPayloads,
@@ -332,51 +331,10 @@ const cookieParser =
     "cookie-parser"
   );
 
-// ============================================================================
-// AUTHENTICATION ROUTES
-// ============================================================================
-
 const authRoutes =
   require(
     "./routes/authRoutes"
   );
-
-// ============================================================================
-// PHASE 25 PRODUCT CONTROL PLANE
-// ============================================================================
-
-const {
-  createProductContextRouter,
-} =
-  require(
-    "./routes/productContextRoutes"
-  );
-
-const {
-  createProductOrganizationProfileRouter,
-} =
-  require(
-    "./routes/productOrganizationProfileRoutes"
-  );
-
-const {
-  requireOrganizationPermission,
-} =
-  require(
-    "./middleware/authorizationMiddleware"
-  );
-
-const {
-  PERMISSIONS,
-} =
-  require(
-    "./constants/permissions"
-  );
-
-// ============================================================================
-// ENTERPRISE IDENTITY
-// ============================================================================
-
 const enterpriseIdentityRoutes =
   require(
     "./routes/enterpriseIdentityRoutes"
@@ -430,26 +388,8 @@ const {
     "./middleware/inputValidationMiddleware"
   );
 
-// ============================================================================
-// CANONICAL BROWSER CONTEXT STACKS
-// ============================================================================
-//
-// browserOrganizationContext:
-//   sessionAuthMiddleware
-//   -> requestContextMiddleware
-//
-// browserEnvironmentContext:
-//   sessionAuthMiddleware
-//   -> requestContextMiddleware
-//   -> environmentContextMiddleware
-//
-// Never stack sessionAuthMiddleware again before these arrays.
-// ============================================================================
-
 const {
-  browserOrganizationContext,
   browserEnvironmentContext,
-  browserOptionalEnvironmentContext,
 } =
   require(
     "./middleware/contextMiddleware"
@@ -510,7 +450,6 @@ const diagnosisQueueConsumer =
   require(
     "./services/diagnosis/diagnosisQueueConsumer"
   );
-
 const onboardingRoutes =
   require(
     "./routes/onboardingRoutes"
@@ -520,7 +459,7 @@ const auditCompletenessRoutes =
   require(
     "./routes/auditCompletenessRoutes"
   );
-
+  
 const {
   createWorkflowOutboxComposition,
 } =
@@ -578,7 +517,7 @@ const dependencyIsolationService =
     "./services/infrastructure/dependencyIsolationService"
   );
 
-const productionReadinessService =
+  const productionReadinessService =
   require(
     "./services/infrastructure/productionReadinessService"
   );
@@ -588,12 +527,12 @@ const sloService =
     "./services/reliability/sloService"
   );
 
-const serviceAccountRoutes =
+  const serviceAccountRoutes =
   require(
     "./routes/serviceAccountRoutes"
   );
 
-const tenantSettingsRoutes =
+  const tenantSettingsRoutes =
   require(
     "./routes/tenantSettingsRoutes"
   );
@@ -603,41 +542,36 @@ const integrationGovernanceRoutes =
     "./routes/integrationGovernanceRoutes"
   );
 
-const notificationRoutingRoutes =
+  const notificationRoutingRoutes =
   require(
     "./routes/notificationRoutingRoutes"
   );
 
-const integrationPlatformRoutes =
+  const integrationPlatformRoutes =
   require(
     "./routes/integrationPlatformRoutes"
   );
-
+  
 const humanTaskRoutes =
   require(
     "./routes/humanTaskRoutes"
   );
-
 const certificationRoutes =
   require(
     "./routes/certificationRoutes"
   );
-
-const organizationInvitationRoutes =
+  const organizationInvitationRoutes =
   require(
     "./routes/organizationInvitationRoutes"
   );
-
 const retentionService =
   require(
     "./services/infrastructure/retentionService"
   );
-
 const paymentWebhookRoutes =
   require(
     "./routes/paymentWebhookRoutes"
   );
-
 const incidentCommandRoutes =
   require(
     "./routes/incidentCommandRoutes"
@@ -649,6 +583,7 @@ const {
   require(
     "./config/killSwitches"
   );
+
 
 const app =
   express();
@@ -669,9 +604,9 @@ const lifecycleRoutes =
     "./routes/lifecycleRoutes"
   );
 
-// ============================================================================
-// CORS CONFIGURATION
-// ============================================================================
+// ---------------------------------------------------------------------------
+// CORS configuration
+// ---------------------------------------------------------------------------
 
 const PRODUCTION_FRONTENDS = [
   "https://autonomous-incident-recovery-agent-ten.vercel.app",
@@ -722,6 +657,7 @@ const allowedOrigins =
       DEFAULT_ORIGINS
   );
 
+// Safe startup log - no secrets
 console.log(
   `[server] CORS: ${allowedOrigins.length} allowed origin(s) | env=${process.env.NODE_ENV || "development"} | credentials=true`
 );
@@ -746,7 +682,7 @@ if (
     missing.length
   ) {
     console.warn(
-      `[server] [WARN] CORS: missing production origin(s): ${missing.join(", ")}`
+      `[server] [WARN]  CORS: missing production origin(s): ${missing.join(", ")}`
     );
   }
 }
@@ -756,6 +692,7 @@ const corsOptions = {
     origin,
     callback
   ) {
+    // Allow requests without Origin (server-to-server, curl, health checks)
     if (
       !origin
     ) {
@@ -783,6 +720,7 @@ const corsOptions = {
       );
     }
 
+    // Return controlled false - do NOT throw, which would produce a 500
     console.warn(
       `[cors] Rejected origin: ${origin}`
     );
@@ -835,18 +773,34 @@ const corsOptions = {
 // PHASE 15.18 — PAYMENT WEBHOOKS
 // ============================================================================
 //
-// Payment webhooks MUST remain before express.json().
+// IMPORTANT:
 //
-// Stripe/Razorpay signatures use the original HTTP request body.
+// Payment-provider webhooks MUST be mounted before express.json().
+//
+// Razorpay and Stripe signatures are verified against the original raw HTTP
+// request body. paymentWebhookRoutes uses express.raw({ type:
+// "application/json" }) internally.
+//
+// Never move this route below express.json().
 // ============================================================================
 
 app.use(
   "/api/billing/webhooks",
   paymentWebhookRoutes
 );
-
 // ============================================================================
 // GLOBAL JSON BODY PARSER
+// ============================================================================
+//
+// IMPORTANT:
+//
+// Payment-provider webhooks are intentionally mounted ABOVE this parser.
+//
+// Razorpay and Stripe webhook signature verification requires the original
+// raw HTTP request body. paymentWebhookRoutes owns its own express.raw()
+// parser, while all normal AIRA JSON APIs use this global parser.
+//
+// Never move this middleware above /api/billing/webhooks.
 // ============================================================================
 
 app.use(
@@ -857,13 +811,15 @@ app.use(
 // GLOBAL HTTP MIDDLEWARE
 // ============================================================================
 
+// 1. CORS headers on every response (including preflight)
 app.use(
   cors(
     corsOptions
   )
 );
 
-// Respond to CORS preflight before authentication.
+
+// 2. Respond 204 to all OPTIONS requests immediately — before auth middleware
 app.use(
   (
     req,
@@ -885,10 +841,15 @@ app.use(
   }
 );
 
+
+
+
+// 4. Parse cookies.
 app.use(
   cookieParser()
 );
 
+// CRITICAL AUDIT: Add correlation ID tracking (must be early)
 app.use(
   correlationIdMiddleware
 );
@@ -904,8 +865,8 @@ app.use(
     next
   ) => {
     /*
-     * Health, authentication and preflight traffic remain reachable
-     * while AIRA starts, recovers or drains.
+     * Health, authentication and preflight traffic must remain reachable
+     * while AIRA is starting, recovering or draining.
      */
     const alwaysAllowed =
       req.path ===
@@ -923,6 +884,21 @@ app.use(
       return next();
     }
 
+    /*
+     * Read-only traffic can remain available while startup recovery
+     * is incomplete. Any state-changing request is blocked.
+     *
+     * This also provides a clean admission seam for the later
+     * production-hardening phases:
+     *
+     * 11.11 retention/archival
+     * 11.12 self-observability
+     * 11.13 SLO state
+     * 11.14 configuration validation
+     * 11.15 chaos/failure injection
+     * 11.16 production E2E
+     * 11.17 security/regression freeze
+     */
     const readOnly =
       req.method ===
         "GET" ||
@@ -987,32 +963,6 @@ app.use(
   }
 );
 
-// ============================================================================
-// PHASE 25 — PRODUCT ROUTER CONSTRUCTION
-// ============================================================================
-
-const productContextRoutes =
-  createProductContextRouter();
-
-const productOrganizationProfileRoutes =
-  createProductOrganizationProfileRouter({
-    readPreHandlers: [
-      requireOrganizationPermission(
-        PERMISSIONS.ORGANIZATION_READ
-      ),
-    ],
-
-    writePreHandlers: [
-      requireOrganizationPermission(
-        PERMISSIONS.ORGANIZATION_MANAGE
-      ),
-    ],
-  });
-
-// ============================================================================
-// EARLY CONTROL-PLANE ROUTES
-// ============================================================================
-
 app.use(
   "/api",
   recoveryDecisionRoutes
@@ -1021,29 +971,36 @@ app.use(
 app.use(
   "/api/v1/tenant-settings",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   tenantSettingsRoutes
 );
-
 app.use(
   "/api/v1/integration-governance",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   browserEnvironmentContext,
 
   integrationGovernanceRoutes
 );
-
 app.use(
   "/api/v1/coverage",
-
+  sessionAuthMiddleware,
   browserEnvironmentContext,
-
   coverageRoutes
 );
 
 app.use(
   "/api/v1/integration-platform",
+
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   browserEnvironmentContext,
 
@@ -1053,13 +1010,17 @@ app.use(
 app.use(
   "/api/v1/notification-routing",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   notificationRoutingRoutes
 );
 
 app.use(
   "/api/v1/human-tasks",
+
+  sessionAuthMiddleware,
 
   browserEnvironmentContext,
 
@@ -1069,6 +1030,10 @@ app.use(
 app.use(
   "/api/v1/certifications",
 
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
+
   browserEnvironmentContext,
 
   certificationRoutes
@@ -1077,80 +1042,40 @@ app.use(
 app.use(
   "/api/v1/onboarding",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   onboardingRoutes
 );
-
 app.use(
   "/api/v1/audit-control",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   auditCompletenessRoutes
 );
-
-// ============================================================================
-// HUMAN AUTH ROUTES
-// ============================================================================
-//
-// Must remain before global sanitization because password fields must not be
-// rewritten by XSS sanitization middleware.
-// ============================================================================
-
+// Human auth routes mount before sanitization so passwords are not XSS-stripped
 app.use(
   "/api/v1/auth",
   authRoutes
 );
-
-// ============================================================================
-// PHASE 25 — PRODUCT CONTROL PLANE
-// ============================================================================
-//
-// Scope comes from canonical authenticated server context.
-//
-// Browser supplied organizationId / tenantId / environmentId is never
-// authoritative.
-//
-// Product persona is presentation-only.
-//
-// None of these routes grant execution authority.
-// ============================================================================
-
-app.use(
-  "/api/v1/product/context",
-
-  browserEnvironmentContext,
-
-  productContextRoutes
-);
-
-app.use(
-  "/api/v1/product/organization-profile",
-
-  browserEnvironmentContext,
-
-  productOrganizationProfileRoutes
-);
-
-// ============================================================================
-// ENTERPRISE AUTH / IDENTITY
-// ============================================================================
-
 app.use(
   "/api/v1/enterprise-auth",
   enterpriseAuthRoutes
 );
-
 app.use(
   "/api/v1/organizations",
   organizationRoutes
 );
-
 app.use(
   "/api/v1/enterprise-identity",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   enterpriseIdentityRoutes
 );
@@ -1164,11 +1089,11 @@ app.use(
   "/api/v1/organization-invitations",
   organizationInvitationRoutes
 );
-
 /*
  * LOCAL/DEVELOPMENT tooling.
  *
- * Router independently refuses access when NODE_ENV === "production".
+ * The router independently refuses all access when
+ * NODE_ENV === "production".
  */
 app.use(
   "/api/v1/dev",
@@ -1178,7 +1103,9 @@ app.use(
 app.use(
   "/api/v1/service-accounts",
 
-  browserOrganizationContext,
+  sessionAuthMiddleware,
+
+  organizationContextMiddleware,
 
   serviceAccountRoutes
 );
@@ -1186,38 +1113,24 @@ app.use(
 app.use(
   "/api/v1/incidents/:incidentId/command",
 
+  sessionAuthMiddleware,
+
   browserEnvironmentContext,
 
   incidentCommandRoutes
 );
 
-// ============================================================================
-// EXECUTION / VERIFICATION / LIFECYCLE
-// ============================================================================
-//
-// browserEnvironmentContext already contains:
-//
-// sessionAuthMiddleware
-// requestContextMiddleware
-// environmentContextMiddleware
-//
-// Do not duplicate those middlewares.
-// ============================================================================
-
 app.use(
   "/api",
-
-  browserEnvironmentContext,
-
+  sessionAuthMiddleware,
+  requestContextMiddleware,
+  environmentContextMiddleware,
   executionRoutes,
   verificationRoutes,
   lifecycleRoutes
 );
 
-// ============================================================================
-// GLOBAL SAFETY MIDDLEWARE
-// ============================================================================
-
+// PHASE 1 SAFETY: Apply sanitization and kill switch enforcement
 app.use(
   sanitizationMiddleware(
     null,
@@ -1238,9 +1151,8 @@ app.use(
 
 app.use(
   "/api/v1/signals",
-
+  sessionAuthMiddleware,
   browserEnvironmentContext,
-
   signalRoutes
 );
 
@@ -1249,10 +1161,7 @@ const recoveryDecisionQueueConsumer =
     "./services/recovery/recoveryDecisionQueueConsumer"
   );
 
-// ============================================================================
-// PUBLIC ROOT / HEALTH
-// ============================================================================
-
+// Health check endpoint (no auth required)
 app.get(
   "/",
   (
@@ -1275,6 +1184,7 @@ app.get(
   }
 );
 
+// Lightweight liveness probe - always 200 once Express is up
 app.get(
   "/health/live",
   (
@@ -1320,40 +1230,100 @@ app.get(
 
         required:
           postgresRuntimeStatus
-            .required,
+            .enabled,
 
-        ready:
+        initialized:
+          true,
+
+        healthy:
           false,
 
-        lastCheckedAt:
-          new Date(),
+        status:
+          "unhealthy",
 
-        lastError:
-          error.message,
+        error: {
+          code:
+            error.code ||
+            "POSTGRES_READINESS_FAILED",
+
+          message:
+            error.message,
+        },
+
+        executionAuthorized:
+          false,
       };
+
+      postgresRuntimeStatus
+        .initialized =
+        true;
+
+      postgresRuntimeStatus
+        .healthy =
+        false;
+
+      postgresRuntimeStatus
+        .checkedAt =
+        new Date();
+
+      postgresRuntimeStatus
+        .lastError =
+        error.message;
     }
 
-    const readiness =
-      await getApplicationReadinessSnapshot({
-        postgres,
-      });
+    const ready =
+      isApplicationReady();
 
     return res
       .status(
-        readiness.ready
+        ready
           ? 200
           : 503
       )
-      .json(
-        readiness
-      );
+      .json({
+        status:
+          ready
+            ? "ready"
+            : "not-ready",
+
+        lifecycle:
+          getApplicationLifecycleStatus(),
+
+        postgres,
+
+        replayRecovery: {
+          initialized:
+            replayRecoveryStatus
+              .initialized,
+
+          startupRecoveryCompleted:
+            replayRecoveryStatus
+              .startupRecoveryCompleted,
+
+          discovered:
+            replayRecoveryStatus
+              .discovered,
+
+          recovered:
+            replayRecoveryStatus
+              .recovered,
+
+          failed:
+            replayRecoveryStatus
+              .failed,
+
+          lastError:
+            replayRecoveryStatus
+              .lastError,
+        },
+
+        executionAuthorized:
+          false,
+      });
   }
 );
 
-// ============================================================================
-// HEALTH — ORCHESTRATION SUMMARY
-// ============================================================================
-
+// Health check for orchestration
 app.get(
   "/health",
   async (
@@ -1475,22 +1445,9 @@ app.get(
   }
 );
 
-// ============================================================================
-// INTERNAL ENDPOINT AUTHORIZATION
-// ============================================================================
-
 /**
- * Internal-only health/metrics endpoints may optionally be protected by
- * INTERNAL_API_TOKEN.
- *
- * If the token is absent, existing development behavior is preserved.
- *
- * If it exists, the caller must provide:
- *
- * Authorization: Bearer <INTERNAL_API_TOKEN>
- *
- * timingSafeEqual protects against trivial timing comparison leakage.
- */
+ * Internal-endpoint token guard.
+ *  */
 function internalTokenGuard(
   req,
   res,
@@ -1601,18 +1558,13 @@ function internalTokenGuard(
       });
   }
 
-  return next();
+  next();
 }
 
-// ============================================================================
-// METRICS
-// ============================================================================
-
+// Metrics endpoint
 app.get(
   "/metrics",
-
   internalTokenGuard,
-
   async (
     req,
     res
@@ -1621,6 +1573,7 @@ app.get(
       const queueStatus =
         queueService ||
         null;
+
 
       const outboxStatus =
         workflowOutboxRuntime &&
@@ -1631,6 +1584,7 @@ app.get(
               .getStatus()
           : null;
 
+
       const consumerStatus =
         workflowOutboxConsumers &&
         typeof workflowOutboxConsumers
@@ -1639,6 +1593,7 @@ app.get(
           ? workflowOutboxConsumers
               .getStatus()
           : null;
+
 
       await selfObservabilityCollector
         .collect({
@@ -1670,15 +1625,16 @@ app.get(
                       false,
                   },
 
-            memoryCleanup: {
-              running:
-                memoryCleanupJob
-                  .isRunning,
+            memoryCleanup:
+              {
+                running:
+                  memoryCleanupJob
+                    .isRunning,
 
-              active:
-                memoryCleanupJob
-                  .cleanupInProgress,
-            },
+                active:
+                  memoryCleanupJob
+                    .cleanupInProgress,
+              },
 
             multiInstance:
               global
@@ -1694,15 +1650,18 @@ app.get(
           },
         });
 
+
       res.set(
         "Content-Type",
         metricsService
           .getContentType()
       );
 
+
       const metrics =
         await metricsService
           .getMetrics();
+
 
       return res
         .status(
@@ -1719,6 +1678,7 @@ app.get(
           "metrics-endpoint",
           error
         );
+
 
       return res
         .status(
@@ -1738,15 +1698,10 @@ app.get(
   }
 );
 
-// ============================================================================
-// DETAILED HEALTH
-// ============================================================================
-
+// Extended health endpoint
 app.get(
   "/health/detailed",
-
   internalTokenGuard,
-
   async (
     req,
     res
@@ -1758,6 +1713,7 @@ app.get(
       const currentIdempotencyService =
         await getIdempotencyService();
 
+
       // ======================================================================
       // SYSTEM HEALTH
       // ======================================================================
@@ -1766,24 +1722,36 @@ app.get(
         systemHealthService
           .getHealthStatus();
 
+
       // ======================================================================
-      // DEPENDENCY ISOLATION
+      // PHASE 11.5 - DEPENDENCY ISOLATION HEALTH
       // ======================================================================
 
       const dependencyIsolationSummary =
         dependencyIsolationService
           .getSummary();
 
+
       const dependencyIsolationStatuses =
         dependencyIsolationService
           .getAllStatuses();
 
+
       // ======================================================================
-      // LOAD PROTECTION
+      // PHASE 11.6 - ADMISSION / LOAD PROTECTION
       // ======================================================================
+
+      /*
+       * Rate limiter status describes API admission capacity.
+       *
+       * Queue load status describes asynchronous publisher pressure.
+       *
+       * Neither layer grants execution authority.
+       */
 
       const rateLimitService =
         getRateLimitService();
+
 
       const rateLimitStatus =
         rateLimitService &&
@@ -1794,6 +1762,7 @@ app.get(
               .getStatus()
           : null;
 
+
       const queueLoadStatus =
         currentQueueService &&
         typeof currentQueueService
@@ -1803,11 +1772,13 @@ app.get(
               .getLoadStatus()
           : null;
 
+
       const admissionDegraded =
         Boolean(
           rateLimitStatus
             ?.fallbackActive
         );
+
 
       const queueSaturated =
         Boolean(
@@ -1816,6 +1787,7 @@ app.get(
           queueLoadStatus
             ?.publisherBlocked
         );
+
 
       const loadProtection = {
         admission: {
@@ -1860,6 +1832,7 @@ app.get(
           executionAuthorized:
             false,
         },
+
 
         queue: {
           available:
@@ -1937,6 +1910,13 @@ app.get(
             false,
         },
 
+
+        /*
+         * Redis-backed admission may degrade safely to the bounded
+         * local limiter.
+         *
+         * Queue saturation is reported independently.
+         */
         degraded:
           admissionDegraded ||
           queueSaturated,
@@ -1944,6 +1924,7 @@ app.get(
         executionAuthorized:
           false,
       };
+
 
       // ======================================================================
       // WORKFLOW OUTBOX
@@ -1955,11 +1936,13 @@ app.get(
               .getStatus()
           : null;
 
+
       const outboxConsumerStatus =
         workflowOutboxConsumers
           ? workflowOutboxConsumers
               .getStatus()
           : null;
+
 
       // ======================================================================
       // FEATURE FLAGS
@@ -1968,6 +1951,7 @@ app.get(
       const allFeatureFlags =
         featureFlags
           .getAllFlags();
+
 
       const enabledFeatureFlags =
         allFeatureFlags
@@ -1978,6 +1962,7 @@ app.get(
               flag.enabled
           );
 
+
       const disabledFeatureFlags =
         allFeatureFlags
           .filter(
@@ -1987,9 +1972,32 @@ app.get(
               !flag.enabled
           );
 
+               // ======================================================================
+      // PHASE 11.16 - PRODUCTION READINESS
       // ======================================================================
+
+      /*
+       * Production readiness answers:
+       *
+       *   "Can this AIRA instance safely serve production traffic?"
+       *
+       * It DOES NOT authorize infrastructure execution.
+       *
+       * Actual action execution continues through:
+       *
+       * policy
+       * approval
+       * execution authorization
+       * kill switches
+       * idempotency
+       * locking
+       * execution gates
+       */
+
+
+      // ----------------------------------------------------------------------
       // STARTUP CONFIGURATION
-      // ======================================================================
+      // ----------------------------------------------------------------------
 
       const configurationStatus =
         inspectEnvironment({
@@ -2001,9 +2009,10 @@ app.get(
             "production",
         });
 
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
       // APPLICATION LIFECYCLE
-      // ======================================================================
+      // ----------------------------------------------------------------------
 
       const applicationLifecycleStatus =
         typeof getApplicationLifecycleStatus ===
@@ -2011,9 +2020,10 @@ app.get(
           ? getApplicationLifecycleStatus()
           : null;
 
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
       // RETENTION
-      // ======================================================================
+      // ----------------------------------------------------------------------
 
       const retentionStatus =
         retentionService &&
@@ -2024,16 +2034,19 @@ app.get(
               .getStatus()
           : null;
 
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
       // KILL SWITCHES
-      // ======================================================================
+      // ----------------------------------------------------------------------
 
       let killSwitchStatus =
         null;
 
+
       try {
         const killSwitchManager =
           getKillSwitchManager();
+
 
         killSwitchStatus =
           killSwitchManager &&
@@ -2061,12 +2074,14 @@ app.get(
         };
       }
 
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
       // FEATURE FLAG SAFETY
-      // ======================================================================
+      // ----------------------------------------------------------------------
 
       let featureFlagSafety =
         null;
+
 
       try {
         featureFlagSafety =
@@ -2084,8 +2099,7 @@ app.get(
                   "Feature flag validation unavailable",
                 ],
 
-                errors:
-                  [],
+                errors: [],
               };
       } catch (
         error
@@ -2103,12 +2117,14 @@ app.get(
         };
       }
 
-      // ======================================================================
-      // SLO / RELIABILITY
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
+      // RELIABILITY / SLO
+      // ----------------------------------------------------------------------
 
       let reliabilityStatus =
         null;
+
 
       try {
         reliabilityStatus =
@@ -2134,10 +2150,21 @@ app.get(
         };
       }
 
-      // ======================================================================
-      // CHAOS POSTURE
-      // ======================================================================
 
+      // ----------------------------------------------------------------------
+      // CHAOS SAFETY POSTURE
+      // ----------------------------------------------------------------------
+
+      /*
+       * server.js currently does not own a runtime ChaosTestFramework
+       * singleton.
+       *
+       * Therefore readiness evaluates the configured production
+       * chaos posture directly from environment settings.
+       *
+       * If a runtime chaos coordinator is introduced later,
+       * replace activeFailures below with its getStatus().
+       */
       const chaosStatus = {
         environment:
           process.env.NODE_ENV ||
@@ -2168,9 +2195,10 @@ app.get(
           false,
       };
 
-      // ======================================================================
-      // PRODUCTION READINESS
-      // ======================================================================
+
+      // ----------------------------------------------------------------------
+      // FINAL READINESS EVALUATION
+      // ----------------------------------------------------------------------
 
       const productionReadiness =
         productionReadinessService
@@ -2181,18 +2209,38 @@ app.get(
             lifecycle:
               applicationLifecycleStatus,
 
+            replayRecovery:
+              replayRecoveryStatus,
+
+            systemHealth,
+
             dependencyIsolation: {
               summary:
                 dependencyIsolationSummary,
 
               dependencies:
                 dependencyIsolationStatuses,
+
+              executionAuthorized:
+                false,
             },
 
-            loadProtection,
+            outbox: {
+              runtime:
+                outboxRuntimeStatus,
+
+              consumers:
+                outboxConsumerStatus,
+
+              executionAuthorized:
+                false,
+            },
 
             retention:
               retentionStatus,
+
+            chaos:
+              chaosStatus,
 
             killSwitches:
               killSwitchStatus,
@@ -2202,52 +2250,50 @@ app.get(
 
             reliability:
               reliabilityStatus,
-
-            chaos:
-              chaosStatus,
-
-            systemHealth,
-
-            workflowOutbox: {
-              runtime:
-                outboxRuntimeStatus,
-
-              consumers:
-                outboxConsumerStatus,
-            },
-
-            replayRecovery:
-              replayRecoveryStatus,
           });
-
       // ======================================================================
-      // RESPONSE MODEL
+      // FINAL HEALTH RESPONSE
       // ======================================================================
 
       const health = {
-        status:
+        /*
+         * systemHealthService remains the authoritative
+         * instance-safety signal.
+         *
+         * Lifecycle readiness is separate from process liveness.
+         */
+                status:
           productionReadiness
-            .readyToServeTraffic
-            ? "healthy"
-            : "degraded",
+            .state ===
+          "NOT_READY"
+            ? "unhealthy"
+            : productionReadiness
+                .state ===
+              "DEGRADED"
+              ? "degraded"
+              : "healthy",
+
+
+        applicationLifecycle:
+          getApplicationLifecycleStatus(),
+
 
         timestamp:
           new Date()
             .toISOString(),
 
-        environment:
-          process.env.NODE_ENV ||
-          "development",
 
-        lifecycle:
-          applicationLifecycleStatus,
+        deploymentMode:
+          systemHealth
+            .deploymentMode,
+
 
         safeMode:
           systemHealth
             .safeMode,
-
-        // ====================================================================
-        // PRODUCTION READINESS
+   
+                    // ====================================================================
+        // PHASE 11.16 - PRODUCTION READINESS
         // ====================================================================
 
         productionReadiness: {
@@ -2287,12 +2333,15 @@ app.get(
             productionReadiness
               .evaluatedAt,
 
+          /*
+           * Readiness NEVER authorizes an infrastructure action.
+           */
           executionAuthorized:
             false,
         },
 
         // ====================================================================
-        // DEPENDENCY ISOLATION
+        // PHASE 11.5 - DEPENDENCY ISOLATION
         // ====================================================================
 
         dependencyIsolation: {
@@ -2306,11 +2355,13 @@ app.get(
             false,
         },
 
+
         // ====================================================================
-        // LOAD PROTECTION
+        // PHASE 11.6 - LOAD PROTECTION
         // ====================================================================
 
         loadProtection,
+
 
         // ====================================================================
         // FEATURE FLAGS
@@ -2339,6 +2390,7 @@ app.get(
               ),
         },
 
+
         // ====================================================================
         // COMPONENT HEALTH
         // ====================================================================
@@ -2346,6 +2398,7 @@ app.get(
         components: {
           database:
             "connected",
+
 
           queue:
             currentQueueService
@@ -2355,6 +2408,7 @@ app.get(
                 : "disconnected"
               : "not-initialized",
 
+
           idempotency:
             currentIdempotencyService
               ? currentIdempotencyService
@@ -2362,6 +2416,7 @@ app.get(
                 ? "connected"
                 : "disconnected"
               : "not-initialized",
+
 
           redis: {
             connected:
@@ -2374,6 +2429,7 @@ app.get(
                 .redis
                 .failureStartTime,
           },
+
 
           rateLimiter: {
             redisConnected:
@@ -2391,6 +2447,7 @@ app.get(
                 ?.localCounterCount ??
               null,
           },
+
 
           queueLoad: {
             saturated:
@@ -2422,11 +2479,13 @@ app.get(
               0,
           },
 
+
           memoryCleanup:
             memoryCleanupJob
               .isRunning
               ? "running"
               : "stopped",
+
 
           workflowOutbox: {
             composition:
@@ -2440,6 +2499,7 @@ app.get(
             consumers:
               outboxConsumerStatus,
           },
+
 
           replayRecovery: {
             initialized:
@@ -2471,6 +2531,7 @@ app.get(
                 .lastError,
           },
         },
+
 
         // ====================================================================
         // WARNINGS
@@ -2508,6 +2569,7 @@ app.get(
           ),
         ],
 
+
         // ====================================================================
         // EXECUTION SAFETY
         // ====================================================================
@@ -2517,6 +2579,7 @@ app.get(
           systemHealthService
             .canExecuteActions(),
 
+
         diagnostics:
           systemHealth
             .safeMode
@@ -2524,11 +2587,20 @@ app.get(
                 .getDiagnostics()
             : undefined,
 
+
+        /*
+         * Health and lifecycle endpoints can never authorize
+         * execution.
+         */
         executionAuthorized:
           false,
       };
 
-      return res
+        // ======================================================================
+      // RESPONSE
+      // ======================================================================
+
+            res
         .status(
           productionReadiness
             .readyToServeTraffic
@@ -2541,7 +2613,7 @@ app.get(
     } catch (
       error
     ) {
-      return res
+      res
         .status(
           503
         )
@@ -2559,15 +2631,10 @@ app.get(
   }
 );
 
-// ============================================================================
-// MULTI-INSTANCE COORDINATION HEALTH
-// ============================================================================
-
+// Multi-instance coordination endpoint
 app.get(
   "/health/multi-instance",
-
   internalTokenGuard,
-
   async (
     req,
     res
@@ -2585,9 +2652,6 @@ app.get(
             error:
               "Multi-instance coordinator not initialized",
 
-            code:
-              "MULTI_INSTANCE_NOT_INITIALIZED",
-
             executionAuthorized:
               false,
           });
@@ -2598,7 +2662,7 @@ app.get(
           .multiInstanceCoordinator
           .getStatus();
 
-      return res.json({
+      res.json({
         ...status,
 
         executionAuthorized:
@@ -2607,17 +2671,13 @@ app.get(
     } catch (
       error
     ) {
-      return res
+      res
         .status(
           503
         )
         .json({
           error:
             error.message,
-
-          code:
-            error.code ||
-            "MULTI_INSTANCE_HEALTH_FAILED",
 
           executionAuthorized:
             false,
@@ -2626,16 +2686,9 @@ app.get(
   }
 );
 
-// ============================================================================
+// ---------------------------------------------------------------------------
 // MACHINE INGESTION ROUTES
-// ============================================================================
-//
-// These routes use machine/API authentication.
-//
-// They MUST NOT use browser session context.
-//
-// tenantIsolationMiddleware remains authoritative for machine tenant scope.
-// ============================================================================
+// ---------------------------------------------------------------------------
 
 const machineIngestionRoutes =
   require(
@@ -2644,15 +2697,11 @@ const machineIngestionRoutes =
 
 app.post(
   "/api/v1/tenants/:tenantId/signals",
-
   authMiddleware,
-
   tenantIsolationMiddleware,
-
   rateLimitingMiddleware(
     "api"
   ),
-
   (
     req,
     res,
@@ -2667,15 +2716,11 @@ app.post(
 
 app.post(
   "/api/v1/tenants/:tenantId/actions/:id/dry-run",
-
   authMiddleware,
-
   tenantIsolationMiddleware,
-
   rateLimitingMiddleware(
     "api"
   ),
-
   (
     req,
     res,
@@ -2688,17 +2733,9 @@ app.post(
     )
 );
 
-// ============================================================================
-// BROWSER TENANT ROUTE AUTHORIZATION
-// ============================================================================
-//
-// Legacy tenant-id URL routes remain supported.
-//
-// Browser-provided :tenantId is NOT sufficient for authorization.
-//
-// requireOrgAccess() validates the requested organization/tenant relationship
-// against the authenticated browser session before request context is created.
-// ============================================================================
+// ---------------------------------------------------------------------------
+// BROWSER SESSION AUTH
+// ---------------------------------------------------------------------------
 
 const {
   requireOrgAccess,
@@ -2721,34 +2758,26 @@ const browserTenantAuth = [
   ),
 ];
 
-// ============================================================================
-// LEGACY TENANT-SCOPED PRODUCT API
-// ============================================================================
-
 app.use(
   "/api/v1/tenants/:tenantId",
-
   browserTenantAuth,
-
   coreApiRoutes
 );
 
 app.use(
   "/api/v1/tenants/:tenantId/approvals",
-
   browserTenantAuth,
-
   approvalRoutes
 );
-
-// ============================================================================
-// POLICY MANAGEMENT
-// ============================================================================
 
 app.use(
   "/api/v1/policy",
 
-  browserEnvironmentContext,
+  sessionAuthMiddleware,
+
+  requestContextMiddleware,
+
+  environmentContextMiddleware,
 
   rateLimitingMiddleware(
     "api"
@@ -2757,140 +2786,70 @@ app.use(
   policyManagementRoutes
 );
 
-// ============================================================================
-// EFFECTIVENESS / CONFIDENCE
-// ============================================================================
-
 app.use(
   "/api/v1/effectiveness",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   effectivenessRoutes
 );
 
 app.use(
   "/api/v1/confidence",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   confidenceRoutes
 );
 
-// ============================================================================
-// INTEGRATIONS
-// ============================================================================
-//
-// integrationRoutes contains mixed integration discovery/management behavior.
-//
-// Keep the existing router contract here rather than injecting a new Phase 25
-// authorization model into the legacy integration router.
-// ============================================================================
-
 app.use(
   "/api/v1/integrations",
-
   integrationRoutes
 );
 
-// ============================================================================
-// EXECUTION MODE CONFIGURATION
-// ============================================================================
-
 app.use(
   "/api/v1/execution",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   executionModesRoutes
 );
 
-// ============================================================================
-// REPORTING
-// ============================================================================
-
 app.use(
   "/api/v1/reports",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   reportingRoutes
 );
 
-// ============================================================================
-// DASHBOARD
-// ============================================================================
-//
-// This remains the legacy dashboard API.
-//
-// Phase 25.6 will introduce dedicated Product BFF/read-model endpoints rather
-// than mutating this route into a pseudo-BFF.
-// ============================================================================
-
 app.use(
   "/api/v1/dashboard",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   dashboardRoutes
 );
 
-// ============================================================================
-// SERVICES
-// ============================================================================
-
 app.use(
   "/api/v1/services",
-
+  sessionAuthMiddleware,
   browserEnvironmentContext,
-
   serviceRoutes
 );
 
-// ============================================================================
-// INVENTORY
-// ============================================================================
-
 app.use(
   "/api/v1/inventory",
-
-  browserEnvironmentContext,
-
+  sessionAuthMiddleware,
+  requestContextMiddleware,
+  environmentContextMiddleware,
   inventoryRoutes
 );
 
-// ============================================================================
-// MONITORS
-// ============================================================================
-//
-// The existing monitor router performs its own route-specific environment
-// handling. Keep its contract intact for this integration repair.
-// ============================================================================
-
 app.use(
   "/api/v1/monitors",
-
   sessionAuthMiddleware,
-
   monitorTopLevelRoutes
 );
 
-// ============================================================================
-// INCIDENTS
-// ============================================================================
-
 app.use(
   "/api/v1/incidents",
-
+  sessionAuthMiddleware,
   browserEnvironmentContext,
-
   incidentRoutes
 );
 
-// ============================================================================
 // AGENT INTELLIGENCE PLATFORM
-// ============================================================================
-
 const agentIntelligenceRoutes =
   require(
     "./routes/agentIntelligenceRoutes"
@@ -2898,26 +2857,12 @@ const agentIntelligenceRoutes =
 
 app.use(
   "/api/v1/agent-intelligence",
-
-  browserOrganizationContext,
-
+  sessionAuthMiddleware,
   agentIntelligenceRoutes
 );
 
-// ============================================================================
-// INTEGRATION DEFINITIONS
-// ============================================================================
-//
-// Preserve the existing compatibility alias:
-//
-// /api/v1/integration-definitions/*
-//        ↓
-// integrationRoutes /definitions/*
-// ============================================================================
-
 app.use(
   "/api/v1/integration-definitions",
-
   (
     req,
     res,
@@ -2935,7 +2880,7 @@ app.use(
           "/"
         );
 
-    return integrationRoutes(
+    integrationRoutes(
       req,
       res,
       next
@@ -2943,86 +2888,55 @@ app.use(
   }
 );
 
-// ============================================================================
-// TENANT RUNBOOKS / PLAYBOOKS / ACTION LOGS
-// ============================================================================
-
 app.use(
   "/api/v1/tenants/:tenantId/runbooks",
-
   browserTenantAuth,
-
   runbookRoutes
 );
 
 app.use(
   "/api/v1/tenants/:tenantId/playbooks",
-
   browserTenantAuth,
-
   playbookRoutes
 );
 
 app.use(
   "/api/v1/tenants/:tenantId/action-logs",
-
   browserTenantAuth,
-
   actionLogRoutes
 );
 
 // ============================================================================
 // PHASE 1 SAFETY CONTROL ENDPOINTS
 // ============================================================================
-//
-// These endpoints expose or change safety controls.
-//
-// Session authentication remains mandatory.
-//
-// Existing endpoint-level authorization semantics are preserved here.
-// ============================================================================
 
 app.get(
   "/api/v1/safety/kill-switches",
-
   sessionAuthMiddleware,
-
   killSwitchStatusEndpoint
 );
 
 app.post(
-  "/api/v1/safety/kill-switches/:switchName",
-
+    "/api/v1/safety/kill-switches/:switchName",
   sessionAuthMiddleware,
-
   killSwitchControlEndpoint
 );
 
 app.get(
   "/api/v1/safety/confidence-thresholds",
-
   sessionAuthMiddleware,
-
   confidenceThresholdsEndpoint
 );
 
 app.put(
   "/api/v1/safety/confidence-thresholds",
-
   sessionAuthMiddleware,
-
   confidenceThresholdsUpdateEndpoint
 );
 
-// ============================================================================
-// DEVELOPMENT-ONLY XSS SAFETY TEST
-// ============================================================================
-
 app.post(
   "/api/v1/safety/test-xss",
-
   sessionAuthMiddleware,
-
   (
     req,
     res
@@ -3039,9 +2953,6 @@ app.post(
           error:
             "XSS test endpoint disabled in production",
 
-          code:
-            "XSS_TEST_DISABLED",
-
           executionAuthorized:
             false,
         });
@@ -3050,7 +2961,7 @@ app.post(
     const results =
       testXSSPayloads();
 
-    return res.json({
+    res.json({
       results,
 
       executionAuthorized:
@@ -3061,9 +2972,6 @@ app.post(
 
 // ============================================================================
 // ERROR HANDLER
-// ============================================================================
-//
-// This MUST remain after all HTTP routes.
 // ============================================================================
 
 app.use(
@@ -3092,11 +3000,7 @@ let workflowOutboxConsumers =
 let serverInstance =
   null;
 
-// ============================================================================
-// POSTGRESQL RUNTIME STATE
-// ============================================================================
-
-const postgresRuntimeStatus = {
+  const postgresRuntimeStatus = {
   enabled:
     false,
 
@@ -3115,9 +3019,8 @@ const postgresRuntimeStatus = {
   health:
     null,
 };
-
 // ============================================================================
-// PHASE 11.4 — REPLAY RECOVERY STATE
+// PHASE 11.4 - REPLAY RECOVERY STATE
 // ============================================================================
 
 const replayRecoveryStatus = {
@@ -3144,7 +3047,7 @@ const replayRecoveryStatus = {
 };
 
 // ============================================================================
-// PHASE 11.10 — APPLICATION LIFECYCLE
+// PHASE 11.10 - APPLICATION LIFECYCLE
 // ============================================================================
 
 const APPLICATION_STATE =
@@ -3277,57 +3180,15 @@ function transitionApplicationState(
       new Date();
   }
 
-  if (
-    state ===
-    APPLICATION_STATE
-      .FAILED
-  ) {
-    applicationLifecycle
-      .startupRecoveryFailed =
-      true;
-  }
-
   console.log(
-    `[lifecycle] ${state}${reason ? ` — ${reason}` : ""}`
+    `[lifecycle] state=${state}` +
+    (
+      reason
+        ? ` reason=${reason}`
+        : ""
+    )
   );
 }
-
-function getApplicationLifecycleStatus() {
-  return {
-    ...applicationLifecycle,
-
-    ready:
-      applicationLifecycle
-        .state ===
-      APPLICATION_STATE
-        .READY,
-
-    acceptingOperationalWork:
-      applicationLifecycle
-        .state ===
-      APPLICATION_STATE
-        .READY,
-
-    executionAuthorized:
-      false,
-  };
-}
-
-function isApplicationReady() {
-  return (
-    applicationLifecycle
-      .state ===
-      APPLICATION_STATE
-        .READY &&
-    applicationLifecycle
-      .startupRecoveryCompleted ===
-      true
-  );
-}
-
-// ============================================================================
-// POSTGRESQL HEALTH
-// ============================================================================
 
 async function refreshPostgresHealth() {
   const config =
@@ -3335,14 +3196,16 @@ async function refreshPostgresHealth() {
 
   postgresRuntimeStatus
     .enabled =
-    Boolean(
-      config.enabled
-    );
+    config.enabled;
 
   if (
     !config.enabled
   ) {
     postgresRuntimeStatus
+      .initialized =
+      true;
+
+    postgresRuntimeStatus
       .healthy =
       null;
 
@@ -3353,110 +3216,109 @@ async function refreshPostgresHealth() {
     postgresRuntimeStatus
       .lastError =
       null;
-
-    postgresRuntimeStatus
-      .health = {
-        enabled:
-          false,
-
-        required:
-          false,
-
-        healthy:
-          null,
-
-        status:
-          "disabled",
-
-        executionAuthorized:
-          false,
-      };
-
-    return postgresRuntimeStatus
-      .health;
-  }
-
-  try {
-    const health =
-      await checkPostgresHealth();
-
-    postgresRuntimeStatus
-      .healthy =
-      Boolean(
-        health
-          ?.healthy
-      );
-
-    postgresRuntimeStatus
-      .checkedAt =
-      new Date();
-
-    postgresRuntimeStatus
-      .lastError =
-      health
-        ?.healthy
-        ? null
-        : (
-            health
-              ?.error
-              ?.message ||
-            "PostgreSQL health check failed"
-          );
 
     postgresRuntimeStatus
       .health =
-      health;
+      null;
 
-    return health;
-  } catch (
-    error
-  ) {
-    postgresRuntimeStatus
-      .healthy =
-      false;
+    return {
+      enabled:
+        false,
 
-    postgresRuntimeStatus
-      .checkedAt =
-      new Date();
+      required:
+        false,
 
-    postgresRuntimeStatus
-      .lastError =
-      error.message;
+      initialized:
+        true,
 
-    postgresRuntimeStatus
-      .health = {
-        enabled:
-          true,
+      healthy:
+        null,
 
-        required:
-          true,
+      status:
+        "disabled",
 
-        healthy:
-          false,
-
-        status:
-          "unhealthy",
-
-        error: {
-          code:
-            error.code ||
-            "POSTGRES_HEALTH_FAILED",
-
-          message:
-            error.message,
-        },
-
-        executionAuthorized:
-          false,
-      };
-
-    throw error;
+      executionAuthorized:
+        false,
+    };
   }
-}
 
-// ============================================================================
-// POSTGRESQL AUTHORITATIVE FOUNDATION
-// ============================================================================
+  const health =
+    await checkPostgresHealth();
+
+  postgresRuntimeStatus
+    .initialized =
+    true;
+
+  postgresRuntimeStatus
+    .healthy =
+    health.healthy ===
+    true;
+
+  postgresRuntimeStatus
+    .checkedAt =
+    new Date();
+
+  postgresRuntimeStatus
+    .lastError =
+    health.healthy
+      ? null
+      : (
+          health.error
+            ?.message ||
+          "PostgreSQL health check failed"
+        );
+
+  postgresRuntimeStatus
+    .health =
+    health;
+
+  return {
+    enabled:
+      true,
+
+    required:
+      true,
+
+    initialized:
+      true,
+
+    healthy:
+      health.healthy ===
+      true,
+
+    status:
+      health.healthy
+        ? "healthy"
+        : "unhealthy",
+
+    latencyMs:
+      health.latencyMs ??
+      null,
+
+    database:
+      health.database ||
+      null,
+
+    username:
+      health.username ||
+      null,
+
+    pool:
+      health.pool ||
+      null,
+
+    error:
+      health.error ||
+      null,
+
+    checkedAt:
+      postgresRuntimeStatus
+        .checkedAt,
+
+    executionAuthorized:
+      false,
+  };
+}
 
 async function initializePostgresFoundation() {
   const config =
@@ -3469,16 +3331,13 @@ async function initializePostgresFoundation() {
   /*
    * PHASE 13 FINAL ARCHITECTURE
    *
-   * PostgreSQL is AIRA's authoritative transactional persistence layer.
+   * PostgreSQL is not an optional migration-sidecar anymore.
    *
-   * The runtime must therefore fail closed when PostgreSQL is disabled or
-   * unhealthy.
+   * It is AIRA's authoritative transactional persistence layer.
    *
-   * Product state, identity, tenancy, incident lifecycle, approvals,
-   * learning, certification and Phase 25 product projections depend on this
-   * authoritative store.
+   * Therefore normal runtime startup must fail closed when
+   * PostgreSQL is disabled or unhealthy.
    */
-
   if (
     !config.enabled
   ) {
@@ -3539,29 +3398,23 @@ async function initializePostgresFoundation() {
     );
   }
 
-  postgresRuntimeStatus
-    .initialized =
-    true;
-
   console.log(
-    `[postgres] [OK] PostgreSQL authoritative store healthy database=${health.database || "unknown"} latency=${health.latencyMs ?? "unknown"}ms`
+    `[postgres] ✓ PostgreSQL authoritative store healthy database=${health.database || "unknown"} latency=${health.latencyMs ?? "unknown"}ms`
   );
 
   return health;
 }
 
-// ============================================================================
-// APPLICATION READINESS
-// ============================================================================
 
 function isApplicationReady() {
   /*
+   * PHASE 13 FINAL ARCHITECTURE
+   *
    * PostgreSQL readiness is mandatory.
    *
-   * AIRA must never report operational readiness while its authoritative
-   * transactional store is unavailable.
+   * AIRA must never advertise operational readiness when
+   * the authoritative transactional store is unavailable.
    */
-
   const postgresReady =
     postgresRuntimeStatus
       .enabled ===
@@ -3590,6 +3443,7 @@ function isApplicationReady() {
     postgresReady
   );
 }
+
 
 function getApplicationLifecycleStatus() {
   return {
@@ -3670,6 +3524,7 @@ function getApplicationLifecycleStatus() {
   };
 }
 
+
 // ============================================================================
 // START HTTP SERVER
 // ============================================================================
@@ -3708,11 +3563,10 @@ async function startHttpServer() {
       httpServer.listen(
         PORT,
         () => {
-          httpServer
-            .removeListener(
-              "error",
-              handleError
-            );
+          httpServer.removeListener(
+            "error",
+            handleError
+          );
 
           serverInstance =
             httpServer;
@@ -3734,17 +3588,16 @@ async function startHttpServer() {
   );
 }
 
+
 // ============================================================================
 // MAIN STARTUP
 // ============================================================================
 
 async function startServer() {
-  const startupStartedAt =
-    Date.now();
+  const startupStartedAt = Date.now();
 
   transitionApplicationState(
-    APPLICATION_STATE
-      .STARTING,
+    APPLICATION_STATE.STARTING,
     "initializing_services"
   );
 
@@ -3753,129 +3606,61 @@ async function startServer() {
   );
 
   try {
-    /*
-     * Start the HTTP listener early so /health/live remains available during
-     * dependency initialization.
-     *
-     * Operational writes remain blocked by the lifecycle admission gate until
-     * PostgreSQL and startup replay recovery are complete.
-     */
-
-    const httpStartedAt =
-      Date.now();
-
+    const httpStartedAt = Date.now();
     await startHttpServer();
-
     console.log(
       `[startup] [OK] HTTP listener ready port=${PORT} ${elapsedMs(httpStartedAt)}ms`
     );
 
-    /*
-     * Initialize Redis, RabbitMQ, workflow outbox, consumers and supporting
-     * runtime services.
-     */
-
     await initializeServices();
 
-    /*
-     * Re-check PostgreSQL after service initialization.
-     *
-     * This is deliberately mandatory rather than best-effort.
-     */
-
-    const postgresStartedAt =
-      Date.now();
-
+    const postgresStartedAt = Date.now();
     await initializePostgresFoundation();
-
     console.log(
       `[startup] [OK] PostgreSQL readiness verified ${elapsedMs(postgresStartedAt)}ms`
     );
 
-    /*
-     * Initialize the intelligence runtime only after the authoritative
-     * persistence foundation is healthy.
-     */
-
-    const agentStartedAt =
-      Date.now();
-
+    const agentStartedAt = Date.now();
     initializeAgentOrchestrator(
-      {
-        incidentPlaybookService,
-        memoryService,
-      },
+      { incidentPlaybookService, memoryService },
       {
         dryRun:
-          String(
-            process.env
-              .AGENT_DRY_RUN ||
-            "false"
-          )
+          String(process.env.AGENT_DRY_RUN || "false")
             .trim()
-            .toLowerCase() ===
-          "true",
+            .toLowerCase() === "true",
       }
     );
-
     console.log(
       `[startup] [OK] Agent intelligence runtime initialized ${elapsedMs(agentStartedAt)}ms`
     );
 
-    /*
-     * Recover interrupted workflows before the application becomes READY.
-     */
-
     await runStartupRecovery();
 
-    if (
-      !isApplicationReady()
-    ) {
+    if (!isApplicationReady()) {
       throw Object.assign(
         new Error(
           "Startup completed but application readiness conditions were not satisfied"
         ),
-        {
-          code:
-            "APPLICATION_STARTUP_NOT_READY",
-        }
+        { code: "APPLICATION_STARTUP_NOT_READY" }
       );
     }
 
-    const totalMs =
-      elapsedMs(
-        startupStartedAt
-      );
-
+    const totalMs = elapsedMs(startupStartedAt);
     console.log(
       `[startup] [READY] AIRA operationally ready port=${PORT} startup=${totalMs}ms`
     );
 
     return {
-      started:
-        true,
-
-      ready:
-        true,
-
-      port:
-        PORT,
-
-      startupDurationMs:
-        totalMs,
-
-      lifecycle:
-        getApplicationLifecycleStatus(),
-
-      executionAuthorized:
-        false,
+      started: true,
+      ready: true,
+      port: PORT,
+      startupDurationMs: totalMs,
+      lifecycle: getApplicationLifecycleStatus(),
+      executionAuthorized: false,
     };
-  } catch (
-    error
-  ) {
+  } catch (error) {
     transitionApplicationState(
-      APPLICATION_STATE
-        .FAILED,
+      APPLICATION_STATE.FAILED,
       "startup_failed",
       error
     );
@@ -3888,33 +3673,22 @@ async function startServer() {
     try {
       await shutdown(
         "STARTUP_FAILURE",
-        {
-          exitProcess:
-            false,
-
-          exitCode:
-            1,
-        }
+        { exitProcess: false, exitCode: 1 }
       );
-    } catch (
-      shutdownError
-    ) {
+    } catch (shutdownError) {
       console.error(
         "[startup] [WARN] Startup cleanup failed:",
-        shutdownError
-          .message
+        shutdownError.message
       );
     }
 
-    process.exitCode =
-      1;
-
+    process.exitCode = 1;
     throw error;
   }
 }
 
 // ============================================================================
-// SHUTDOWN HELPERS
+// PHASE 11.10 - SHUTDOWN HELPERS
 // ============================================================================
 
 function sleep(
@@ -3971,7 +3745,8 @@ async function withTimeout(
             );
 
           /*
-           * Never keep Node alive solely because of a shutdown timeout.
+           * Do not keep Node alive solely because of
+           * a shutdown timeout timer.
            */
           if (
             typeof timer
@@ -3981,7 +3756,7 @@ async function withTimeout(
             timer
               .unref();
           }
-        }
+             }
       ),
     ]);
   } finally {
@@ -4044,80 +3819,45 @@ async function safeShutdownStep(
 }
 
 // ============================================================================
-// PERSISTENCE MODE
+// INITIALIZE SERVICES
 // ============================================================================
 
 function isPostgresPersistence() {
   return String(
-    process.env
-      .PERSISTENCE_PROVIDER ||
+    process.env.PERSISTENCE_PROVIDER ||
     "postgres"
   )
     .trim()
-    .toLowerCase() ===
-    "postgres";
+    .toLowerCase() === "postgres";
 }
 
-function elapsedMs(
-  startedAt
-) {
-  return (
-    Date.now() -
-    startedAt
-  );
+function elapsedMs(startedAt) {
+  return Date.now() - startedAt;
 }
-
-// ============================================================================
-// INITIALIZE SERVICES
-// ============================================================================
 
 async function initializeServices() {
-  const servicesStartedAt =
-    Date.now();
+  const servicesStartedAt = Date.now();
 
-  console.log(
-    "[startup] Initializing backend services..."
-  );
-
-  // ==========================================================================
-  // AUTHORITATIVE DATABASE CONNECTION
-  // ==========================================================================
+  console.log("[startup] Initializing backend services...");
 
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     await connectDatabase();
-
     console.log(
       `[startup] [OK] PostgreSQL database connected ${elapsedMs(startedAt)}ms`
     );
   }
 
-  // ==========================================================================
-  // SYSTEM HEALTH
-  // ==========================================================================
-
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     try {
-      if (
-        typeof systemHealthService
-          .initialize ===
-        "function"
-      ) {
-        await systemHealthService
-          .initialize();
+      if (typeof systemHealthService.initialize === "function") {
+        await systemHealthService.initialize();
       }
-
       console.log(
         `[startup] [OK] System health initialized ${elapsedMs(startedAt)}ms`
       );
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         `[startup] [WARN] System health initialization failed ${elapsedMs(startedAt)}ms:`,
         error.message
@@ -4125,27 +3865,12 @@ async function initializeServices() {
     }
   }
 
-  // ==========================================================================
-  // REDIS + RABBITMQ FOUNDATION
-  // ==========================================================================
-
   await Promise.all([
-    // ------------------------------------------------------------------------
-    // RabbitMQ
-    // ------------------------------------------------------------------------
-
     (async () => {
-      const startedAt =
-        Date.now();
-
+      const startedAt = Date.now();
       try {
-        queueService =
-          await getQueueService();
-
-        if (
-          queueService
-            ?.connected
-        ) {
+        queueService = await getQueueService();
+        if (queueService?.connected) {
           console.log(
             `[startup] [OK] RabbitMQ queue connected ${elapsedMs(startedAt)}ms`
           );
@@ -4154,12 +3879,8 @@ async function initializeServices() {
             `[startup] [WARN] RabbitMQ queue unavailable ${elapsedMs(startedAt)}ms`
           );
         }
-      } catch (
-        error
-      ) {
-        queueService =
-          null;
-
+      } catch (error) {
+        queueService = null;
         console.warn(
           `[startup] [WARN] RabbitMQ initialization failed ${elapsedMs(startedAt)}ms:`,
           error.message
@@ -4167,22 +3888,11 @@ async function initializeServices() {
       }
     })(),
 
-    // ------------------------------------------------------------------------
-    // Redis idempotency
-    // ------------------------------------------------------------------------
-
     (async () => {
-      const startedAt =
-        Date.now();
-
+      const startedAt = Date.now();
       try {
-        idempotencyService =
-          await getIdempotencyService();
-
-        if (
-          idempotencyService
-            ?.connected
-        ) {
+        idempotencyService = await getIdempotencyService();
+        if (idempotencyService?.connected) {
           console.log(
             `[startup] [OK] Idempotency Redis connected ${elapsedMs(startedAt)}ms`
           );
@@ -4191,12 +3901,8 @@ async function initializeServices() {
             `[startup] [WARN] Idempotency Redis unavailable ${elapsedMs(startedAt)}ms`
           );
         }
-      } catch (
-        error
-      ) {
-        idempotencyService =
-          null;
-
+      } catch (error) {
+        idempotencyService = null;
         console.warn(
           `[startup] [WARN] Idempotency Redis initialization failed ${elapsedMs(startedAt)}ms:`,
           error.message
@@ -4204,31 +3910,17 @@ async function initializeServices() {
       }
     })(),
 
-    // ------------------------------------------------------------------------
-    // Redis distributed lock
-    // ------------------------------------------------------------------------
-
     (async () => {
-      const startedAt =
-        Date.now();
-
+      const startedAt = Date.now();
       try {
         if (
           distributedLockService &&
-          typeof distributedLockService
-            .connect ===
-            "function" &&
-          !distributedLockService
-            .connected
+          typeof distributedLockService.connect === "function" &&
+          !distributedLockService.connected
         ) {
-          await distributedLockService
-            .connect();
+          await distributedLockService.connect();
         }
-
-        if (
-          distributedLockService
-            ?.connected
-        ) {
+        if (distributedLockService?.connected) {
           console.log(
             `[startup] [OK] Distributed-lock Redis connected ${elapsedMs(startedAt)}ms`
           );
@@ -4237,9 +3929,7 @@ async function initializeServices() {
             `[startup] [WARN] Distributed-lock Redis unavailable ${elapsedMs(startedAt)}ms`
           );
         }
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.warn(
           `[startup] [WARN] Distributed-lock Redis initialization failed ${elapsedMs(startedAt)}ms:`,
           error.message
@@ -4248,83 +3938,43 @@ async function initializeServices() {
     })(),
   ]);
 
-  // ==========================================================================
-  // DURABLE WORKFLOW OUTBOX
-  // ==========================================================================
-
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     try {
-      workflowOutboxComposition =
-        createWorkflowOutboxComposition({
-          queueService,
-          idempotencyService,
-          dependencyIsolationService,
-        });
+      workflowOutboxComposition = createWorkflowOutboxComposition({
+        queueService,
+        idempotencyService,
+        dependencyIsolationService,
+      });
 
-      workflowOutboxConsumers =
-        new WorkflowOutboxConsumerRegistry({
-          queueService,
-          composition:
-            workflowOutboxComposition,
-        });
+      workflowOutboxConsumers = new WorkflowOutboxConsumerRegistry({
+        queueService,
+        composition: workflowOutboxComposition,
+      });
 
-      workflowOutboxRuntime =
-        new WorkflowOutboxRuntimeController({
-          worker:
-            workflowOutboxComposition
-              .worker,
+      workflowOutboxRuntime = new WorkflowOutboxRuntimeController({
+        worker: workflowOutboxComposition.worker,
+        queueService,
+      });
 
-          queueService,
-        });
-
-      if (
-        typeof workflowOutboxConsumers
-          .start ===
-        "function"
-      ) {
-        await workflowOutboxConsumers
-          .start();
+      if (typeof workflowOutboxConsumers.start === "function") {
+        await workflowOutboxConsumers.start();
       }
+      console.log("[workflow-outbox] [OK] Durable outbox consumers started");
 
-      console.log(
-        "[workflow-outbox] [OK] Durable outbox consumers started"
-      );
-
-      /*
-       * PostgreSQL persistence is RLS-scoped.
-       *
-       * A global dispatcher would violate that boundary unless it operates
-       * through an explicitly privileged/scoped worker.
-       */
-
-      if (
-        isPostgresPersistence()
-      ) {
+      if (isPostgresPersistence()) {
         console.log(
           "[workflow-outbox] [SKIP] Global dispatcher disabled for PostgreSQL; scoped/privileged worker required"
         );
-      } else if (
-        typeof workflowOutboxRuntime
-          .start ===
-        "function"
-      ) {
-        await workflowOutboxRuntime
-          .start();
-
-        console.log(
-          "[workflow-outbox] [OK] Global dispatcher started"
-        );
+      } else if (typeof workflowOutboxRuntime.start === "function") {
+        await workflowOutboxRuntime.start();
+        console.log("[workflow-outbox] [OK] Global dispatcher started");
       }
 
       console.log(
         `[startup] [OK] Workflow outbox initialized ${elapsedMs(startedAt)}ms`
       );
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         `[workflow-outbox] [WARN] Initialization failed ${elapsedMs(startedAt)}ms:`,
         error.message
@@ -4332,61 +3982,30 @@ async function initializeServices() {
     }
   }
 
-  // ==========================================================================
-  // OUTBOX HANDOFFS
-  // ==========================================================================
-
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     try {
-      if (
-        workflowOutboxComposition
-      ) {
-        if (
-          typeof recoveryDecisionOutboxHandoffService
-            .initialize ===
-          "function"
-        ) {
-          await recoveryDecisionOutboxHandoffService
-            .initialize({
-              composition:
-                workflowOutboxComposition,
-            });
+      if (workflowOutboxComposition) {
+        if (typeof recoveryDecisionOutboxHandoffService.initialize === "function") {
+          await recoveryDecisionOutboxHandoffService.initialize({
+            composition: workflowOutboxComposition,
+          });
         }
-
-        if (
-          typeof executionVerificationOutboxHandoffService
-            .initialize ===
-          "function"
-        ) {
-          await executionVerificationOutboxHandoffService
-            .initialize({
-              composition:
-                workflowOutboxComposition,
-            });
+        if (typeof executionVerificationOutboxHandoffService.initialize === "function") {
+          await executionVerificationOutboxHandoffService.initialize({
+            composition: workflowOutboxComposition,
+          });
         }
-
-        if (
-          typeof verificationLifecycleOutboxHandoffService
-            .initialize ===
-          "function"
-        ) {
-          await verificationLifecycleOutboxHandoffService
-            .initialize({
-              composition:
-                workflowOutboxComposition,
-            });
+        if (typeof verificationLifecycleOutboxHandoffService.initialize === "function") {
+          await verificationLifecycleOutboxHandoffService.initialize({
+            composition: workflowOutboxComposition,
+          });
         }
       }
-
       console.log(
         `[startup] [OK] Outbox handoffs registered ${elapsedMs(startedAt)}ms`
       );
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         `[workflow-outbox] [WARN] Handoff initialization failed ${elapsedMs(startedAt)}ms:`,
         error.message
@@ -4394,66 +4013,33 @@ async function initializeServices() {
     }
   }
 
-  // ==========================================================================
-  // WORKFLOW QUEUE CONSUMERS
-  // ==========================================================================
-
   await Promise.all([
-    // ------------------------------------------------------------------------
-    // Diagnosis
-    // ------------------------------------------------------------------------
-
     (async () => {
-      const startedAt =
-        Date.now();
-
+      const startedAt = Date.now();
       try {
-        if (
-          typeof diagnosisQueueConsumer
-            .start ===
-          "function"
-        ) {
-          await diagnosisQueueConsumer
-            .start();
+        if (typeof diagnosisQueueConsumer.start === "function") {
+          await diagnosisQueueConsumer.start();
         }
-
         console.log(
           `[startup] [OK] Diagnosis consumer started ${elapsedMs(startedAt)}ms`
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.warn(
           `[diagnosis] [WARN] Consumer startup failed ${elapsedMs(startedAt)}ms:`,
           error.message
         );
       }
     })(),
-
-    // ------------------------------------------------------------------------
-    // Recovery decision
-    // ------------------------------------------------------------------------
-
     (async () => {
-      const startedAt =
-        Date.now();
-
+      const startedAt = Date.now();
       try {
-        if (
-          typeof recoveryDecisionQueueConsumer
-            .start ===
-          "function"
-        ) {
-          await recoveryDecisionQueueConsumer
-            .start();
+        if (typeof recoveryDecisionQueueConsumer.start === "function") {
+          await recoveryDecisionQueueConsumer.start();
         }
-
         console.log(
           `[startup] [OK] Recovery-decision consumer started ${elapsedMs(startedAt)}ms`
         );
-      } catch (
-        error
-      ) {
+      } catch (error) {
         console.warn(
           `[recovery] [WARN] Consumer startup failed ${elapsedMs(startedAt)}ms:`,
           error.message
@@ -4462,31 +4048,16 @@ async function initializeServices() {
     })(),
   ]);
 
-  // ==========================================================================
-  // KUBERNETES EXECUTION HANDLER
-  // ==========================================================================
-
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     try {
-      const k8sClient =
-        getK8sClient();
-
+      const k8sClient = getK8sClient();
       if (
         k8sClient &&
         runbookExecutionService &&
-        typeof runbookExecutionService
-          .registerHandler ===
-        "function"
+        typeof runbookExecutionService.registerHandler === "function"
       ) {
-        runbookExecutionService
-          .registerHandler(
-            "kubernetes",
-            k8sClient
-          );
-
+        runbookExecutionService.registerHandler("kubernetes", k8sClient);
         console.log(
           `[startup] [OK] Kubernetes execution handler registered ${elapsedMs(startedAt)}ms`
         );
@@ -4495,9 +4066,7 @@ async function initializeServices() {
           `[startup] [SKIP] Kubernetes execution handler unavailable ${elapsedMs(startedAt)}ms`
         );
       }
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         `[startup] [WARN] Kubernetes initialization failed ${elapsedMs(startedAt)}ms:`,
         error.message
@@ -4505,71 +4074,32 @@ async function initializeServices() {
     }
   }
 
-  // ==========================================================================
-  // MULTI-INSTANCE COORDINATION
-  // ==========================================================================
-
   {
-    const startedAt =
-      Date.now();
-
+    const startedAt = Date.now();
     try {
-      if (
-        systemHealthService
-          .isMultiInstance
-      ) {
-        const coordinatorRedisClient =
-          distributedLockService
-            ?.getRedisClient?.();
-
-        if (
-          !coordinatorRedisClient ||
-          !distributedLockService
-            ?.connected
-        ) {
+      if (systemHealthService.isMultiInstance) {
+        const coordinatorRedisClient = distributedLockService?.getRedisClient?.();
+        if (!coordinatorRedisClient || !distributedLockService?.connected) {
           throw Object.assign(
-            new Error(
-              "Multi-instance coordination requires a connected Redis client"
-            ),
-            {
-              code:
-                "MULTI_INSTANCE_REDIS_REQUIRED",
-            }
+            new Error("Multi-instance coordination requires a connected Redis client"),
+            { code: "MULTI_INSTANCE_REDIS_REQUIRED" }
           );
         }
-
-        global
-          .multiInstanceCoordinator =
-          new MultiInstanceCoordinator(
-            coordinatorRedisClient
-          );
-
-        if (
-          typeof global
-            .multiInstanceCoordinator
-            .start ===
-          "function"
-        ) {
-          await global
-            .multiInstanceCoordinator
-            .start();
+        global.multiInstanceCoordinator =
+          new MultiInstanceCoordinator(coordinatorRedisClient);
+        if (typeof global.multiInstanceCoordinator.start === "function") {
+          await global.multiInstanceCoordinator.start();
         }
-
         console.log(
           `[startup] [OK] Multi-instance coordinator started ${elapsedMs(startedAt)}ms`
         );
       } else {
-        global
-          .multiInstanceCoordinator =
-          null;
-
+        global.multiInstanceCoordinator = null;
         console.log(
           `[startup] [SKIP] Multi-instance coordinator (SINGLE_INSTANCE) ${elapsedMs(startedAt)}ms`
         );
       }
-    } catch (
-      error
-    ) {
+    } catch (error) {
       console.warn(
         `[startup] [WARN] Multi-instance coordinator failed ${elapsedMs(startedAt)}ms:`,
         error.message
@@ -4577,103 +4107,44 @@ async function initializeServices() {
     }
   }
 
-  // ==========================================================================
-  // LEGACY GLOBAL SCANNERS
-  // ==========================================================================
-
-  if (
-    isPostgresPersistence()
-  ) {
-    /*
-     * PostgreSQL operational persistence is RLS-scoped.
-     *
-     * These old global scanners must not perform unscoped tenant reads.
-     */
-
-    global.monitorScheduler =
-      null;
-
+  if (isPostgresPersistence()) {
+    global.monitorScheduler = null;
     console.log(
       "[monitor-scheduler] [SKIP] Global PostgreSQL monitor scanner disabled; scoped scheduler required"
     );
-
     console.log(
       "[memory-cleanup] [SKIP] Global PostgreSQL retention scanner disabled; scoped cleanup worker required"
     );
-
     console.log(
       "[retry-processor] [SKIP] Global PostgreSQL retry scanner disabled; scoped retry worker required"
     );
   } else {
     try {
-      global.monitorScheduler =
-        new MonitorScheduler();
-
-      if (
-        typeof global
-          .monitorScheduler
-          .start ===
-        "function"
-      ) {
-        await global
-          .monitorScheduler
-          .start();
+      global.monitorScheduler = new MonitorScheduler();
+      if (typeof global.monitorScheduler.start === "function") {
+        await global.monitorScheduler.start();
       }
-
-      console.log(
-        "[monitor-scheduler] [OK] Monitor scheduler started"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[monitor-scheduler] [WARN] Startup failed:",
-        error.message
-      );
+      console.log("[monitor-scheduler] [OK] Monitor scheduler started");
+    } catch (error) {
+      console.warn("[monitor-scheduler] [WARN] Startup failed:", error.message);
     }
 
     try {
-      if (
-        typeof memoryCleanupJob
-          .start ===
-        "function"
-      ) {
-        memoryCleanupJob
-          .start();
+      if (typeof memoryCleanupJob.start === "function") {
+        memoryCleanupJob.start();
       }
-
-      console.log(
-        "[memory-cleanup] [OK] Memory cleanup job started"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[memory-cleanup] [WARN] Startup failed:",
-        error.message
-      );
+      console.log("[memory-cleanup] [OK] Memory cleanup job started");
+    } catch (error) {
+      console.warn("[memory-cleanup] [WARN] Startup failed:", error.message);
     }
 
     try {
-      if (
-        typeof retryProcessorJob
-          .start ===
-        "function"
-      ) {
-        retryProcessorJob
-          .start();
+      if (typeof retryProcessorJob.start === "function") {
+        retryProcessorJob.start();
       }
-
-      console.log(
-        "[retry-processor] [OK] Retry processor started"
-      );
-    } catch (
-      error
-    ) {
-      console.warn(
-        "[retry-processor] [WARN] Startup failed:",
-        error.message
-      );
+      console.log("[retry-processor] [OK] Retry processor started");
+    } catch (error) {
+      console.warn("[retry-processor] [WARN] Startup failed:", error.message);
     }
   }
 
@@ -4683,254 +4154,209 @@ async function initializeServices() {
 }
 
 // ============================================================================
-// STARTUP REPLAY RECOVERY
+// PHASE 11.4 / 11.10 - STARTUP REPLAY RECOVERY
 // ============================================================================
 
 async function runStartupRecovery() {
-  const startedAt =
-    Date.now();
+  const startedAt = Date.now();
 
   transitionApplicationState(
-    APPLICATION_STATE
-      .RECOVERING,
+    APPLICATION_STATE.RECOVERING,
     "startup_replay_recovery"
   );
 
-  replayRecoveryStatus
-    .initialized =
-    true;
-
-  replayRecoveryStatus
-    .startupRecoveryCompleted =
-    false;
-
-  replayRecoveryStatus
-    .lastRunAt =
-    new Date();
-
-  replayRecoveryStatus
-    .lastError =
-    null;
-
-  applicationLifecycle
-    .startupRecoveryCompleted =
-    false;
-
-  applicationLifecycle
-    .startupRecoveryFailed =
-    false;
+  replayRecoveryStatus.initialized = true;
+  replayRecoveryStatus.startupRecoveryCompleted = false;
+  replayRecoveryStatus.lastRunAt = new Date();
+  replayRecoveryStatus.lastError = null;
+  applicationLifecycle.startupRecoveryCompleted = false;
+  applicationLifecycle.startupRecoveryFailed = false;
 
   try {
-    if (
-      typeof replayRuntimeIntegration
-        .recoverInterrupted !==
-      "function"
-    ) {
+    if (typeof replayRuntimeIntegration.recoverInterrupted !== "function") {
       throw Object.assign(
-        new Error(
-          "Replay runtime integration does not expose recoverInterrupted()"
-        ),
-        {
-          code:
-            "STARTUP_RECOVERY_METHOD_MISSING",
-        }
+        new Error("Replay runtime integration does not expose recoverInterrupted()"),
+        { code: "STARTUP_RECOVERY_METHOD_MISSING" }
       );
     }
 
     let result;
 
+if (
+  isPostgresPersistence()
+) {
+  /*
+   * PostgreSQL operational persistence is strictly
+   * organization/environment scoped.
+   *
+   * Startup recovery therefore cannot perform the old
+   * Mongo-style global operational scan.
+   *
+   * Identity/tenancy repositories are allowed to enumerate
+   * environments globally. Recovery is then executed once
+   * for each concrete tenant/environment scope.
+   */
+  const PostgresEnvironmentRepository =
+    require(
+      "./persistence/postgres/PostgresEnvironmentRepository"
+    );
+
+  const environmentRepository =
+    new PostgresEnvironmentRepository();
+
+  const environments =
+    await environmentRepository
+      .findMany({});
+
+  const totals = {
+    discovered:
+      0,
+
+    recovered:
+      0,
+
+    failed:
+      0,
+
+    results:
+      [],
+  };
+
+  for (
+    const environment
+    of environments
+  ) {
+    const organizationId =
+      environment
+        .organizationId;
+
+    const environmentId =
+      environment._id ||
+      environment.publicId ||
+      environment.id;
+
+    /*
+     * Identity data with incomplete canonical scope
+     * must never be allowed to trigger an operational
+     * global read.
+     */
     if (
-      isPostgresPersistence()
+      !organizationId ||
+      !environmentId
     ) {
-      /*
-       * PostgreSQL operational persistence is strictly scoped by organization
-       * and environment.
-       *
-       * Therefore startup recovery first enumerates environments using the
-       * identity/tenancy repository, then performs recovery independently for
-       * every concrete scope.
-       *
-       * It must never perform the legacy global operational scan.
-       */
+      console.warn(
+        "[replay-recovery] [WARN] Skipping environment with incomplete tenant scope"
+      );
 
-      const PostgresEnvironmentRepository =
-        require(
-          "./persistence/postgres/PostgresEnvironmentRepository"
-        );
-
-      const environmentRepository =
-        new PostgresEnvironmentRepository();
-
-      const environments =
-        await environmentRepository
-          .findMany({});
-
-      const totals = {
-        discovered:
-          0,
-
-        recovered:
-          0,
-
-        failed:
-          0,
-
-        results:
-          [],
-      };
-
-      for (
-        const environment
-        of environments
-      ) {
-        const organizationId =
-          environment
-            .organizationId;
-
-        const environmentId =
-          environment._id ||
-          environment.publicId ||
-          environment.id;
-
-        /*
-         * Incomplete identity scope is never allowed to degrade into a global
-         * operational read.
-         */
-
-        if (
-          !organizationId ||
-          !environmentId
-        ) {
-          console.warn(
-            "[replay-recovery] [WARN] Skipping environment with incomplete tenant scope"
-          );
-
-          continue;
-        }
-
-        const scopedResult =
-          await replayRuntimeIntegration
-            .recoverInterrupted(
-              {},
-              {
-                organizationId,
-                environmentId,
-              }
-            );
-
-        totals.discovered +=
-          Number(
-            scopedResult
-              ?.discovered ??
-            scopedResult
-              ?.discoveredCount ??
-            scopedResult
-              ?.total ??
-            0
-          );
-
-        totals.recovered +=
-          Number(
-            scopedResult
-              ?.recovered ??
-            scopedResult
-              ?.recoveredCount ??
-            scopedResult
-              ?.successful ??
-            0
-          );
-
-        totals.failed +=
-          Number(
-            scopedResult
-              ?.failed ??
-            scopedResult
-              ?.failedCount ??
-            0
-          );
-
-        if (
-          Array.isArray(
-            scopedResult
-              ?.results
-          )
-        ) {
-          totals.results.push(
-            ...scopedResult
-              .results
-          );
-        }
-      }
-
-      result =
-        totals;
-    } else {
-      /*
-       * Legacy persistence keeps its existing global recovery semantics.
-       */
-
-      result =
-        await replayRuntimeIntegration
-          .recoverInterrupted();
+      continue;
     }
 
-    replayRecoveryStatus
-      .discovered =
+    const scopedResult =
+      await replayRuntimeIntegration
+        .recoverInterrupted(
+          {},
+          {
+            organizationId,
+            environmentId,
+          }
+        );
+
+    totals.discovered +=
       Number(
-        result?.discovered ??
-        result?.discoveredCount ??
-        result?.total ??
+        scopedResult
+          ?.discovered ??
+        scopedResult
+          ?.discoveredCount ??
+        scopedResult
+          ?.total ??
         0
       );
 
-    replayRecoveryStatus
-      .recovered =
+    totals.recovered +=
       Number(
-        result?.recovered ??
-        result?.recoveredCount ??
-        result?.successful ??
+        scopedResult
+          ?.recovered ??
+        scopedResult
+          ?.recoveredCount ??
+        scopedResult
+          ?.successful ??
         0
       );
 
-    replayRecoveryStatus
-      .failed =
+    totals.failed +=
       Number(
-        result?.failed ??
-        result?.failedCount ??
+        scopedResult
+          ?.failed ??
+        scopedResult
+          ?.failedCount ??
         0
       );
 
     if (
-      replayRecoveryStatus
-        .failed >
-      0
+      Array.isArray(
+        scopedResult
+          ?.results
+      )
     ) {
+      totals
+        .results
+        .push(
+          ...scopedResult
+            .results
+        );
+    }
+  }
+
+  result =
+    totals;
+} else {
+  /*
+   * Legacy Mongo runtime can retain its existing
+   * global startup-recovery behaviour.
+   */
+  result =
+    await replayRuntimeIntegration
+      .recoverInterrupted();
+}
+
+replayRecoveryStatus.discovered =
+  Number(
+    result?.discovered ??
+    result?.discoveredCount ??
+    result?.total ??
+    0
+  );
+
+replayRecoveryStatus.recovered =
+  Number(
+    result?.recovered ??
+    result?.recoveredCount ??
+    result?.successful ??
+    0
+  );
+
+replayRecoveryStatus.failed =
+  Number(
+    result?.failed ??
+    result?.failedCount ??
+    0
+  );
+
+    if (replayRecoveryStatus.failed > 0) {
       throw Object.assign(
         new Error(
           `Startup replay recovery completed with ${replayRecoveryStatus.failed} failed workflow(s)`
         ),
-        {
-          code:
-            "STARTUP_RECOVERY_INCOMPLETE",
-        }
+        { code: "STARTUP_RECOVERY_INCOMPLETE" }
       );
     }
 
-    replayRecoveryStatus
-      .startupRecoveryCompleted =
-      true;
-
-    applicationLifecycle
-      .startupRecoveryCompleted =
-      true;
-
-    applicationLifecycle
-      .startupRecoveryFailed =
-      false;
+    replayRecoveryStatus.startupRecoveryCompleted = true;
+    applicationLifecycle.startupRecoveryCompleted = true;
+    applicationLifecycle.startupRecoveryFailed = false;
 
     transitionApplicationState(
-      APPLICATION_STATE
-        .READY,
+      APPLICATION_STATE.READY,
       "startup_recovery_completed"
     );
 
@@ -4939,28 +4365,14 @@ async function runStartupRecovery() {
     );
 
     return result;
-  } catch (
-    error
-  ) {
-    replayRecoveryStatus
-      .startupRecoveryCompleted =
-      false;
-
-    replayRecoveryStatus
-      .lastError =
-      error.message;
-
-    applicationLifecycle
-      .startupRecoveryCompleted =
-      false;
-
-    applicationLifecycle
-      .startupRecoveryFailed =
-      true;
+  } catch (error) {
+    replayRecoveryStatus.startupRecoveryCompleted = false;
+    replayRecoveryStatus.lastError = error.message;
+    applicationLifecycle.startupRecoveryCompleted = false;
+    applicationLifecycle.startupRecoveryFailed = true;
 
     transitionApplicationState(
-      APPLICATION_STATE
-        .FAILED,
+      APPLICATION_STATE.FAILED,
       "startup_recovery_failed",
       error
     );
@@ -5379,11 +4791,13 @@ async function shutdown(
       // ======================================================================
 
       /*
-       * PostgreSQL is AIRA's authoritative transactional store.
+       * Phase 13 final architecture:
        *
-       * dbService owns the connection lifecycle.
+       * PostgreSQL is the authoritative transactional database.
+       * dbService owns its lifecycle.
+       *
+       * There is no normal-runtime MongoDB connection to close.
        */
-
       await safeShutdownStep(
         "PostgreSQL database disconnected",
         async () => {
@@ -5402,7 +4816,6 @@ async function shutdown(
             null;
         }
       );
-
       transitionApplicationState(
         APPLICATION_STATE
           .STOPPED,
@@ -5434,10 +4847,9 @@ async function shutdown(
       };
     })();
 
-  // ==========================================================================
-  // HARD SHUTDOWN DEADLINE
-  // ==========================================================================
-
+  /*
+   * Hard shutdown deadline.
+   */
   if (
     exitProcess
   ) {
@@ -5510,6 +4922,7 @@ function registerProcessSignalHandlers() {
   );
 }
 
+
 // ============================================================================
 // DIRECT PROCESS ENTRYPOINT
 // ============================================================================
@@ -5517,23 +4930,11 @@ function registerProcessSignalHandlers() {
 /*
  * Importing server.js must NOT automatically start AIRA.
  *
- * This is important for:
+ * This prevents Jest from connecting Redis, RabbitMQ,
+ * Kubernetes, schedulers and background jobs just because
+ * the Express app was imported.
  *
- * - Jest
- * - route tests
- * - service composition tests
- * - Phase 25 product contract tests
- *
- * Tests can import the Express application without accidentally starting:
- *
- * - PostgreSQL lifecycle
- * - Redis
- * - RabbitMQ
- * - Kubernetes
- * - schedulers
- * - queue workers
- *
- * The real AIRA process starts only when:
+ * AIRA starts normally only when we run:
  *
  *   node server.js
  */
@@ -5569,6 +4970,7 @@ if (
     );
 }
 
+
 // ============================================================================
 // TESTABLE LIFECYCLE EXPORTS
 // ============================================================================
@@ -5596,6 +4998,7 @@ app.shutdown =
 
 app.registerProcessSignalHandlers =
   registerProcessSignalHandlers;
+
 
 // ============================================================================
 // EXPRESS APP EXPORT
