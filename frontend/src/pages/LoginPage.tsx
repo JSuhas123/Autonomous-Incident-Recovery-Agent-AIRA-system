@@ -1,49 +1,27 @@
-﻿import {
-  authApi,
-} from '@/api/client'
-
-import {
-  AuthProductShell,
-} from '@/components/auth/AuthProductShell'
-
-import {
-  Button,
-} from '@/components/ui/button'
-
-import {
-  Input,
-} from '@/components/ui/input'
-
-import {
-  Label,
-} from '@/components/ui/label'
-
-import {
-  toast,
-} from '@/hooks/useToast'
-
-import {
-  useAuthStore,
-} from '@/store/authStore'
-
+﻿import { authApi } from '@/api/client'
+import { AuthProductShell } from '@/components/auth/AuthProductShell'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { useAuthStore } from '@/store/authStore'
 import type {
   SafeMembership,
   SafeOrganization,
   SafeUser,
 } from '@/types'
-
 import {
+  AlertCircle,
+  ArrowRight,
   Eye,
   EyeOff,
   LockKeyhole,
   Mail,
   ShieldCheck,
 } from 'lucide-react'
-
 import {
+  type FormEvent,
   useState,
 } from 'react'
-
 import {
   Link,
   Navigate,
@@ -51,27 +29,35 @@ import {
   useNavigate,
 } from 'react-router-dom'
 
-
-interface LoginForm {
-  email: string
-
-  password: string
-
-  rememberMe: boolean
+interface LocationState {
+  from?: {
+    pathname?: string
+  }
 }
 
+interface LoginResponse {
+  user: SafeUser
 
-type LoginErrors =
-  Partial<
-    Record<
-      'email' |
-      'password',
-      string
-    >
-  >
+  organization:
+    | SafeOrganization
+    | null
 
+  membership:
+    | SafeMembership
+    | null
+
+  csrfToken:
+    | string
+    | null
+}
 
 export default function LoginPage() {
+  const navigate =
+    useNavigate()
+
+  const location =
+    useLocation()
+
   const status =
     useAuthStore(
       (state) =>
@@ -84,334 +70,242 @@ export default function LoginPage() {
         state.setAuthenticated,
     )
 
-  const navigate =
-    useNavigate()
-
-  const location =
-    useLocation()
-
-  const locationState =
-    location.state as
-      | {
-          from?: {
-            pathname?: string
-          }
-        }
-      | null
-
-  const from =
-    locationState
-      ?.from
-      ?.pathname ||
-    '/dashboard'
+  const [email, setEmail] =
+    useState('')
 
   const [
-    form,
-    setForm,
-  ] =
-    useState<LoginForm>({
-      email: '',
+    password,
+    setPassword,
+  ] = useState('')
 
-      password: '',
-
-      rememberMe: false,
-    })
+  const [
+    rememberMe,
+    setRememberMe,
+  ] = useState(true)
 
   const [
     showPassword,
     setShowPassword,
-  ] =
-    useState(false)
+  ] = useState(false)
 
   const [
-    loading,
-    setLoading,
-  ] =
-    useState(false)
+    submitting,
+    setSubmitting,
+  ] = useState(false)
 
-  const [
-    errors,
-    setErrors,
-  ] =
-    useState<LoginErrors>(
-      {},
+  const [error, setError] =
+    useState<string | null>(
+      null,
     )
-
-  const [
-    globalError,
-    setGlobalError,
-  ] =
-    useState<
-      string | null
-    >(null)
-
 
   if (
     status ===
     'authenticated'
   ) {
+    const state =
+      location.state as
+        | LocationState
+        | null
+
     return (
       <Navigate
-        to={from}
+        to={
+          state?.from
+            ?.pathname ??
+          '/dashboard'
+        }
         replace
       />
     )
   }
 
-
-  function validate():
-    LoginErrors {
-    const next:
-      LoginErrors = {}
-
-    const email =
-      form.email.trim()
-
-    if (!email) {
-      next.email =
-        'Work email is required.'
-    } else if (
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        .test(email)
-    ) {
-      next.email =
-        'Enter a valid email address.'
-    }
-
-    if (
-      !form.password
-    ) {
-      next.password =
-        'Password is required.'
-    }
-
-    return next
-  }
-
-
   async function handleSubmit(
-    event:
-      React.FormEvent,
+    event: FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault()
 
-    const nextErrors =
-      validate()
+    setError(null)
 
-    if (
-      Object.keys(
-        nextErrors,
-      ).length
-    ) {
-      setErrors(
-        nextErrors,
+    const normalizedEmail =
+      email
+        .trim()
+        .toLowerCase()
+
+    if (!normalizedEmail) {
+      setError(
+        'Enter your email address.',
       )
 
       return
     }
 
-    setErrors({})
-    setGlobalError(null)
-    setLoading(true)
+    if (!password) {
+      setError(
+        'Enter your password.',
+      )
+
+      return
+    }
+
+    setSubmitting(true)
 
     try {
-      const data =
-        await authApi.login({
+      /*
+       * authApi currently exposes the
+       * decoded login payload fields as
+       * unknown at its generic client
+       * boundary.
+       *
+       * The browser auth endpoint
+       * contract is the authoritative
+       * source for this response.
+       */
+      const response =
+        (await authApi.login({
           email:
-            form
-              .email
-              .trim(),
+            normalizedEmail,
 
-          password:
-            form.password,
+          password,
 
-          rememberMe:
-            form.rememberMe,
-        })
+          rememberMe,
+        })) as LoginResponse
 
       setAuthenticated({
         user:
-          data.user as
-            SafeUser,
+          response.user,
 
         organization:
-          data.organization as
-            SafeOrganization |
-            null,
+          response.organization,
 
         membership:
-          data.membership as
-            SafeMembership |
-            null,
+          response.membership,
 
         session:
           null,
 
         csrfToken:
-          data.csrfToken,
+          response.csrfToken,
       })
 
+      const state =
+        location.state as
+          | LocationState
+          | null
+
+      const target =
+        state?.from
+          ?.pathname ??
+        '/dashboard'
+
       navigate(
-        from,
+        target,
         {
           replace: true,
         },
       )
     } catch (
-      error: any
+      loginError: unknown
     ) {
+      const apiError =
+        loginError as {
+          status?: number
+          message?: string
+        }
+
       if (
-        error?.status ===
+        apiError.status ===
         401
       ) {
-        setGlobalError(
+        setError(
           'The email or password is incorrect.',
         )
       } else if (
-        error?.status ===
+        apiError.status ===
         403
       ) {
-        setGlobalError(
-          error?.message ||
-            'This account cannot currently access the organization.',
+        setError(
+          apiError.message ||
+            'This account cannot currently access AIRA.',
         )
       } else {
-        toast.error(
-          'Login failed',
-          error?.message,
-        )
-
-        setGlobalError(
-          'AIRA could not complete the secure sign-in request.',
+        setError(
+          apiError.message ||
+            'Unable to sign in. Please try again.',
         )
       }
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
-
   return (
     <AuthProductShell
-      eyebrow="Secure platform access"
-      title="Return to reliability operations."
-      description="Sign in to your organization-scoped AIRA control plane. Your role, permissions and active environment are resolved again by the backend before protected operations are exposed."
+      title="Sign in to AIRA"
+      description="Use your organization credentials to access the AIRA reliability control plane."
     >
       <form
+        className="space-y-5"
         onSubmit={
           handleSubmit
         }
-        className="space-y-5"
-        noValidate
       >
-        {globalError && (
-          <div
-            role="alert"
-            className="rounded-xl border border-destructive/30 bg-destructive/[0.08] px-4 py-3 text-sm leading-5 text-destructive"
-          >
-            {
-              globalError
-            }
-          </div>
-        )}
+        <p className="text-sm leading-6 text-muted-foreground">
+          Enter your organization
+          credentials to continue to the
+          AIRA reliability control
+          plane.
+        </p>
 
         <div className="space-y-2">
-          <Label
-            htmlFor="email"
-          >
+          <Label htmlFor="email">
             Work email
           </Label>
 
           <div className="relative">
-            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 
             <Input
               id="email"
               type="email"
-              value={
-                form.email
-              }
-              onChange={
-                (event) => {
-                  setForm(
-                    (
-                      current,
-                    ) => ({
-                      ...current,
-
-                      email:
-                        event
-                          .target
-                          .value,
-                    }),
-                  )
-
-                  if (
-                    errors.email
-                  ) {
-                    setErrors(
-                      (
-                        current,
-                      ) => ({
-                        ...current,
-
-                        email:
-                          undefined,
-                      }),
-                    )
-                  }
-                }
-              }
-              placeholder="you@company.com"
               autoComplete="email"
-              autoFocus
-              aria-invalid={
-                Boolean(
-                  errors.email,
+              placeholder="you@company.com"
+              className="pl-9"
+              value={email}
+              onChange={(
+                event,
+              ) => {
+                setEmail(
+                  event.target.value,
                 )
+
+                if (error) {
+                  setError(null)
+                }
+              }}
+              disabled={
+                submitting
               }
-              aria-describedby={
-                errors.email
-                  ? 'login-email-error'
-                  : undefined
-              }
-              className={[
-                'h-11 pl-10',
-                'bg-background/60',
-                errors.email
-                  ? 'border-destructive'
-                  : '',
-              ].join(' ')}
+              required
             />
           </div>
-
-          {errors.email && (
-            <p
-              id="login-email-error"
-              className="text-xs text-destructive"
-            >
-              {
-                errors.email
-              }
-            </p>
-          )}
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label
-              htmlFor="password"
-            >
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="password">
               Password
             </Label>
 
-            <span className="text-[11px] text-muted-foreground">
-              Organization credentials
-            </span>
+            <Link
+              to="/forgot-password"
+              className="text-xs font-medium text-primary transition-colors hover:underline"
+            >
+              Forgot password?
+            </Link>
           </div>
 
           <div className="relative">
-            <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <LockKeyhole className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 
             <Input
               id="password"
@@ -420,74 +314,42 @@ export default function LoginPage() {
                   ? 'text'
                   : 'password'
               }
-              value={
-                form.password
-              }
-              onChange={
-                (event) => {
-                  setForm(
-                    (
-                      current,
-                    ) => ({
-                      ...current,
-
-                      password:
-                        event
-                          .target
-                          .value,
-                    }),
-                  )
-
-                  if (
-                    errors.password
-                  ) {
-                    setErrors(
-                      (
-                        current,
-                      ) => ({
-                        ...current,
-
-                        password:
-                          undefined,
-                      }),
-                    )
-                  }
-                }
-              }
-              placeholder="Your password"
               autoComplete="current-password"
-              aria-invalid={
-                Boolean(
-                  errors.password,
+              className="pl-9 pr-10"
+              value={password}
+              onChange={(
+                event,
+              ) => {
+                setPassword(
+                  event.target.value,
                 )
+
+                if (error) {
+                  setError(null)
+                }
+              }}
+              disabled={
+                submitting
               }
-              aria-describedby={
-                errors.password
-                  ? 'login-password-error'
-                  : undefined
-              }
-              className={[
-                'h-11 pl-10 pr-11',
-                'bg-background/60',
-                errors.password
-                  ? 'border-destructive'
-                  : '',
-              ].join(' ')}
+              required
             />
 
             <button
               type="button"
+              aria-label={
+                showPassword
+                  ? 'Hide password'
+                  : 'Show password'
+              }
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
               onClick={() =>
                 setShowPassword(
                   (current) =>
                     !current,
                 )
               }
-              className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              aria-label={
-                showPassword
-                  ? 'Hide password'
-                  : 'Show password'
+              disabled={
+                submitting
               }
             >
               {showPassword ? (
@@ -497,106 +359,87 @@ export default function LoginPage() {
               )}
             </button>
           </div>
-
-          {errors.password && (
-            <p
-              id="login-password-error"
-              className="text-xs text-destructive"
-            >
-              {
-                errors.password
-              }
-            </p>
-          )}
         </div>
 
-        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-border/70 bg-card/40 px-4 py-3 transition-colors hover:bg-secondary/40">
-          <div className="flex items-center gap-3">
-            <input
-              id="rememberMe"
-              type="checkbox"
-              checked={
-                form.rememberMe
-              }
-              onChange={
-                (event) =>
-                  setForm(
-                    (
-                      current,
-                    ) => ({
-                      ...current,
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={
+              rememberMe
+            }
+            onChange={(
+              event,
+            ) =>
+              setRememberMe(
+                event.target
+                  .checked,
+              )
+            }
+            disabled={
+              submitting
+            }
+            className="h-4 w-4 rounded border-border"
+          />
 
-                      rememberMe:
-                        event
-                          .target
-                          .checked,
-                    }),
-                  )
-              }
-              className="h-4 w-4 accent-primary"
-            />
-
-            <div>
-              <span className="block text-sm font-medium">
-                Keep me signed in
-              </span>
-
-              <span className="block text-[11px] text-muted-foreground">
-                Use only on a trusted device.
-              </span>
-            </div>
-          </div>
-
-          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+          Keep me signed in
         </label>
+
+        {error ? (
+          <div
+            role="alert"
+            className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+
+            <span>
+              {error}
+            </span>
+          </div>
+        ) : null}
 
         <Button
           type="submit"
+          className="w-full"
           disabled={
-            loading
+            submitting
           }
-          className="h-11 w-full font-medium shadow-[0_0_28px_hsl(var(--primary)/0.14)]"
         >
-          {loading
-            ? 'Establishing secure session…'
-            : 'Enter AIRA'}
+          {submitting ? (
+            'Signing in…'
+          ) : (
+            <>
+              Sign in
+
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </>
+          )}
         </Button>
 
-        <div className="rounded-xl border border-border/70 bg-secondary/20 px-4 py-3">
-          <div className="flex gap-3">
-            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+        <div className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
 
-            <p className="text-xs leading-5 text-muted-foreground">
-              Signing in identifies you. Your organization membership,
-              environment access and operational permissions are evaluated
-              independently before protected functionality is exposed.
-            </p>
-          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Authentication establishes
+            identity only.
+            Organization,
+            environment, policy and
+            permission controls remain
+            authoritative for every
+            AIRA operation.
+          </p>
         </div>
 
-        <div className="relative py-1">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-
-          <div className="relative flex justify-center">
-            <span className="bg-background px-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              New organization
-            </span>
-          </div>
-        </div>
-
-        <p className="text-center text-sm text-muted-foreground">
-          Need an AIRA workspace?
-          {' '}
+        <div className="border-t border-border pt-5 text-center text-sm text-muted-foreground">
+          Need an AIRA
+          organization?{' '}
 
           <Link
             to="/signup"
-            className="font-medium text-primary transition-colors hover:text-primary/80"
+            className="font-medium text-primary hover:underline"
           >
-            Create organization
+            Create one
           </Link>
-        </p>
+        </div>
       </form>
     </AuthProductShell>
   )
