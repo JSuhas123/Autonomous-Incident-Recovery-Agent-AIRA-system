@@ -3,10 +3,89 @@ import {
 } from '@/api/incidentCommandApi'
 
 import {
+  productQueryKeys,
+  type ProductQueryScope,
+} from '@/product/productQueryKeys'
+
+import {
+  useProductRuntimeStore,
+} from '@/store/productRuntimeStore'
+
+import {
   useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
+
+
+function useCommandScope():
+  ProductQueryScope |
+  null {
+  const organizationId =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state
+          .organization
+          ?.id,
+    )
+
+
+  const environmentId =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state
+          .environment
+          ?.id,
+    )
+
+
+  const tenantEpoch =
+    useProductRuntimeStore(
+      (
+        state,
+      ) =>
+        state
+          .tenantEpoch,
+    )
+
+
+  if (
+    !organizationId ||
+    !environmentId
+  ) {
+    return null
+  }
+
+
+  return {
+    organizationId,
+    environmentId,
+    tenantEpoch,
+  }
+}
+
+
+function commandKey(
+  scope:
+    ProductQueryScope,
+  incidentId:
+    string,
+) {
+  return [
+    ...productQueryKeys
+      .incidents(
+        scope,
+      ),
+
+    incidentId,
+
+    'command',
+  ] as const
+}
 
 
 function useCommandInvalidation() {
@@ -14,70 +93,53 @@ function useCommandInvalidation() {
     useQueryClient()
 
 
-  return async (
-    incidentId: string,
-  ) => {
-    await Promise.all([
-      queryClient.invalidateQueries({
+  return async () => {
+    await queryClient
+      .invalidateQueries({
         queryKey: [
-          'incident-command',
-          incidentId,
+          'product',
         ],
-      }),
-
-      queryClient.invalidateQueries({
-        queryKey: [
-          'incidents',
-          incidentId,
-        ],
-      }),
-
-      queryClient.invalidateQueries({
-        queryKey: [
-          'incidents',
-          incidentId,
-          'timeline',
-        ],
-      }),
-
-      queryClient.invalidateQueries({
-        queryKey: [
-          'incidents',
-        ],
-      }),
-    ])
+      })
   }
 }
 
 
 export function useIncidentCommand(
-  incidentId: string,
+  incidentId:
+    string,
 ) {
+  const scope =
+    useCommandScope()
+
+
   return useQuery({
-    queryKey: [
-      'incident-command',
-      incidentId,
-    ],
+    queryKey:
+      scope
+        ? commandKey(
+            scope,
+            incidentId,
+          )
+        : [
+            'incident-command',
+            'unavailable',
+            incidentId,
+          ],
 
     queryFn: ({
       signal,
     }) =>
-      incidentCommandApi.get(
-        incidentId,
-        signal,
-      ),
+      incidentCommandApi
+        .get(
+          incidentId,
+          signal,
+        ),
 
     enabled:
       Boolean(
+        scope &&
         incidentId,
       ),
 
-    /*
-     * Human control state is time-sensitive.
-     *
-     * Polling is only for visibility.
-     * PostgreSQL remains the authority.
-     */
     refetchInterval:
       15_000,
 
@@ -97,8 +159,11 @@ export function useAcknowledgeHumanTask() {
       incidentId,
       taskId,
     }: {
-      incidentId: string
-      taskId: string
+      incidentId:
+        string
+
+      taskId:
+        string
     }) =>
       incidentCommandApi
         .acknowledge(
@@ -108,16 +173,8 @@ export function useAcknowledgeHumanTask() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }
 
@@ -133,9 +190,14 @@ export function useRequestHumanControl() {
       taskId,
       reason,
     }: {
-      incidentId: string
-      taskId: string
-      reason?: string
+      incidentId:
+        string
+
+      taskId:
+        string
+
+      reason?:
+        string
     }) =>
       incidentCommandApi
         .requestControl(
@@ -146,16 +208,8 @@ export function useRequestHumanControl() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }
 
@@ -170,8 +224,11 @@ export function useAuthorizeHumanControl() {
       incidentId,
       sessionId,
     }: {
-      incidentId: string
-      sessionId: string
+      incidentId:
+        string
+
+      sessionId:
+        string
     }) =>
       incidentCommandApi
         .authorizeControl(
@@ -181,16 +238,8 @@ export function useAuthorizeHumanControl() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }
 
@@ -206,9 +255,14 @@ export function useAcquireHumanControl() {
       sessionId,
       leaseDurationMs,
     }: {
-      incidentId: string
-      sessionId: string
-      leaseDurationMs?: number
+      incidentId:
+        string
+
+      sessionId:
+        string
+
+      leaseDurationMs?:
+        number
     }) =>
       incidentCommandApi
         .acquireControl(
@@ -222,16 +276,8 @@ export function useAcquireHumanControl() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }
 
@@ -247,9 +293,14 @@ export function useHeartbeatHumanControl() {
       leaseId,
       extensionMs,
     }: {
-      incidentId: string
-      leaseId: string
-      extensionMs?: number
+      incidentId:
+        string
+
+      leaseId:
+        string
+
+      extensionMs?:
+        number
     }) =>
       incidentCommandApi
         .heartbeatControl(
@@ -263,16 +314,8 @@ export function useHeartbeatHumanControl() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }
 
@@ -288,9 +331,14 @@ export function useReturnHumanControl() {
       leaseId,
       reason,
     }: {
-      incidentId: string
-      leaseId: string
-      reason?: string
+      incidentId:
+        string
+
+      leaseId:
+        string
+
+      reason?:
+        string
     }) =>
       incidentCommandApi
         .returnControl(
@@ -301,15 +349,7 @@ export function useReturnHumanControl() {
           },
         ),
 
-    onSuccess: async (
-      _,
-      {
-        incidentId,
-      },
-    ) => {
-      await invalidate(
-        incidentId,
-      )
-    },
+    onSuccess:
+      invalidate,
   })
 }

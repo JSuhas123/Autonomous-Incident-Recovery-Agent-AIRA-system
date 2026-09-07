@@ -13,32 +13,43 @@ import {
 export function ProductContextStatus() {
   const source =
     useProductRuntimeStore(
-      (
-        state,
-      ) =>
+      (state) =>
         state.contextSource,
     )
 
+
   const status =
     useProductRuntimeStore(
-      (
-        state,
-      ) =>
+      (state) =>
         state.contextStatus,
     )
 
+
   const tenantEpoch =
     useProductRuntimeStore(
-      (
-        state,
-      ) =>
+      (state) =>
         state.tenantEpoch,
     )
 
 
   if (
     status ===
-      'transitioning' ||
+      'transitioning'
+  ) {
+    return (
+      <div
+        className="flex items-center gap-1.5 text-[10px] text-cyan-300"
+        title={`Tenant epoch ${tenantEpoch}`}
+      >
+        <LoaderCircle className="h-3 w-3 animate-spin" />
+
+        Switching environment
+      </div>
+    )
+  }
+
+
+  if (
     status ===
       'loading'
   ) {
@@ -49,7 +60,7 @@ export function ProductContextStatus() {
       >
         <LoaderCircle className="h-3 w-3 animate-spin" />
 
-        Resolving server context
+        Resolving context
       </div>
     )
   }
@@ -57,13 +68,16 @@ export function ProductContextStatus() {
 
   if (
     status ===
-    'error'
+      'error'
   ) {
     return (
-      <div className="flex items-center gap-1.5 text-[10px] text-red-300">
+      <div
+        className="flex items-center gap-1.5 text-[10px] text-red-300"
+        role="alert"
+      >
         <TriangleAlert className="h-3 w-3" />
 
-        Context error
+        Context unavailable
       </div>
     )
   }
@@ -82,7 +96,7 @@ export function ProductContextStatus() {
       >
         <ShieldCheck className="h-3 w-3" />
 
-        Server context
+        Server scoped
       </div>
     )
   }

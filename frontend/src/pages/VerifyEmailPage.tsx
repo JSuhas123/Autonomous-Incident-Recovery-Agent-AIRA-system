@@ -1,4 +1,8 @@
 import {
+  authApi,
+} from '@/api/client'
+
+import {
   authLifecycleApi,
   AuthLifecycleApiError,
 } from '@/api/authLifecycleApi'
@@ -15,9 +19,17 @@ import {
   useAuthStore,
 } from '@/store/authStore'
 
+import type {
+  SafeMembership,
+  SafeOrganization,
+  SafeSession,
+  SafeUser,
+} from '@/types'
+
 import {
   AlertCircle,
   CheckCircle2,
+  LoaderCircle,
   MailCheck,
   ShieldCheck,
 } from 'lucide-react'
@@ -29,8 +41,10 @@ import {
 
 import {
   Link,
+  useNavigate,
   useSearchParams,
 } from 'react-router-dom'
+
 
 type VerificationState =
   | 'ready'
@@ -38,44 +52,131 @@ type VerificationState =
   | 'verified'
   | 'failed'
 
+
 export default function VerifyEmailPage() {
-  const [searchParams] =
+  const [
+    searchParams,
+  ] =
     useSearchParams()
+
+
+  const navigate =
+    useNavigate()
+
 
   const authStatus =
     useAuthStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.status,
     )
+
+
+  const setAuthenticated =
+    useAuthStore(
+      (
+        state,
+      ) =>
+        state
+          .setAuthenticated,
+    )
+
 
   const token =
     useMemo(
       () =>
         searchParams
-          .get('token')
+          .get(
+            'token',
+          )
           ?.trim() ??
         '',
-      [searchParams],
+
+      [
+        searchParams,
+      ],
     )
+
 
   const [
     verificationState,
     setVerificationState,
   ] =
-    useState<
-      VerificationState
-    >(
+    useState<VerificationState>(
       token
         ? 'ready'
         : 'failed',
     )
 
-  const [message, setMessage] =
+
+  const [
+    message,
+    setMessage,
+  ] =
     useState(
       token
         ? ''
         : 'This verification link is missing its token.',
     )
+
+
+  async function refreshSessionAfterVerification() {
+    try {
+      const data =
+        await authApi
+          .session()
+
+
+      if (
+        !data
+          .authenticated
+      ) {
+        return false
+      }
+
+
+      setAuthenticated({
+        user:
+          data
+            .user as
+            SafeUser,
+
+        organization:
+          data
+            .organization as
+            SafeOrganization |
+            null,
+
+        membership:
+          data
+            .membership as
+            SafeMembership |
+            null,
+
+        session:
+          data
+            .session as
+            SafeSession |
+            null,
+
+        csrfToken:
+          data
+            .csrfToken,
+
+        environment:
+          data
+            .environment ??
+          null,
+      })
+
+
+      return true
+    } catch {
+      return false
+    }
+  }
+
 
   async function verify() {
     if (
@@ -88,11 +189,15 @@ export default function VerifyEmailPage() {
       return
     }
 
+
     setVerificationState(
       'verifying',
     )
 
-    setMessage('')
+    setMessage(
+      '',
+    )
+
 
     try {
       const response =
@@ -101,35 +206,70 @@ export default function VerifyEmailPage() {
             token,
           )
 
+
       if (
-        !response.verified
+        !response
+          .verified
       ) {
         setVerificationState(
           'failed',
         )
 
         setMessage(
-          response.message ||
+          response
+            .message ||
             'Email verification could not be completed.',
         )
 
         return
       }
 
+
+      const restored =
+        await refreshSessionAfterVerification()
+
+
       setVerificationState(
         'verified',
       )
 
+
       setMessage(
-        response.message ||
-          'Your email address has been verified.',
+        response
+          .message ||
+        'Your email address has been verified.',
       )
+
+
+      /*
+       * Existing signup browser session:
+       *
+       * verify -> refresh canonical session -> workspace.
+       */
+
+      if (
+        restored
+      ) {
+        window.setTimeout(
+          () => {
+            navigate(
+              '/dashboard',
+              {
+                replace:
+                  true,
+              },
+            )
+          },
+          700,
+        )
+      }
     } catch (
       verificationError
     ) {
       setVerificationState(
         'failed',
       )
+
 
       if (
         verificationError instanceof
@@ -166,60 +306,59 @@ export default function VerifyEmailPage() {
     }
   }
 
+
   return (
     <AuthProductShell
       eyebrow="Identity Verification"
       title={
         verificationState ===
-        'verified'
+          'verified'
           ? 'Email verified'
           : 'Confirm your email'
       }
-      description="Verification is a one-time identity operation. It does not create an authenticated session or grant AIRA execution authority."
+      description="Verification confirms control of the account email. It never grants recovery or infrastructure execution authority."
     >
       <div className="space-y-6">
         {verificationState ===
-        'verified' ? (
+          'verified' && (
           <div className="flex gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4">
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
 
             <div>
               <p className="text-sm font-medium">
-                Verification
-                complete
+                Verification complete
               </p>
 
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {message}
+                {
+                  message
+                }
               </p>
             </div>
           </div>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'ready' ? (
+          'ready' && (
           <div className="flex gap-3 rounded-xl border border-border bg-muted/30 p-4">
             <MailCheck className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
 
             <div>
               <p className="text-sm font-medium">
-                One-time
-                verification
+                One-time verification
               </p>
 
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                Confirm that you
-                want to verify the
-                email address
-                associated with this
-                verification token.
+                Verify ownership of the email address associated with this token before entering the AIRA workspace.
               </p>
             </div>
           </div>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'failed' ? (
+          'failed' && (
           <div
             role="alert"
             className="flex gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4"
@@ -228,56 +367,63 @@ export default function VerifyEmailPage() {
 
             <div>
               <p className="text-sm font-medium text-destructive">
-                Verification
-                unavailable
+                Verification unavailable
               </p>
 
               <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {message}
+                {
+                  message
+                }
               </p>
             </div>
           </div>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'ready' ? (
+          'ready' && (
           <Button
             type="button"
             className="w-full"
             onClick={
-              verify
+              () =>
+                void verify()
             }
           >
             Verify email
           </Button>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'verifying' ? (
+          'verifying' && (
           <Button
             type="button"
             className="w-full"
             disabled
           >
+            <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+
             Verifying…
           </Button>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'failed' ? (
+          'failed' && (
           <Button
             className="w-full"
             asChild
           >
             <Link to="/email-verification-pending">
-              Request another
-              verification
+              Request another verification
             </Link>
           </Button>
-        ) : null}
+        )}
+
 
         {verificationState ===
-        'verified' ? (
+          'verified' && (
           <Button
             className="w-full"
             asChild
@@ -285,30 +431,25 @@ export default function VerifyEmailPage() {
             <Link
               to={
                 authStatus ===
-                'authenticated'
+                  'authenticated'
                   ? '/dashboard'
                   : '/login'
               }
             >
               {authStatus ===
-              'authenticated'
+                'authenticated'
                 ? 'Continue to AIRA'
                 : 'Continue to sign in'}
             </Link>
           </Button>
-        ) : null}
+        )}
+
 
         <div className="flex items-start gap-2 rounded-xl border border-border/70 bg-muted/30 p-3">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
 
           <p className="text-xs leading-5 text-muted-foreground">
-            Email verification
-            cannot grant
-            organization access,
-            environment access,
-            elevated permissions,
-            autonomy or execution
-            authority.
+            Verification cannot grant organization roles, environment access, recovery permissions, autonomy or execution authority.
           </p>
         </div>
       </div>

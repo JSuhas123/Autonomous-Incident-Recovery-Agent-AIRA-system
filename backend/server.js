@@ -608,6 +608,12 @@ const notificationRoutingRoutes =
     "./routes/notificationRoutingRoutes"
   );
 
+
+const productNotificationRoutes =
+  require(
+    "./routes/productNotificationRoutes"
+  );
+
 const integrationPlatformRoutes =
   require(
     "./routes/integrationPlatformRoutes"
@@ -991,6 +997,11 @@ app.use(
 // PHASE 25 — PRODUCT ROUTER CONSTRUCTION
 // ============================================================================
 
+const productReadModelRoutes =
+  require(
+    "./routes/productReadModelRoutes"
+  );
+
 const productContextRoutes =
   createProductContextRouter();
 
@@ -1056,6 +1067,15 @@ app.use(
   browserOrganizationContext,
 
   notificationRoutingRoutes
+);
+
+
+app.use(
+  "/api/v1/product/notifications",
+
+  browserEnvironmentContext,
+
+  productNotificationRoutes
 );
 
 app.use(
@@ -1131,6 +1151,14 @@ app.use(
   browserEnvironmentContext,
 
   productOrganizationProfileRoutes
+);
+
+app.use(
+  "/api/v1/product",
+
+  browserEnvironmentContext,
+
+  productReadModelRoutes
 );
 
 // ============================================================================

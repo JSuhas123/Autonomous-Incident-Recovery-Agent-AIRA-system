@@ -2,23 +2,25 @@
 
 /**
  * ============================================================================
- * AIRA PHASE 25.2B
- * PRODUCT CONTEXT ROUTES
+ * AIRA PHASE 25
+ * AUTHORITATIVE PRODUCT CONTEXT ROUTE
  * ============================================================================
  *
- * This router is intentionally NOT registered in server.js yet.
+ * Workspace ProductContext requires:
  *
- * Final server integration happens during Phase 25.15.
+ * authenticated session
+ *      ↓
+ * active organization
+ *      ↓
+ * VERIFIED USER EMAIL
+ *      ↓
+ * canonical membership / role
+ *      ↓
+ * canonical permissions
+ *      ↓
+ * authoritative environment
  *
- * Route contract:
- *
- * GET /
- *
- * When mounted at:
- *
- *   /api/v1/product/context
- *
- * returns the authoritative product context for the authenticated request.
+ * Verification itself grants no authorization.
  * ============================================================================
  */
 
@@ -70,7 +72,8 @@ function sendRouteError(
           "PRODUCT_CONTEXT_FAILED",
 
         message:
-          status >= 500
+          status >=
+          500
             ? "Unable to resolve product context"
             : error?.message ||
               "Unable to resolve product context",
@@ -79,6 +82,55 @@ function sendRouteError(
       executionAuthorized:
         false,
     });
+}
+
+
+function requireVerifiedIdentity(
+  serverContext
+) {
+  const user =
+    serverContext
+      ?.user;
+
+
+  if (
+    !user
+  ) {
+    const error =
+      new Error(
+        "Authenticated user context is required"
+      );
+
+    error.status =
+      401;
+
+    error.code =
+      "PRODUCT_USER_CONTEXT_REQUIRED";
+
+    throw error;
+  }
+
+
+  if (
+    !user
+      .emailVerifiedAt
+  ) {
+    const error =
+      new Error(
+        "Email verification is required before entering the AIRA workspace"
+      );
+
+    error.status =
+      403;
+
+    error.code =
+      "EMAIL_VERIFICATION_REQUIRED";
+
+    error.executionAuthorized =
+      false;
+
+    throw error;
+  }
 }
 
 
@@ -111,6 +163,15 @@ function createProductContextRouter(
           getServerRequestContext(
             req
           );
+
+
+        /*
+         * Registration may create a valid session before verification,
+         * but normal workspace ProductContext is unavailable until verified.
+         */
+        requireVerifiedIdentity(
+          serverContext
+        );
 
 
         const context =
@@ -153,4 +214,6 @@ module.exports = {
   createProductContextRouter,
 
   sendRouteError,
+
+  requireVerifiedIdentity,
 };

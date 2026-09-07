@@ -1,9 +1,22 @@
+import {
+  LoaderCircle,
+} from 'lucide-react'
+
+
 export function PageLoader() {
   return (
-    <div className="flex h-full w-full items-center justify-center min-h-[200px]">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-        <span className="text-sm text-muted-foreground">Loading…</span>
+    <div
+      className="flex min-h-[45vh] items-center justify-center"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading AIRA product page"
+    >
+      <div className="flex flex-col items-center">
+        <LoaderCircle className="h-6 w-6 animate-spin text-primary" />
+
+        <p className="mt-3 text-xs text-muted-foreground">
+          Loading AIRA
+        </p>
       </div>
     </div>
   )

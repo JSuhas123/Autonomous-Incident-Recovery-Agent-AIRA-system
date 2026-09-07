@@ -3,6 +3,14 @@ import {
 } from '@/api/client'
 
 import {
+  authLifecycleApi,
+} from '@/api/authLifecycleApi'
+
+import {
+  productOrganizationProfileApi,
+} from '@/api/productOrganizationProfileApi'
+
+import {
   AuthProductShell,
 } from '@/components/auth/AuthProductShell'
 
@@ -33,8 +41,12 @@ import {
   Check,
   Eye,
   EyeOff,
+  Globe2,
+  LoaderCircle,
   LockKeyhole,
   Mail,
+  Server,
+  ShieldCheck,
   UserRound,
 } from 'lucide-react'
 
@@ -49,16 +61,58 @@ import {
 } from 'react-router-dom'
 
 
+type CompanySize =
+  | 'solo'
+  | 'micro'
+  | 'small'
+  | 'medium'
+  | 'large'
+  | 'enterprise'
+
+
+type TechnicalMaturity =
+  | 'emerging'
+  | 'developing'
+  | 'established'
+  | 'advanced'
+
+
 interface FormState {
-  fullName: string
+  fullName:
+    string
 
-  email: string
+  email:
+    string
 
-  password: string
+  password:
+    string
 
-  organizationName: string
+  organizationName:
+    string
 
-  terms: boolean
+  websiteUrl:
+    string
+
+  primaryDomain:
+    string
+
+  industry:
+    string
+
+  companySize:
+    CompanySize
+
+  employeeCount:
+    string
+
+  headquartersCountryCode:
+    string
+
+  technicalMaturity:
+    TechnicalMaturity
+
+  terms:
+    boolean
 }
 
 
@@ -73,40 +127,98 @@ type ErrorState =
 
 const INITIAL_FORM:
   FormState = {
-    fullName: '',
+    fullName:
+      '',
 
-    email: '',
+    email:
+      '',
 
-    password: '',
+    password:
+      '',
 
-    organizationName: '',
+    organizationName:
+      '',
 
-    terms: false,
+    websiteUrl:
+      '',
+
+    primaryDomain:
+      '',
+
+    industry:
+      '',
+
+    companySize:
+      'small',
+
+    employeeCount:
+      '',
+
+    headquartersCountryCode:
+      '',
+
+    technicalMaturity:
+      'developing',
+
+    terms:
+      false,
   }
 
 
 const PASSWORD_REQUIREMENTS = [
   'At least 12 characters',
   'Use a unique organization password',
-  'Stored using the AIRA password security layer',
+  'Stored using AIRA Argon2id password security',
 ]
+
+
+function normalizeDomain(
+  value:
+    string,
+) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(
+      /^https?:\/\//,
+      '',
+    )
+    .replace(
+      /^www\./,
+      '',
+    )
+    .split(
+      '/',
+    )[0]
+    .split(
+      ':',
+    )[0]
+}
 
 
 export default function SignupPage() {
   const status =
     useAuthStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.status,
     )
 
+
   const setAuthenticated =
     useAuthStore(
-      (state) =>
-        state.setAuthenticated,
+      (
+        state,
+      ) =>
+        state
+          .setAuthenticated,
     )
+
 
   const navigate =
     useNavigate()
+
 
   const [
     form,
@@ -116,17 +228,24 @@ export default function SignupPage() {
       INITIAL_FORM,
     )
 
+
   const [
     showPassword,
     setShowPassword,
   ] =
-    useState(false)
+    useState(
+      false,
+    )
+
 
   const [
     loading,
     setLoading,
   ] =
-    useState(false)
+    useState(
+      false,
+    )
+
 
   const [
     errors,
@@ -136,18 +255,22 @@ export default function SignupPage() {
       {},
     )
 
+
   const [
     globalError,
     setGlobalError,
   ] =
     useState<
-      string | null
-    >(null)
+      string |
+      null
+    >(
+      null,
+    )
 
 
   if (
     status ===
-    'authenticated'
+      'authenticated'
   ) {
     return (
       <Navigate
@@ -158,23 +281,94 @@ export default function SignupPage() {
   }
 
 
+  function updateField<
+    K extends
+      keyof FormState,
+  >(
+    key:
+      K,
+
+    value:
+      FormState[K],
+  ) {
+    setForm(
+      (
+        current,
+      ) => ({
+        ...current,
+
+        [key]:
+          value,
+      }),
+    )
+
+
+    if (
+      errors[
+        key
+      ]
+    ) {
+      setErrors(
+        (
+          current,
+        ) => ({
+          ...current,
+
+          [key]:
+            undefined,
+        }),
+      )
+    }
+  }
+
+
   function validate():
     ErrorState {
     const next:
       ErrorState = {}
 
+
     const fullName =
-      form.fullName.trim()
+      form
+        .fullName
+        .trim()
+
 
     const email =
-      form.email.trim()
+      form
+        .email
+        .trim()
+
 
     const organizationName =
       form
         .organizationName
         .trim()
 
-    if (!fullName) {
+
+    const industry =
+      form
+        .industry
+        .trim()
+
+
+    const country =
+      form
+        .headquartersCountryCode
+        .trim()
+        .toUpperCase()
+
+
+    const domain =
+      normalizeDomain(
+        form
+          .primaryDomain,
+      )
+
+
+    if (
+      !fullName
+    ) {
       next.fullName =
         'Full name is required.'
     } else if (
@@ -185,49 +379,126 @@ export default function SignupPage() {
         'Full name must be 100 characters or fewer.'
     }
 
-    if (!email) {
+
+    if (
+      !email
+    ) {
       next.email =
         'Work email is required.'
     } else if (
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/
-        .test(email)
+        .test(
+          email,
+        )
     ) {
       next.email =
-        'Enter a valid work email address.'
+        'Enter a valid email address.'
     }
 
-    if (!form.password) {
+
+    if (
+      !form.password
+    ) {
       next.password =
         'Password is required.'
     } else if (
-      form.password.length <
+      form
+        .password
+        .length <
       12
     ) {
       next.password =
         'Password must contain at least 12 characters.'
     } else if (
-      form.password.length >
+      form
+        .password
+        .length >
       1024
     ) {
       next.password =
         'Password is too long.'
     }
 
-    if (!organizationName) {
-      next.organizationName =
-        'Organization name is required.'
-    } else if (
-      organizationName.length >
-      100
+
+    if (
+      !organizationName
     ) {
       next.organizationName =
-        'Organization name must be 100 characters or fewer.'
+        'Organization name is required.'
     }
 
-    if (!form.terms) {
+
+    if (
+      !industry
+    ) {
+      next.industry =
+        'Industry is required.'
+    }
+
+
+    if (
+      !domain
+    ) {
+      next.primaryDomain =
+        'Company domain is required.'
+    } else if (
+      !domain.includes(
+        '.',
+      )
+    ) {
+      next.primaryDomain =
+        'Enter a valid company domain.'
+    }
+
+
+    if (
+      !country
+    ) {
+      next.headquartersCountryCode =
+        'Country code is required.'
+    } else if (
+      !/^[A-Z]{2}$/
+        .test(
+          country,
+        )
+    ) {
+      next.headquartersCountryCode =
+        'Use a two-letter country code such as IN or US.'
+    }
+
+
+    if (
+      form
+        .employeeCount
+        .trim()
+    ) {
+      const count =
+        Number(
+          form
+            .employeeCount,
+        )
+
+
+      if (
+        !Number.isInteger(
+          count,
+        ) ||
+        count <
+          1
+      ) {
+        next.employeeCount =
+          'Employee count must be a positive whole number.'
+      }
+    }
+
+
+    if (
+      !form.terms
+    ) {
       next.terms =
         'Accept the terms to create the organization.'
     }
+
 
     return next
   }
@@ -237,10 +508,13 @@ export default function SignupPage() {
     event:
       React.FormEvent,
   ) {
-    event.preventDefault()
+    event
+      .preventDefault()
+
 
     const nextErrors =
       validate()
+
 
     if (
       Object.keys(
@@ -254,44 +528,72 @@ export default function SignupPage() {
       return
     }
 
-    setErrors({})
-    setGlobalError(null)
-    setLoading(true)
+
+    setErrors(
+      {},
+    )
+
+    setGlobalError(
+      null,
+    )
+
+    setLoading(
+      true,
+    )
+
+
+    const normalizedEmail =
+      form
+        .email
+        .trim()
+        .toLowerCase()
+
 
     try {
+      /*
+       * ==============================================================
+       * 1. CANONICAL IDENTITY + ORGANIZATION REGISTRATION
+       * ==============================================================
+       *
+       * Certified Phase-25 authentication path remains unchanged.
+       */
+
       const data =
-        await authApi.register({
-          fullName:
-            form
-              .fullName
-              .trim(),
+        await authApi
+          .register({
+            fullName:
+              form
+                .fullName
+                .trim(),
 
-          email:
-            form
-              .email
-              .trim(),
+            email:
+              normalizedEmail,
 
-          password:
-            form.password,
+            password:
+              form.password,
 
-          organizationName:
-            form
-              .organizationName
-              .trim(),
-        })
+            organizationName:
+              form
+                .organizationName
+                .trim(),
+          })
+
 
       setAuthenticated({
         user:
-          data.user as
+          data
+            .user as
             SafeUser,
 
         organization:
-          data.organization as
+          data
+            .organization as
             SafeOrganization |
             null,
 
         membership:
-          data.membership as
+          data
+            .membership as
             SafeMembership |
             null,
 
@@ -299,517 +601,759 @@ export default function SignupPage() {
           null,
 
         csrfToken:
-          data.csrfToken,
+          data
+            .csrfToken,
       })
 
+
       /*
-       * Phase 25.2A:
-       *
-       * The canonical organization bootstrap has completed.
-       *
-       * 25.2B / 25.4 will replace this with the authoritative
-       * ProductContext landing destination after server
-       * product-context resolution is connected.
+       * ==============================================================
+       * 2. ENTERPRISE ORGANIZATION PROFILE
+       * ==============================================================
        */
+
+      await productOrganizationProfileApi
+        .update({
+          legalName:
+            form
+              .organizationName
+              .trim(),
+
+          websiteUrl:
+            form
+              .websiteUrl
+              .trim() ||
+            null,
+
+          primaryDomain:
+            normalizeDomain(
+              form
+                .primaryDomain,
+            ),
+
+          industry:
+            form
+              .industry
+              .trim(),
+
+          companySize:
+            form
+              .companySize,
+
+          employeeCount:
+            form
+              .employeeCount
+              .trim()
+              ? Number(
+                  form
+                    .employeeCount,
+                )
+              : null,
+
+          headquartersCountryCode:
+            form
+              .headquartersCountryCode
+              .trim()
+              .toUpperCase(),
+
+          technicalMaturity:
+            form
+              .technicalMaturity,
+
+          metadata: {
+            source:
+              'phase25_signup',
+
+            onboardingMode:
+              'shadow',
+
+            companyDomainVerification:
+              'pending',
+
+            executionAuthorized:
+              false,
+          },
+        })
+
+
+      /*
+       * ==============================================================
+       * 3. EMAIL VERIFICATION
+       * ==============================================================
+       *
+       * Verification does not grant organization permissions or execution.
+       */
+
+      await authLifecycleApi
+        .requestEmailVerification(
+          normalizedEmail,
+        )
+
+
+      /*
+       * ==============================================================
+       * 4. DO NOT ENTER WORKSPACE YET
+       * ==============================================================
+       */
+
       navigate(
-        '/dashboard',
+        `/email-verification-pending?email=${encodeURIComponent(
+          normalizedEmail,
+        )}`,
         {
-          replace: true,
+          replace:
+            true,
         },
       )
     } catch (
-      error: any
+      error:
+        any
     ) {
       if (
-        error?.status ===
+        error
+          ?.status ===
         409
       ) {
         setErrors({
           email:
             'An account with this email already exists.',
         })
-      } else if (
-        error?.status ===
-          400 &&
-        error?.details
-      ) {
-        const response =
-          error.details as {
-            details?: Array<{
-              field: string
-              message: string
-            }>
-          }
-
-        const fieldErrors:
-          ErrorState = {}
-
-        for (
-          const detail
-          of
-          response.details ??
-          []
-        ) {
-          if (
-            detail.field in
-            INITIAL_FORM
-          ) {
-            fieldErrors[
-              detail.field as
-                keyof FormState
-            ] =
-              detail.message
-          }
-        }
-
-        setErrors(
-          fieldErrors,
-        )
       } else {
         setGlobalError(
-          error?.message ||
-            'Registration failed. Please try again.',
+          error instanceof Error
+            ? error.message
+            : 'Unable to create the AIRA organization.',
         )
       }
     } finally {
-      setLoading(false)
-    }
-  }
-
-
-  function updateText(
-    key:
-      | 'fullName'
-      | 'email'
-      | 'password'
-      | 'organizationName',
-  ) {
-    return (
-      event:
-        React.ChangeEvent<HTMLInputElement>,
-    ) => {
-      const value =
-        event.target.value
-
-      setForm(
-        (current) => ({
-          ...current,
-
-          [key]:
-            value,
-        }),
+      setLoading(
+        false,
       )
-
-      if (
-        errors[key]
-      ) {
-        setErrors(
-          (current) => ({
-            ...current,
-
-            [key]:
-              undefined,
-          }),
-        )
-      }
     }
   }
 
 
   return (
     <AuthProductShell
-      eyebrow="Create your AIRA workspace"
-      title="Start in controlled observation."
-      description="Create the organization control plane first. AIRA begins with bounded defaults and a development environment before infrastructure recovery is ever considered."
+      eyebrow="Enterprise onboarding"
+      title="Create your AIRA workspace"
+      description="Create the account and organization identity first. Email verification and organization onboarding are required before normal workspace entry."
     >
       <form
+        className="space-y-7"
         onSubmit={
           handleSubmit
         }
-        className="space-y-5"
-        noValidate
       >
         {globalError && (
           <div
             role="alert"
-            className="rounded-xl border border-destructive/30 bg-destructive/[0.08] px-4 py-3 text-sm text-destructive"
+            className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive"
           >
-            {globalError}
+            {
+              globalError
+            }
           </div>
         )}
 
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label
-              htmlFor="fullName"
-            >
-              Full name
-            </Label>
 
-            <div className="relative">
-              <UserRound className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <section className="space-y-4">
+          <SectionTitle
+            icon={
+              UserRound
+            }
+            title="Account"
+            description="Identity used to create the organization owner."
+          />
 
-              <Input
-                id="fullName"
-                type="text"
-                value={
-                  form.fullName
-                }
-                onChange={
-                  updateText(
-                    'fullName',
-                  )
-                }
-                placeholder="Jane Smith"
-                autoComplete="name"
-                aria-invalid={
-                  Boolean(
-                    errors.fullName,
-                  )
-                }
-                aria-describedby={
-                  errors.fullName
-                    ? 'fullName-error'
-                    : undefined
-                }
-                className={[
-                  'h-11 pl-10',
-                  'bg-background/60',
-                  errors.fullName
-                    ? 'border-destructive'
-                    : '',
-                ].join(' ')}
-              />
-            </div>
 
-            {errors.fullName && (
-              <p
-                id="fullName-error"
-                className="text-xs text-destructive"
-              >
-                {
-                  errors.fullName
-                }
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label
-              htmlFor="organizationName"
-            >
-              Organization
-            </Label>
-
-            <div className="relative">
-              <Building2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-
-              <Input
-                id="organizationName"
-                type="text"
-                value={
-                  form.organizationName
-                }
-                onChange={
-                  updateText(
-                    'organizationName',
-                  )
-                }
-                placeholder="Acme Technologies"
-                autoComplete="organization"
-                aria-invalid={
-                  Boolean(
-                    errors
-                      .organizationName,
-                  )
-                }
-                aria-describedby={
-                  errors
-                    .organizationName
-                    ? 'organization-error'
-                    : undefined
-                }
-                className={[
-                  'h-11 pl-10',
-                  'bg-background/60',
-                  errors
-                    .organizationName
-                    ? 'border-destructive'
-                    : '',
-                ].join(' ')}
-              />
-            </div>
-
-            {errors
-              .organizationName && (
-              <p
-                id="organization-error"
-                className="text-xs text-destructive"
-              >
-                {
-                  errors
-                    .organizationName
-                }
-              </p>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label
-            htmlFor="email"
+          <Field
+            label="Full name"
+            error={
+              errors
+                .fullName
+            }
           >
-            Work email
-          </Label>
-
-          <div className="relative">
-            <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-
             <Input
-              id="email"
-              type="email"
               value={
-                form.email
+                form
+                  .fullName
               }
+              autoComplete="name"
               onChange={
-                updateText(
-                  'email',
-                )
-              }
-              placeholder="you@company.com"
-              autoComplete="email"
-              aria-invalid={
-                Boolean(
-                  errors.email,
-                )
-              }
-              aria-describedby={
-                errors.email
-                  ? 'email-error'
-                  : undefined
-              }
-              className={[
-                'h-11 pl-10',
-                'bg-background/60',
-                errors.email
-                  ? 'border-destructive'
-                  : '',
-              ].join(' ')}
-            />
-          </div>
-
-          {errors.email && (
-            <p
-              id="email-error"
-              className="text-xs text-destructive"
-            >
-              {errors.email}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <Label
-            htmlFor="password"
-          >
-            Password
-          </Label>
-
-          <div className="relative">
-            <LockKeyhole className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-
-            <Input
-              id="password"
-              type={
-                showPassword
-                  ? 'text'
-                  : 'password'
-              }
-              value={
-                form.password
-              }
-              onChange={
-                updateText(
-                  'password',
-                )
-              }
-              placeholder="At least 12 characters"
-              autoComplete="new-password"
-              aria-invalid={
-                Boolean(
-                  errors.password,
-                )
-              }
-              aria-describedby={
-                errors.password
-                  ? 'password-error'
-                  : 'password-help'
-              }
-              className={[
-                'h-11 pl-10 pr-11',
-                'bg-background/60',
-                errors.password
-                  ? 'border-destructive'
-                  : '',
-              ].join(' ')}
-            />
-
-            <button
-              type="button"
-              onClick={() =>
-                setShowPassword(
-                  (current) =>
-                    !current,
-                )
-              }
-              className="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-              aria-label={
-                showPassword
-                  ? 'Hide password'
-                  : 'Show password'
-              }
-            >
-              {showPassword ? (
-                <EyeOff className="h-4 w-4" />
-              ) : (
-                <Eye className="h-4 w-4" />
-              )}
-            </button>
-          </div>
-
-          {errors.password ? (
-            <p
-              id="password-error"
-              className="text-xs text-destructive"
-            >
-              {
-                errors.password
-              }
-            </p>
-          ) : (
-            <div
-              id="password-help"
-              className="grid gap-1 pt-1 sm:grid-cols-3"
-            >
-              {PASSWORD_REQUIREMENTS.map(
                 (
-                  requirement,
-                ) => (
-                  <span
-                    key={
-                      requirement
-                    }
-                    className="flex items-start gap-1.5 text-[10px] leading-4 text-muted-foreground"
-                  >
-                    <Check className="mt-0.5 h-3 w-3 shrink-0 text-emerald-400" />
-
-                    {
-                      requirement
-                    }
-                  </span>
-                ),
-              )}
-            </div>
-          )}
-        </div>
-
-        <div>
-          <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/40 p-3.5 transition-colors hover:bg-secondary/40">
-            <input
-              id="terms"
-              type="checkbox"
-              checked={
-                form.terms
-              }
-              onChange={
-                (event) => {
-                  setForm(
-                    (
-                      current,
-                    ) => ({
-                      ...current,
-
-                      terms:
-                        event
-                          .target
-                          .checked,
-                    }),
+                  event,
+                ) =>
+                  updateField(
+                    'fullName',
+                    event
+                      .target
+                      .value,
                   )
+              }
+            />
+          </Field>
 
-                  if (
-                    errors.terms
-                  ) {
-                    setErrors(
+
+          <Field
+            label="Work email"
+            error={
+              errors
+                .email
+            }
+          >
+            <div className="relative">
+              <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+
+              <Input
+                className="pl-9"
+                type="email"
+                autoComplete="email"
+                value={
+                  form
+                    .email
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'email',
+                      event
+                        .target
+                        .value,
+                    )
+                }
+              />
+            </div>
+          </Field>
+
+
+          <Field
+            label="Password"
+            error={
+              errors
+                .password
+            }
+          >
+            <div className="relative">
+              <LockKeyhole className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+
+              <Input
+                className="px-9"
+                type={
+                  showPassword
+                    ? 'text'
+                    : 'password'
+                }
+                autoComplete="new-password"
+                value={
+                  form
+                    .password
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'password',
+                      event
+                        .target
+                        .value,
+                    )
+                }
+              />
+
+              <button
+                type="button"
+                className="absolute right-3 top-2.5 text-muted-foreground"
+                onClick={
+                  () =>
+                    setShowPassword(
                       (
                         current,
-                      ) => ({
-                        ...current,
-
-                        terms:
-                          undefined,
-                      }),
+                      ) =>
+                        !current,
                     )
-                  }
                 }
+              >
+                {showPassword ? (
+                  <EyeOff className="h-4 w-4" />
+                ) : (
+                  <Eye className="h-4 w-4" />
+                )}
+              </button>
+            </div>
+          </Field>
+
+
+          <div className="space-y-2 rounded-xl border border-border bg-muted/20 p-3">
+            {PASSWORD_REQUIREMENTS.map(
+              (
+                requirement,
+              ) => (
+                <div
+                  key={
+                    requirement
+                  }
+                  className="flex gap-2 text-xs text-muted-foreground"
+                >
+                  <Check className="h-4 w-4 text-emerald-500" />
+
+                  {
+                    requirement
+                  }
+                </div>
+              ),
+            )}
+          </div>
+        </section>
+
+
+        <section className="space-y-4 border-t border-border pt-6">
+          <SectionTitle
+            icon={
+              Building2
+            }
+            title="Company"
+            description="Creates the enterprise organization profile used during onboarding."
+          />
+
+
+          <Field
+            label="Organization name"
+            error={
+              errors
+                .organizationName
+            }
+          >
+            <Input
+              value={
+                form
+                  .organizationName
               }
-              className="mt-0.5 h-4 w-4 accent-primary"
+              onChange={
+                (
+                  event,
+                ) =>
+                  updateField(
+                    'organizationName',
+                    event
+                      .target
+                      .value,
+                  )
+              }
             />
+          </Field>
 
-            <span>
-              <span className="block text-sm font-medium text-foreground">
-                Create an organization workspace
-              </span>
 
-              <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                I agree to the terms of service and privacy policy.
-                The first account becomes the organization owner.
-              </span>
-            </span>
-          </label>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Field
+              label="Company domain"
+              error={
+                errors
+                  .primaryDomain
+              }
+            >
+              <div className="relative">
+                <Globe2 className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
 
-          {errors.terms && (
-            <p className="mt-1.5 text-xs text-destructive">
-              {errors.terms}
-            </p>
-          )}
+                <Input
+                  className="pl-9"
+                  placeholder="example.com"
+                  value={
+                    form
+                      .primaryDomain
+                  }
+                  onChange={
+                    (
+                      event,
+                    ) =>
+                      updateField(
+                        'primaryDomain',
+                        event
+                          .target
+                          .value,
+                      )
+                  }
+                />
+              </div>
+            </Field>
+
+
+            <Field
+              label="Company website"
+            >
+              <Input
+                placeholder="https://example.com"
+                value={
+                  form
+                    .websiteUrl
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'websiteUrl',
+                      event
+                        .target
+                        .value,
+                    )
+                }
+              />
+            </Field>
+
+
+            <Field
+              label="Industry"
+              error={
+                errors
+                  .industry
+              }
+            >
+              <Input
+                placeholder="Software, FinTech, Healthcare..."
+                value={
+                  form
+                    .industry
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'industry',
+                      event
+                        .target
+                        .value,
+                    )
+                }
+              />
+            </Field>
+
+
+            <Field
+              label="Company size"
+            >
+              <select
+                value={
+                  form
+                    .companySize
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'companySize',
+                      event
+                        .target
+                        .value as
+                        CompanySize,
+                    )
+                }
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="solo">
+                  Solo
+                </option>
+
+                <option value="micro">
+                  2–10
+                </option>
+
+                <option value="small">
+                  11–50
+                </option>
+
+                <option value="medium">
+                  51–250
+                </option>
+
+                <option value="large">
+                  251–1000
+                </option>
+
+                <option value="enterprise">
+                  1000+
+                </option>
+              </select>
+            </Field>
+
+
+            <Field
+              label="Employee count"
+              error={
+                errors
+                  .employeeCount
+              }
+            >
+              <Input
+                type="number"
+                min="1"
+                value={
+                  form
+                    .employeeCount
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'employeeCount',
+                      event
+                        .target
+                        .value,
+                    )
+                }
+              />
+            </Field>
+
+
+            <Field
+              label="Headquarters country code"
+              error={
+                errors
+                  .headquartersCountryCode
+              }
+            >
+              <Input
+                maxLength={
+                  2
+                }
+                placeholder="IN"
+                value={
+                  form
+                    .headquartersCountryCode
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'headquartersCountryCode',
+                      event
+                        .target
+                        .value
+                        .toUpperCase(),
+                    )
+                }
+              />
+            </Field>
+
+
+            <Field
+              label="Technical maturity"
+            >
+              <select
+                value={
+                  form
+                    .technicalMaturity
+                }
+                onChange={
+                  (
+                    event,
+                  ) =>
+                    updateField(
+                      'technicalMaturity',
+                      event
+                        .target
+                        .value as
+                        TechnicalMaturity,
+                    )
+                }
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="emerging">
+                  Emerging
+                </option>
+
+                <option value="developing">
+                  Developing
+                </option>
+
+                <option value="established">
+                  Established
+                </option>
+
+                <option value="advanced">
+                  Advanced
+                </option>
+              </select>
+            </Field>
+          </div>
+        </section>
+
+
+        <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+          <div className="flex gap-3">
+            <ShieldCheck className="mt-0.5 h-5 w-5 text-cyan-400" />
+
+            <div>
+              <p className="text-sm font-medium">
+                Safe initial operating mode
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                New organizations begin without autonomous execution authority. Infrastructure onboarding and trust qualification happen separately.
+              </p>
+            </div>
+          </div>
         </div>
 
+
+        <label className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            checked={
+              form
+                .terms
+            }
+            onChange={
+              (
+                event,
+              ) =>
+                updateField(
+                  'terms',
+                  event
+                    .target
+                    .checked,
+                )
+            }
+            className="mt-1"
+          />
+
+          <span className="text-sm text-muted-foreground">
+            I agree to the AIRA terms and understand that creating an organization does not grant infrastructure execution authority.
+          </span>
+        </label>
+
+
+        {errors
+          .terms && (
+          <p className="text-sm text-destructive">
+            {
+              errors
+                .terms
+            }
+          </p>
+        )}
+
+
         <Button
+          className="w-full"
           type="submit"
           disabled={
             loading
           }
-          className="h-11 w-full font-medium shadow-[0_0_28px_hsl(var(--primary)/0.14)]"
         >
-          {loading
-            ? 'Creating secure workspace…'
-            : 'Create organization'}
+          {loading ? (
+            <>
+              <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
+
+              Creating organization…
+            </>
+          ) : (
+            <>
+              <Server className="mr-2 h-4 w-4" />
+
+              Create AIRA organization
+            </>
+          )}
         </Button>
 
-        <div className="relative py-1">
-          <div className="absolute inset-0 flex items-center">
-            <span className="w-full border-t border-border" />
-          </div>
-
-          <div className="relative flex justify-center">
-            <span className="bg-background px-3 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
-              Existing organization
-            </span>
-          </div>
-        </div>
 
         <p className="text-center text-sm text-muted-foreground">
-          Already have access?
-          {' '}
+          Already have an account?{' '}
 
           <Link
             to="/login"
-            className="font-medium text-primary transition-colors hover:text-primary/80"
+            className="text-primary hover:underline"
           >
-            Sign in to AIRA
+            Sign in
           </Link>
         </p>
       </form>
     </AuthProductShell>
+  )
+}
+
+
+function Field({
+  label,
+  error,
+  children,
+}: {
+  label:
+    string
+
+  error?:
+    string
+
+  children:
+    React.ReactNode
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>
+        {
+          label
+        }
+      </Label>
+
+      {
+        children
+      }
+
+      {error && (
+        <p className="text-xs text-destructive">
+          {
+            error
+          }
+        </p>
+      )}
+    </div>
+  )
+}
+
+
+function SectionTitle({
+  icon:
+    Icon,
+
+  title,
+
+  description,
+}: {
+  icon:
+    typeof UserRound
+
+  title:
+    string
+
+  description:
+    string
+}) {
+  return (
+    <div className="flex gap-3">
+      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-muted/30">
+        <Icon className="h-4 w-4" />
+      </div>
+
+      <div>
+        <h2 className="text-sm font-medium">
+          {
+            title
+          }
+        </h2>
+
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {
+            description
+          }
+        </p>
+      </div>
+    </div>
   )
 }

@@ -1,6 +1,8 @@
 import {
+  Boxes,
   ChevronLeft,
   ChevronRight,
+  CreditCard,
   Zap,
 } from 'lucide-react'
 
@@ -13,6 +15,10 @@ import {
 } from '@/product/product.navigation'
 
 import {
+  PRODUCT_PERSONAS,
+} from '@/product/product.types'
+
+import {
   useProductRuntimeStore,
 } from '@/store/productRuntimeStore'
 
@@ -20,26 +26,39 @@ import {
 export function ProductSidebar() {
   const persona =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.persona,
     )
 
+
   const permissions =
     useProductRuntimeStore(
-      (state) =>
+      (
+        state,
+      ) =>
         state.permissions,
     )
 
+
   const collapsed =
     useProductRuntimeStore(
-      (state) =>
-        state.sidebarCollapsed,
+      (
+        state,
+      ) =>
+        state
+          .sidebarCollapsed,
     )
+
 
   const setCollapsed =
     useProductRuntimeStore(
-      (state) =>
-        state.setSidebarCollapsed,
+      (
+        state,
+      ) =>
+        state
+          .setSidebarCollapsed,
     )
 
 
@@ -50,6 +69,12 @@ export function ProductSidebar() {
     )
 
 
+  const showAdministrativeProductControls =
+    persona ===
+      PRODUCT_PERSONAS
+        .ADMINISTRATION
+
+
   return (
     <aside
       className={[
@@ -58,7 +83,9 @@ export function ProductSidebar() {
         collapsed
           ? 'w-[76px]'
           : 'w-[252px]',
-      ].join(' ')}
+      ].join(
+        ' ',
+      )}
     >
       <div className="flex h-16 items-center border-b border-sidebar-border px-4">
         <div className="flex min-w-0 items-center gap-3">
@@ -90,7 +117,9 @@ export function ProductSidebar() {
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <div className="space-y-5">
           {groups.map(
-            (group) => (
+            (
+              group,
+            ) => (
               <div
                 key={
                   group.id
@@ -106,9 +135,12 @@ export function ProductSidebar() {
 
                 <div className="space-y-1">
                   {group.items.map(
-                    (item) => {
+                    (
+                      item,
+                    ) => {
                       const Icon =
                         item.icon
+
 
                       return (
                         <NavLink
@@ -159,6 +191,56 @@ export function ProductSidebar() {
               </div>
             ),
           )}
+
+
+          {showAdministrativeProductControls && (
+            <div>
+              {!collapsed && (
+                <div className="mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/70">
+                  Platform
+                </div>
+              )}
+
+              <div className="space-y-1">
+                <NavLink
+                  to="/settings"
+                  title={
+                    collapsed
+                      ? 'Environments'
+                      : undefined
+                  }
+                  className="group flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                >
+                  <Boxes className="h-4 w-4 shrink-0" />
+
+                  {!collapsed && (
+                    <span>
+                      Environments
+                    </span>
+                  )}
+                </NavLink>
+
+
+                <NavLink
+                  to="/analytics#billing"
+                  title={
+                    collapsed
+                      ? 'Billing'
+                      : undefined
+                  }
+                  className="group flex h-10 items-center gap-3 rounded-lg px-3 text-sm text-sidebar-foreground/70 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                >
+                  <CreditCard className="h-4 w-4 shrink-0" />
+
+                  {!collapsed && (
+                    <span>
+                      Billing
+                    </span>
+                  )}
+                </NavLink>
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 
@@ -178,12 +260,14 @@ export function ProductSidebar() {
           </div>
         )}
 
+
         <button
           type="button"
-          onClick={() =>
-            setCollapsed(
-              !collapsed,
-            )
+          onClick={
+            () =>
+              setCollapsed(
+                !collapsed,
+              )
           }
           className="flex h-9 w-full items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
           aria-label={

@@ -7,6 +7,14 @@ import {
 } from './ProductCommandPalette'
 
 import {
+  ProductContextTransitionOverlay,
+} from './ProductContextTransitionOverlay'
+
+import {
+  ProductMobileNavigation,
+} from './ProductMobileNavigation'
+
+import {
   ProductSidebar,
 } from './ProductSidebar'
 
@@ -32,8 +40,9 @@ export function AppLayout() {
 
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen overflow-x-hidden bg-background">
       <ProductSidebar />
+
 
       <div
         className={[
@@ -42,20 +51,28 @@ export function AppLayout() {
           collapsed
             ? 'lg:pl-[76px]'
             : 'lg:pl-[252px]',
-        ].join(' ')}
+        ].join(
+          ' ',
+        )}
       >
         <ProductTopBar />
 
+
         <main className="min-h-[calc(100vh-4rem)]">
           <ProductRouteGuard>
-            <div className="mx-auto w-full max-w-[1800px] p-4 sm:p-6">
+            <div className="mx-auto w-full max-w-[1800px] p-3 pb-20 sm:p-5 sm:pb-20 xl:p-6">
               <Outlet />
             </div>
           </ProductRouteGuard>
         </main>
       </div>
 
+
+      <ProductMobileNavigation />
+
       <ProductCommandPalette />
+
+      <ProductContextTransitionOverlay />
     </div>
   )
 }
