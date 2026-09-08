@@ -23,11 +23,41 @@ function numberValue(
       value
     );
 
+
   return Number.isFinite(
     parsed
   )
     ? parsed
     : 0;
+}
+
+
+function sameIdentifier(
+  left,
+  right
+) {
+  if (
+    left ===
+      null ||
+    left ===
+      undefined ||
+    right ===
+      null ||
+    right ===
+      undefined
+  ) {
+    return false;
+  }
+
+
+  return (
+    String(
+      left
+    ) ===
+    String(
+      right
+    )
+  );
 }
 
 
@@ -44,19 +74,44 @@ async function getShadowMode({
         "Shadow Mode requires authoritative organization and environment scope"
       );
 
+
     error.status =
       400;
 
+
     error.code =
       "SHADOW_MODE_SCOPE_REQUIRED";
+
+
+    error.executionAuthorized =
+      false;
+
 
     throw error;
   }
 
 
+  /*
+   * ========================================================================
+   * AUTHORITATIVE ENVIRONMENT LOOKUP
+   * ========================================================================
+   *
+   * EnvironmentService.listEnvironments() does not exist in the canonical
+   * environment service.
+   *
+   * Phase 25 must use the real environment-domain API:
+   *
+   *     EnvironmentService.listForOrganization()
+   *
+   * Repository records may expose either `_id` or `id` depending on the
+   * persistence provider. EnvironmentService.safeEnvironment() normalizes
+   * the result before it enters the product read model.
+   * ========================================================================
+   */
+
   const [
     incidentRows,
-    environments,
+    environmentRows,
   ] =
     await Promise.all([
       Incident
@@ -74,32 +129,75 @@ async function getShadowMode({
         .lean(),
 
       EnvironmentService
-        .listEnvironments(
-          organizationId
+        .listForOrganization(
+          organizationId,
+          {
+            includeArchived:
+              false,
+          }
         ),
     ]);
 
 
-  const environment =
+  const rawEnvironment =
     (
       Array.isArray(
-        environments
+        environmentRows
       )
-        ? environments
+        ? environmentRows
         : []
     )
       .find(
         (
           candidate
         ) =>
-          String(
-            candidate.id
-          ) ===
-          String(
+          sameIdentifier(
+            candidate
+              ?._id ??
+            candidate
+              ?.id,
+
             environmentId
           )
       ) ||
     null;
+
+
+  /*
+   * The browser may only reach this read model after authoritative context
+   * resolution. If that context and the environment-domain lookup disagree,
+   * fail closed rather than fabricating environment settings.
+   */
+  if (
+    !rawEnvironment
+  ) {
+    const error =
+      new Error(
+        "Current environment is unavailable in authoritative organization scope"
+      );
+
+
+    error.status =
+      404;
+
+
+    error.code =
+      "SHADOW_MODE_ENVIRONMENT_NOT_FOUND";
+
+
+    error.executionAuthorized =
+      false;
+
+
+    throw error;
+  }
+
+
+  const environment =
+    EnvironmentService
+      .safeEnvironment(
+        rawEnvironment
+      );
 
 
   const autonomousExecutionAllowed =
@@ -110,18 +208,30 @@ async function getShadowMode({
 
 
   /*
-   * Phase 25 Shadow Mode is a PRODUCT OBSERVATION MODE.
+   * ========================================================================
+   * PHASE 25 SHADOW MODE CONTRACT
+   * ========================================================================
+   *
+   * Shadow Mode is a PRODUCT OBSERVATION MODE.
    *
    * This read model:
    *
-   * - observes existing persisted incident data
-   * - does not trigger diagnosis
+   * - observes already persisted incidents
+   * - does not invoke diagnosis
    * - does not create recovery decisions
+   * - does not request execution
+   * - does not approve execution
    * - does not execute infrastructure operations
    * - does not grant authorization
    *
-   * Human-vs-AIRA comparison percentages are intentionally omitted until
-   * sufficient real comparison evidence exists.
+   * An environment may technically have autonomous execution enabled in its
+   * authoritative settings. That is reported as configuration state only.
+   *
+   * It does NOT mean this Shadow Mode request is authorized to execute.
+   *
+   * Human-vs-AIRA comparison percentages remain unavailable until real,
+   * persisted comparison evidence exists.
+   * ========================================================================
    */
 
 
@@ -143,8 +253,11 @@ async function getShadowMode({
           "closed",
         ].includes(
           String(
-            incident.status
+            incident.status ||
+            ""
           )
+            .trim()
+            .toLowerCase()
         )
     );
 
@@ -159,8 +272,11 @@ async function getShadowMode({
           "closed",
         ].includes(
           String(
-            incident.status
+            incident.status ||
+            ""
           )
+            .trim()
+            .toLowerCase()
         )
     );
 
@@ -176,6 +292,7 @@ async function getShadowMode({
           incident
             ?.evidenceCount
         ),
+
       0
     );
 
@@ -185,15 +302,52 @@ async function getShadowMode({
       new Date()
         .toISOString(),
 
+
     scope: {
       organizationId,
       environmentId,
     },
 
+
+    environment: {
+      id:
+        environment
+          ?.id ||
+        String(
+          environmentId
+        ),
+
+      name:
+        environment
+          ?.name ||
+        null,
+
+      type:
+        environment
+          ?.type ||
+        null,
+
+      criticality:
+        environment
+          ?.criticality ||
+        null,
+
+      status:
+        environment
+          ?.status ||
+        null,
+    },
+
+
     mode: {
       shadowMode:
         true,
 
+      /*
+       * This is authoritative ENVIRONMENT CONFIGURATION only.
+       *
+       * It is deliberately separated from executionAuthorized.
+       */
       autonomousExecutionAllowed,
 
       autonomousExecutionPerformed:
@@ -202,6 +356,7 @@ async function getShadowMode({
       executionAuthorized:
         false,
     },
+
 
     metrics: [
       {
@@ -301,6 +456,7 @@ async function getShadowMode({
       },
     ],
 
+
     comparisons: {
       available:
         false,
@@ -321,8 +477,16 @@ async function getShadowMode({
         ),
     },
 
+
+    /*
+     * Do not fabricate case comparison history.
+     *
+     * Future phases may populate this only from authoritative comparison
+     * evidence.
+     */
     cases:
       [],
+
 
     safety: {
       executionAuthorized:
@@ -331,9 +495,19 @@ async function getShadowMode({
       productModeGrantsAuthority:
         false,
 
+      environmentConfigurationGrantsAuthority:
+        false,
+
       comparisonScoreGrantsAuthority:
         false,
+
+      certificationGrantsAuthority:
+        false,
     },
+
+
+    executionAuthorized:
+      false,
   };
 }
 

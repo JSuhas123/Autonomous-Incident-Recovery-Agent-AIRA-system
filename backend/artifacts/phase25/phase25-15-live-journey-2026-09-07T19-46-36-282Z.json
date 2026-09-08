@@ -1,0 +1,210 @@
+{
+  "version": "25.15-live-customer-journey-v1",
+  "phase": "25.15",
+  "certificationType": "LIVE_ENTERPRISE_JOURNEY",
+  "passed": true,
+  "scope": {
+    "organizationId": "97f205db-8f85-4b09-8b60-5e94d3da0655",
+    "environmentId": "3a06723a-4af5-4978-85e3-c48a55499995",
+    "role": "owner",
+    "persona": "administration"
+  },
+  "journey": [
+    {
+      "step": "login",
+      "status": 200
+    },
+    {
+      "step": "ProductContext",
+      "route": "/api/v1/product/context",
+      "status": 200
+    },
+    {
+      "step": "Overview",
+      "route": "/api/v1/product/overview",
+      "status": 200
+    },
+    {
+      "step": "Operations",
+      "route": "/api/v1/product/operations",
+      "status": 200
+    },
+    {
+      "step": "Incidents",
+      "route": "/api/v1/product/incidents",
+      "status": 200
+    },
+    {
+      "step": "Shadow Mode",
+      "route": "/api/v1/product/shadow",
+      "status": 200
+    },
+    {
+      "step": "Evidence Onboarding",
+      "route": "/api/v1/product/onboarding",
+      "status": 200
+    },
+    {
+      "step": "Reliability",
+      "route": "/api/v1/product/reliability",
+      "status": 200
+    },
+    {
+      "step": "Executive",
+      "route": "/api/v1/product/executive",
+      "status": 200
+    },
+    {
+      "step": "Governance",
+      "route": "/api/v1/product/governance",
+      "status": 200
+    },
+    {
+      "step": "Developer",
+      "route": "/api/v1/product/developer",
+      "status": 200
+    },
+    {
+      "step": "Product Notifications",
+      "route": "/api/v1/product/notifications?limit=25",
+      "status": 200
+    },
+    {
+      "step": "Product Notification Summary",
+      "route": "/api/v1/product/notifications/summary",
+      "status": 200
+    },
+    {
+      "step": "Organization Teams",
+      "route": "/api/v1/organizations/current/teams",
+      "status": 200
+    },
+    {
+      "step": "Notification Channels",
+      "route": "/api/v1/notification-routing/channels",
+      "status": 200
+    },
+    {
+      "step": "Notification Rules",
+      "route": "/api/v1/notification-routing/rules",
+      "status": 200
+    }
+  ],
+  "checks": [
+    {
+      "name": "Enterprise owner login",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "ProductContext",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Overview",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Operations",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Incidents",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Shadow Mode",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Evidence Onboarding",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Reliability",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Executive",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Governance",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Developer",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Product Notifications",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Product Notification Summary",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Organization Teams",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Notification Channels",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Notification Rules",
+      "passed": true,
+      "details": "HTTP 200"
+    },
+    {
+      "name": "Live journey resolves organization and environment",
+      "passed": true,
+      "details": "97f205db-8f85-4b09-8b60-5e94d3da0655 / 3a06723a-4af5-4978-85e3-c48a55499995"
+    },
+    {
+      "name": "ProductContext safety boundary",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Commercial degradation does not grant authority",
+      "passed": true,
+      "details": "unavailable"
+    },
+    {
+      "name": "Evidence-driven onboarding remains server-owned",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Shadow Mode remains non-authorizing",
+      "passed": true,
+      "details": null
+    }
+  ],
+  "observedState": {
+    "overviewDegraded": true,
+    "commercialStatus": "unavailable",
+    "onboardingReadinessPercent": 33,
+    "incidentCount": 0,
+    "notificationCount": 3
+  },
+  "executionAuthorized": false,
+  "generatedAt": "2026-09-07T19:46:36.279Z",
+  "certificationHash": "76f5a7dbc6f0b36cbef1c1cd5785ea0acb33c10488f65f30150e2fb351a22aaf"
+}

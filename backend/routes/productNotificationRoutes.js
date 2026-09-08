@@ -29,11 +29,17 @@ const productNotificationService =
   );
 
 
+const productNotificationPrincipalResolver =
+  require(
+    "../services/product/productNotificationPrincipalResolver"
+  );
+
+
 const router =
   express.Router();
 
 
-function context(
+function applicationContext(
   req
 ) {
   const organizationId =
@@ -93,6 +99,53 @@ function context(
 }
 
 
+async function canonicalContext(
+  req
+) {
+  const context =
+    applicationContext(
+      req
+    );
+
+
+  const principal =
+    await productNotificationPrincipalResolver
+      .resolve(
+        context
+      );
+
+
+  /*
+   * productNotificationService already enters PostgresTenantScope.
+   *
+   * Passing physical organization/environment UUIDs is supported because
+   * PostgresIdentityResolver resolves UUIDs as well as public/legacy IDs.
+   *
+   * Most importantly:
+   *
+   * userId and membershipId are now physical PostgreSQL UUIDs required by:
+   *
+   * identity.users(id)
+   * identity.organization_memberships(id)
+   * tenancy.team_memberships(membership_id)
+   * product.notification_receipts(user_id)
+   */
+  return {
+    organizationId:
+      principal.organizationId,
+
+    environmentId:
+      principal.environmentId,
+
+    userId:
+      principal.userId,
+
+    membershipId:
+      principal.membershipId,
+  };
+}
+
+
 function response(
   res,
   data
@@ -127,14 +180,18 @@ router.get(
     next
   ) => {
     try {
+      const context =
+        await canonicalContext(
+          req
+        );
+
+
       return response(
         res,
 
         await productNotificationService
           .list({
-            ...context(
-              req
-            ),
+            ...context,
 
             unreadOnly:
               req.query
@@ -186,7 +243,7 @@ router.get(
 
         await productNotificationService
           .summary(
-            context(
+            await canonicalContext(
               req
             )
           )
@@ -205,7 +262,12 @@ router.get(
 // ============================================================================
 // MARK ONE READ
 //
-// READ != INCIDENT ACKNOWLEDGEMENT
+// PRODUCT READ STATE
+//
+// != INCIDENT ACKNOWLEDGEMENT
+// != HUMAN TASK ACKNOWLEDGEMENT
+// != APPROVAL
+// != AUTHORIZATION
 // ============================================================================
 
 router.post(
@@ -222,14 +284,18 @@ router.post(
     next
   ) => {
     try {
+      const context =
+        await canonicalContext(
+          req
+        );
+
+
       return response(
         res,
 
         await productNotificationService
           .markRead({
-            ...context(
-              req
-            ),
+            ...context,
 
             notificationId:
               req.params
@@ -270,7 +336,7 @@ router.post(
 
         await productNotificationService
           .markAllRead(
-            context(
+            await canonicalContext(
               req
             )
           )
@@ -304,14 +370,18 @@ router.post(
     next
   ) => {
     try {
+      const context =
+        await canonicalContext(
+          req
+        );
+
+
       return response(
         res,
 
         await productNotificationService
           .dismiss({
-            ...context(
-              req
-            ),
+            ...context,
 
             notificationId:
               req.params

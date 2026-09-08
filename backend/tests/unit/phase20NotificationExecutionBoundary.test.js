@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const {
   IntegrationNotificationGateway,
@@ -79,6 +79,16 @@ function buildAuthorization(
 
       planHash:
         "hash_123",
+
+      steps: [
+        {
+          capability:
+            "restart_service",
+
+          action:
+            "restart_service",
+        },
+      ],
     },
 
     validFrom:
@@ -133,6 +143,16 @@ function buildExecutionRequest(
 
       planHash:
         "hash_123",
+
+      steps: [
+        {
+          capability:
+            "restart_service",
+
+          action:
+            "restart_service",
+        },
+      ],
     },
 
     ...overrides,

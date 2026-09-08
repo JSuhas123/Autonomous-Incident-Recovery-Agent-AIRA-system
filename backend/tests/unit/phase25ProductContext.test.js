@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * ============================================================================
@@ -120,7 +120,7 @@ function createContext(
 
 
 describe(
-  "AIRA Phase 25.0B — Product Context",
+  "AIRA Phase 25.0B â€” Product Context",
   () => {
     test(
       "derives operations persona for platform engineer",
@@ -306,6 +306,17 @@ describe(
 
           status:
             "active",
+
+          settings: {
+            allowAutonomousExecution:
+              false,
+
+            requireApprovalForDestructiveActions:
+              true,
+
+            timezone:
+              null,
+          },
         });
       }
     );

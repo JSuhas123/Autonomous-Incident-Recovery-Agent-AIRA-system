@@ -1,0 +1,103 @@
+{
+  "version": "25.13-product-contract-v1",
+  "phase": "25.13",
+  "certificationType": "PRODUCT_CONTRACT",
+  "passed": true,
+  "checks": [
+    {
+      "name": "browserEnvironmentContext authenticates, builds canonical context and resolves environment",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product BFF is mounted behind browserEnvironmentContext",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product notification API is mounted behind browserEnvironmentContext",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "PostgresTenantScope resolves logical scope before RLS and passes resolved identifiers",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product read-model wrapper always declares executionAuthorized=false",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product notification wrapper always declares executionAuthorized=false",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product persona cannot grant authorization",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Browser organization is explicitly non-authoritative in ProductContext",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Browser environment is explicitly non-authoritative in ProductContext",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product notifications reject execution-authority injection",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product notification SQL uses resolved organization UUID",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Product notification SQL uses resolved environment UUID",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Production feature layer contains no fixture imports",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Fake freshness text removed",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Previously identified fabricated product metrics removed",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Phase-25 product persistence tables have FORCE RLS",
+      "passed": true,
+      "details": "3/3 tables found"
+    },
+    {
+      "name": "Database prevents product notifications from carrying execution authority",
+      "passed": true,
+      "details": null
+    }
+  ],
+  "invariants": {
+    "browserOrganizationAuthoritative": false,
+    "browserEnvironmentAuthoritative": false,
+    "personaGrantsAuthorization": false,
+    "notificationReadAcknowledgesIncident": false,
+    "executionAuthorized": false
+  },
+  "generatedAt": "2026-09-07T20:19:21.874Z",
+  "executionAuthorized": false,
+  "certificationHash": "c14c328fcfa4ec16d87988a347b3f23549538ccdd3e22b2c1e54bf340d31b8ff"
+}

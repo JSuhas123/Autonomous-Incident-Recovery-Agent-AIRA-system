@@ -1,0 +1,93 @@
+{
+  "version": "25.14-adversarial-v2",
+  "phase": "25.14",
+  "certificationType": "ADVERSARIAL_PRODUCT",
+  "passed": true,
+  "checks": [
+    {
+      "name": "Owner sandbox login",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Developer sandbox login",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "ProductContext contains no execution authority",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Browser organizationId tampering cannot change authoritative organization",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Unknown/foreign environment selector fails closed",
+      "passed": true,
+      "details": "HTTP 404"
+    },
+    {
+      "name": "Forged owner/admin headers do not change authenticated Developer role",
+      "passed": true,
+      "details": "resolved role=developer"
+    },
+    {
+      "name": "Forged persona/role headers cannot grant a permission Developer lacks",
+      "passed": true,
+      "details": "AUDIT_READ denied with HTTP 403"
+    },
+    {
+      "name": "Notification execution-authority injection denied",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "Notification read != incident acknowledgement != human-task acknowledgement != authority",
+      "passed": true,
+      "details": null
+    },
+    {
+      "name": "All principal Product BFF read models recursively preserve executionAuthorized=false",
+      "passed": true,
+      "details": "9 routes"
+    }
+  ],
+  "testedAttacks": [
+    "browser organization query-parameter tampering",
+    "unknown environment selector",
+    "persona and role header privilege escalation",
+    "notification execution-authority injection",
+    "notification read-state escalation",
+    "product read-model execution-authority leakage"
+  ],
+  "identities": {
+    "owner": {
+      "email": "owner@aira-sandbox.local",
+      "organizationId": "97f205db-8f85-4b09-8b60-5e94d3da0655",
+      "environmentId": "3a06723a-4af5-4978-85e3-c48a55499995"
+    },
+    "developer": {
+      "email": "developer@aira-sandbox.local",
+      "authenticatedRole": "developer",
+      "forgedRoleAccepted": false
+    }
+  },
+  "invariants": {
+    "browserOrganizationAuthoritative": false,
+    "browserEnvironmentAuthoritative": false,
+    "browserRoleAuthoritative": false,
+    "browserPersonaAuthoritative": false,
+    "personaGrantsPermission": false,
+    "personaGrantsAuthorization": false,
+    "notificationReadAcknowledgesIncident": false,
+    "notificationReadAcknowledgesHumanTask": false,
+    "notificationGrantsAuthorization": false,
+    "executionAuthorized": false
+  },
+  "executionAuthorized": false,
+  "generatedAt": "2026-09-07T19:46:15.508Z",
+  "certificationHash": "c4adb1f6bc59df80c9e7724d6e385606e0eefcda9e077acce2e5c658d1c1fba8"
+}

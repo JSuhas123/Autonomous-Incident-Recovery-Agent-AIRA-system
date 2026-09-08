@@ -58,14 +58,11 @@ function requireValue(
   field
 ) {
   if (
-    value ===
-      undefined ||
-    value ===
-      null ||
+    value === undefined ||
+    value === null ||
     String(
       value
-    ).trim() ===
-      ""
+    ).trim() === ""
   ) {
     throw createError(
       `${field} is required`,
@@ -84,8 +81,7 @@ function normalizeKind(
 ) {
   const normalized =
     String(
-      value ||
-      ""
+      value || ""
     )
       .trim()
       .toLowerCase();
@@ -114,8 +110,7 @@ function normalizeSeverity(
 ) {
   const normalized =
     String(
-      value ||
-      "INFO"
+      value || "INFO"
     )
       .trim()
       .toUpperCase();
@@ -169,8 +164,7 @@ function normalizeTarget(
 
 
   if (
-    targetType ===
-      "user" &&
+    targetType === "user" &&
     !input.targetUserId
   ) {
     throw createError(
@@ -182,8 +176,7 @@ function normalizeTarget(
 
 
   if (
-    targetType ===
-      "team" &&
+    targetType === "team" &&
     !input.targetTeamId
   ) {
     throw createError(
@@ -198,14 +191,12 @@ function normalizeTarget(
     targetType,
 
     targetUserId:
-      targetType ===
-      "user"
+      targetType === "user"
         ? input.targetUserId
         : null,
 
     targetTeamId:
-      targetType ===
-      "team"
+      targetType === "team"
         ? input.targetTeamId
         : null,
   };
@@ -273,8 +264,7 @@ function mapRow(
       row.action_path,
 
     metadata:
-      row.metadata ||
-      {},
+      row.metadata || {},
 
     read:
       Boolean(
@@ -282,8 +272,7 @@ function mapRow(
       ),
 
     readAt:
-      row.read_at ||
-      null,
+      row.read_at || null,
 
     dismissed:
       Boolean(
@@ -291,8 +280,7 @@ function mapRow(
       ),
 
     dismissedAt:
-      row.dismissed_at ||
-      null,
+      row.dismissed_at || null,
 
     createdAt:
       row.created_at,
@@ -309,7 +297,6 @@ class ProductNotificationService {
   ) {
     this.scope =
       options.scope ||
-
       new PostgresTenantScope({
         pool:
           options.pool ||
@@ -323,9 +310,12 @@ class ProductNotificationService {
    * SERVER-SIDE PUBLISH
    * ========================================================================
    *
-   * There is intentionally NO browser API that calls this method.
+   * Browser routes never publish arbitrary product notifications.
    *
-   * Only trusted AIRA backend workflows publish notifications.
+   * Only trusted AIRA backend workflows should call this method.
+   *
+   * Product notification state is informational only and can NEVER carry
+   * infrastructure execution authority.
    * ========================================================================
    */
 
@@ -398,14 +388,11 @@ class ProductNotificationService {
 
 
     /*
-     * Product notifications are normally environment scoped.
+     * Organization-wide notifications may persist environment_id = NULL.
      *
-     * Organization-wide events may deliberately use NULL environment.
-     * We still need a scope for PostgreSQL RLS execution; callers publishing
-     * organization-wide events should provide scopeEnvironmentId.
+     * PostgreSQL RLS still requires a legitimate environment scope in order
+     * to enter PostgresTenantScope.
      */
-
-
     const scopeEnvironmentId =
       environmentId ||
       input.scopeEnvironmentId;
@@ -433,8 +420,19 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
+          /*
+           * CRITICAL PHASE-25 TENANT CONTRACT
+           *
+           * Request/public identifiers are selectors only.
+           *
+           * Physical PostgreSQL UUID columns MUST use:
+           *
+           * resolved.organizationUuid
+           * resolved.environmentUuid
+           */
           const result =
             await client.query(
               `
@@ -462,10 +460,29 @@ class ProductNotificationService {
                         expires_at,
                         execution_authorized
                     )
+
                 VALUES (
-                    $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
-                    $11,$12,$13,$14,$15,$16,$17,$18,
-                    $19::jsonb,$20,FALSE
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    $7,
+                    $8,
+                    $9,
+                    $10,
+                    $11,
+                    $12,
+                    $13,
+                    $14,
+                    $15,
+                    $16,
+                    $17,
+                    $18,
+                    $19::jsonb,
+                    $20,
+                    FALSE
                 )
 
                 ON CONFLICT (
@@ -499,15 +516,21 @@ class ProductNotificationService {
                     metadata =
                         EXCLUDED.metadata,
 
+                    expires_at =
+                        EXCLUDED.expires_at,
+
                     updated_at =
                         NOW()
 
-                RETURNING *
+                RETURNING
+                    *
               `,
               [
-                input.organizationId,
+                resolved.organizationUuid,
 
-                environmentId,
+                environmentId
+                  ? resolved.environmentUuid
+                  : null,
 
                 kind,
 
@@ -530,22 +553,22 @@ class ProductNotificationService {
                 ).trim(),
 
                 input.incidentId ||
-                null,
+                  null,
 
                 input.humanTaskId ||
-                null,
+                  null,
 
                 input.approvalId ||
-                null,
+                  null,
 
                 input.recoveryId ||
-                null,
+                  null,
 
                 input.certificationId ||
-                null,
+                  null,
 
                 input.integrationId ||
-                null,
+                  null,
 
                 target.targetType,
 
@@ -554,7 +577,7 @@ class ProductNotificationService {
                 target.targetTeamId,
 
                 input.actionPath ||
-                null,
+                  null,
 
                 JSON.stringify(
                   input.metadata ||
@@ -562,7 +585,7 @@ class ProductNotificationService {
                 ),
 
                 input.expiresAt ||
-                null,
+                  null,
               ]
             );
 
@@ -582,13 +605,23 @@ class ProductNotificationService {
 
   /*
    * ========================================================================
-   * PHASE-23 → PRODUCT-INBOX BRIDGE
+   * PHASE-23 → PHASE-25 PRODUCT INBOX BRIDGE
    * ========================================================================
    *
-   * Existing durable human escalation notifications are automatically
-   * represented in the product inbox.
+   * notifications.requests remains the authoritative durable human
+   * notification workflow.
    *
-   * Delivery remains owned by notifications.requests / RabbitMQ.
+   * notifications.deliveries remains authoritative for transport delivery.
+   *
+   * product.notification_events is only a product/read representation.
+   *
+   * Notification presentation:
+   *
+   * != acknowledgement
+   * != human takeover
+   * != approval
+   * != certification
+   * != infrastructure execution authorization
    * ========================================================================
    */
 
@@ -604,10 +637,13 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
           /*
-           * Human escalation notifications.
+           * ------------------------------------------------------------------
+           * HUMAN ESCALATION / HUMAN TASK NOTIFICATIONS
+           * ------------------------------------------------------------------
            */
 
           await client.query(
@@ -624,11 +660,9 @@ class ProductNotificationService {
                       source_ref,
                       incident_id,
                       human_task_id,
-
                       target_type,
                       target_user_id,
                       target_team_id,
-
                       action_path,
                       metadata,
                       execution_authorized
@@ -636,6 +670,7 @@ class ProductNotificationService {
 
               SELECT
                   r.organization_id,
+
                   r.environment_id,
 
                   'human_task',
@@ -655,9 +690,8 @@ class ProductNotificationService {
                   r.human_task_id,
 
                   CASE
-
                       WHEN
-                          upper(
+                          UPPER(
                               COALESCE(
                                   r.target_type,
                                   ''
@@ -677,7 +711,7 @@ class ProductNotificationService {
 
 
                       WHEN
-                          upper(
+                          UPPER(
                               COALESCE(
                                   r.target_type,
                                   ''
@@ -698,14 +732,12 @@ class ProductNotificationService {
 
                       ELSE
                           'organization'
-
                   END,
 
 
                   CASE
-
                       WHEN
-                          upper(
+                          UPPER(
                               COALESCE(
                                   r.target_type,
                                   ''
@@ -728,14 +760,12 @@ class ProductNotificationService {
 
                       ELSE
                           NULL
-
                   END,
 
 
                   CASE
-
                       WHEN
-                          upper(
+                          UPPER(
                               COALESCE(
                                   r.target_type,
                                   ''
@@ -758,21 +788,24 @@ class ProductNotificationService {
 
                       ELSE
                           NULL
-
                   END,
 
 
                   CASE
                       WHEN
-                          r.incident_id IS NOT NULL
+                          r.incident_id
+                              IS NOT NULL
                       THEN
                           '/incidents/' ||
                           r.incident_id
 
+
                       WHEN
-                          r.human_task_id IS NOT NULL
+                          r.human_task_id
+                              IS NOT NULL
                       THEN
                           '/human-tasks'
+
 
                       ELSE
                           '/notifications'
@@ -846,6 +879,18 @@ class ProductNotificationService {
                   message =
                       EXCLUDED.message,
 
+                  target_type =
+                      EXCLUDED.target_type,
+
+                  target_user_id =
+                      EXCLUDED.target_user_id,
+
+                  target_team_id =
+                      EXCLUDED.target_team_id,
+
+                  action_path =
+                      EXCLUDED.action_path,
+
                   metadata =
                       EXCLUDED.metadata,
 
@@ -853,15 +898,16 @@ class ProductNotificationService {
                       NOW()
             `,
             [
-              organizationId,
-              environmentId,
+              resolved.organizationUuid,
+              resolved.environmentUuid,
             ]
           );
 
 
           /*
-           * Failed external notification delivery becomes an integration
-           * notification in the AIRA product inbox.
+           * ------------------------------------------------------------------
+           * FAILED EXTERNAL DELIVERY EVENTS
+           * ------------------------------------------------------------------
            */
 
           await client.query(
@@ -894,7 +940,8 @@ class ProductNotificationService {
 
                   CASE
                       WHEN
-                          d.status = 'failed'
+                          d.status =
+                              'failed'
                       THEN
                           'HIGH'
 
@@ -904,7 +951,8 @@ class ProductNotificationService {
 
                   CASE
                       WHEN
-                          d.status = 'failed'
+                          d.status =
+                              'failed'
                       THEN
                           'Notification delivery failed'
 
@@ -914,7 +962,8 @@ class ProductNotificationService {
 
                   CASE
                       WHEN
-                          d.status = 'failed'
+                          d.status =
+                              'failed'
                       THEN
                           'AIRA could not deliver an operational notification through ' ||
                           d.channel_type ||
@@ -934,7 +983,8 @@ class ProductNotificationService {
 
                   CASE
                       WHEN
-                          d.channel_id IS NULL
+                          d.channel_id
+                              IS NULL
                       THEN
                           NULL
 
@@ -1018,8 +1068,8 @@ class ProductNotificationService {
                       NOW()
             `,
             [
-              organizationId,
-              environmentId,
+              resolved.organizationUuid,
+              resolved.environmentUuid,
             ]
           );
 
@@ -1038,7 +1088,7 @@ class ProductNotificationService {
 
   /*
    * ========================================================================
-   * VISIBLE INBOX
+   * VISIBLE PRODUCT INBOX
    * ========================================================================
    */
 
@@ -1048,14 +1098,11 @@ class ProductNotificationService {
     userId,
     membershipId,
 
-    unreadOnly =
-      false,
+    unreadOnly = false,
 
-    kind =
-      null,
+    kind = null,
 
-    limit =
-      50,
+    limit = 50,
   }) {
     await this
       .synchronizeExistingNotificationPlatform({
@@ -1072,7 +1119,8 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
           const result =
             await client.query(
@@ -1106,7 +1154,8 @@ class ProductNotificationService {
                     AND
 
                     (
-                        n.environment_id IS NULL
+                        n.environment_id
+                            IS NULL
 
                         OR
 
@@ -1117,7 +1166,8 @@ class ProductNotificationService {
                     AND
 
                     (
-                        n.expires_at IS NULL
+                        n.expires_at
+                            IS NULL
 
                         OR
 
@@ -1127,7 +1177,8 @@ class ProductNotificationService {
 
                     AND
 
-                    receipt.dismissed_at IS NULL
+                    receipt.dismissed_at
+                        IS NULL
 
                     AND
 
@@ -1187,13 +1238,15 @@ class ProductNotificationService {
 
                         OR
 
-                        receipt.read_at IS NULL
+                        receipt.read_at
+                            IS NULL
                     )
 
                     AND
 
                     (
-                        $6::text IS NULL
+                        $6::text
+                            IS NULL
 
                         OR
 
@@ -1203,33 +1256,44 @@ class ProductNotificationService {
 
                 ORDER BY
                     CASE
-                        WHEN n.severity =
-                            'CRITICAL'
-                        THEN 1
+                        WHEN
+                            n.severity =
+                                'CRITICAL'
+                        THEN
+                            1
 
-                        WHEN n.severity =
-                            'HIGH'
-                        THEN 2
+                        WHEN
+                            n.severity =
+                                'HIGH'
+                        THEN
+                            2
 
-                        WHEN n.severity =
-                            'MEDIUM'
-                        THEN 3
+                        WHEN
+                            n.severity =
+                                'MEDIUM'
+                        THEN
+                            3
 
-                        WHEN n.severity =
-                            'LOW'
-                        THEN 4
+                        WHEN
+                            n.severity =
+                                'LOW'
+                        THEN
+                            4
 
-                        ELSE 5
+                        ELSE
+                            5
                     END ASC,
 
-                    n.created_at DESC
+                    n.created_at
+                        DESC
 
-                LIMIT $7
+                LIMIT
+                    $7
               `,
               [
-                organizationId,
+                resolved.organizationUuid,
 
-                environmentId,
+                resolved.environmentUuid,
 
                 userId,
 
@@ -1239,14 +1303,14 @@ class ProductNotificationService {
                   true,
 
                 kind ||
-                null,
+                  null,
 
                 Math.min(
                   Math.max(
                     Number(
                       limit
                     ) ||
-                    50,
+                      50,
                     1
                   ),
                   100
@@ -1291,7 +1355,7 @@ class ProductNotificationService {
           item
         ) =>
           item.read !==
-          true
+            true
       );
 
 
@@ -1305,9 +1369,8 @@ class ProductNotificationService {
             item
           ) =>
             item.severity ===
-            "CRITICAL"
-        )
-          .length,
+              "CRITICAL"
+        ).length,
 
       highUnread:
         unread.filter(
@@ -1315,9 +1378,8 @@ class ProductNotificationService {
             item
           ) =>
             item.severity ===
-            "HIGH"
-        )
-          .length,
+              "HIGH"
+        ).length,
 
       totalVisible:
         items.length,
@@ -1327,6 +1389,21 @@ class ProductNotificationService {
     };
   }
 
+
+  /*
+   * ========================================================================
+   * READ RECEIPT
+   * ========================================================================
+   *
+   * Reading a product notification:
+   *
+   * != human-task acknowledgement
+   * != incident acknowledgement
+   * != approval
+   * != takeover
+   * != recovery authorization
+   * ========================================================================
+   */
 
   async markRead({
     organizationId,
@@ -1343,7 +1420,8 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
           const visible =
             await client.query(
@@ -1366,12 +1444,25 @@ class ProductNotificationService {
                     AND
 
                     (
-                        n.environment_id IS NULL
+                        n.environment_id
+                            IS NULL
 
                         OR
 
                         n.environment_id =
                             $3
+                    )
+
+                    AND
+
+                    (
+                        n.expires_at
+                            IS NULL
+
+                        OR
+
+                        n.expires_at >
+                            NOW()
                     )
 
                     AND
@@ -1427,11 +1518,11 @@ class ProductNotificationService {
                 LIMIT 1
               `,
               [
-                organizationId,
+                resolved.organizationUuid,
 
                 notificationId,
 
-                environmentId,
+                resolved.environmentUuid,
 
                 userId,
 
@@ -1460,8 +1551,12 @@ class ProductNotificationService {
                       user_id,
                       read_at
                   )
+
               VALUES (
-                  $1,$2,$3,NOW()
+                  $1,
+                  $2,
+                  $3,
+                  NOW()
               )
 
               ON CONFLICT (
@@ -1480,7 +1575,7 @@ class ProductNotificationService {
                       NOW()
             `,
             [
-              organizationId,
+              resolved.organizationUuid,
 
               visible.rows[0]
                 .id,
@@ -1496,9 +1591,6 @@ class ProductNotificationService {
 
             notificationId,
 
-            /*
-             * Explicit semantic boundary.
-             */
             humanTaskAcknowledged:
               false,
 
@@ -1527,7 +1619,8 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
           const result =
             await client.query(
@@ -1542,8 +1635,11 @@ class ProductNotificationService {
 
                 SELECT
                     $1,
+
                     n.id,
+
                     $3,
+
                     NOW()
 
                 FROM
@@ -1556,12 +1652,25 @@ class ProductNotificationService {
                     AND
 
                     (
-                        n.environment_id IS NULL
+                        n.environment_id
+                            IS NULL
 
                         OR
 
                         n.environment_id =
                             $2
+                    )
+
+                    AND
+
+                    (
+                        n.expires_at
+                            IS NULL
+
+                        OR
+
+                        n.expires_at >
+                            NOW()
                     )
 
                     AND
@@ -1630,9 +1739,9 @@ class ProductNotificationService {
                         NOW()
               `,
               [
-                organizationId,
+                resolved.organizationUuid,
 
-                environmentId,
+                resolved.environmentUuid,
 
                 userId,
 
@@ -1666,6 +1775,9 @@ class ProductNotificationService {
     membershipId,
     notificationId,
   }) {
+    /*
+     * Dismissal includes read state, but remains product presentation state.
+     */
     await this.markRead({
       organizationId,
       environmentId,
@@ -1683,50 +1795,86 @@ class ProductNotificationService {
         },
 
         async (
-          client
+          client,
+          resolved
         ) => {
-          await client.query(
-            `
-              UPDATE
-                  product.notification_receipts receipt
+          const result =
+            await client.query(
+              `
+                UPDATE
+                    product.notification_receipts receipt
 
-              SET
-                  dismissed_at =
-                      NOW(),
+                SET
+                    dismissed_at =
+                        NOW(),
 
-                  updated_at =
-                      NOW()
+                    updated_at =
+                        NOW()
 
-              FROM
-                  product.notification_events event
+                FROM
+                    product.notification_events event
 
-              WHERE
-                  receipt.notification_event_id =
-                      event.id
+                WHERE
+                    receipt.notification_event_id =
+                        event.id
 
-                  AND
+                    AND
 
-                  receipt.organization_id =
-                      $1
+                    receipt.organization_id =
+                        $1
 
-                  AND
+                    AND
 
-                  receipt.user_id =
-                      $2
+                    receipt.user_id =
+                        $2
 
-                  AND
+                    AND
 
-                  event.public_id =
-                      $3
-            `,
-            [
-              organizationId,
+                    event.public_id =
+                        $3
 
-              userId,
+                    AND
 
-              notificationId,
-            ]
-          );
+                    event.organization_id =
+                        $1
+
+                    AND
+
+                    (
+                        event.environment_id
+                            IS NULL
+
+                        OR
+
+                        event.environment_id =
+                            $4
+                    )
+
+                RETURNING
+                    receipt.id
+              `,
+              [
+                resolved.organizationUuid,
+
+                userId,
+
+                notificationId,
+
+                resolved.environmentUuid,
+              ]
+            );
+
+
+          if (
+            result.rowCount ===
+              0
+          ) {
+            throw createError(
+              "Notification not found",
+              "PRODUCT_NOTIFICATION_NOT_FOUND",
+              404
+            );
+          }
 
 
           return {
@@ -1734,6 +1882,12 @@ class ProductNotificationService {
               true,
 
             notificationId,
+
+            humanTaskAcknowledged:
+              false,
+
+            incidentAcknowledged:
+              false,
 
             executionAuthorized:
               false,

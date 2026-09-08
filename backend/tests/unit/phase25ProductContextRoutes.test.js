@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 /**
  * ============================================================================
@@ -35,6 +35,12 @@ function canonicalContextMiddleware(
   req.user = {
     id:
       "user_001",
+
+    email:
+      "platform-engineer@aira-test.local",
+
+    emailVerifiedAt:
+      "2026-09-07T00:00:00.000Z",
   };
 
 
@@ -174,7 +180,7 @@ function requestJson(
 
 
 describe(
-  "AIRA Phase 25.2B — Product Context Route",
+  "AIRA Phase 25.2B â€” Product Context Route",
   () => {
     let server;
 
